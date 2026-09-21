@@ -4,6 +4,7 @@ set -Eeuo pipefail
 IMAGE_REPO="${TXBOARD_IMAGE_REPO:-ghcr.io/paimoncai/txboard}"
 IMAGE_TAG="${TXBOARD_IMAGE_TAG:-latest}"
 INSTALL_DIR="${TXBOARD_INSTALL_DIR:-/opt/txboard}"
+PROJECT_NAME="${TXBOARD_PROJECT_NAME:-txboard}"
 ADMIN_EMAIL="${TXBOARD_ADMIN_EMAIL:-}"
 MODE="${TXBOARD_MODE:-}"
 DOMAIN="${TXBOARD_DOMAIN:-}"
@@ -37,6 +38,7 @@ Options:
   --dir PATH          Install directory (default: /opt/txboard)
   --tag TAG           TXBoard image tag (default: latest)
   --email EMAIL       Initial administrator email
+  --project-name NAME  Docker Compose project name (default: txboard)
   --mode MODE         auto-https | external-https | http
   --domain DOMAIN     Public domain for HTTPS modes
   --public-host HOST  Public host/IP for HTTP mode
@@ -58,6 +60,7 @@ Environment variables:
   TXBOARD_IMAGE_REPO
   TXBOARD_IMAGE_TAG
   TXBOARD_INSTALL_DIR
+  TXBOARD_PROJECT_NAME
   TXBOARD_ADMIN_EMAIL
   TXBOARD_MODE
   TXBOARD_DOMAIN
@@ -80,6 +83,7 @@ while [[ $# -gt 0 ]]; do
     --dir) INSTALL_DIR="${2:?missing value for --dir}"; shift 2 ;;
     --tag) IMAGE_TAG="${2:?missing value for --tag}"; shift 2 ;;
     --email) ADMIN_EMAIL="${2:?missing value for --email}"; shift 2 ;;
+    --project-name) PROJECT_NAME="${2:?missing value for --project-name}"; shift 2 ;;
     --mode) MODE="${2:?missing value for --mode}"; shift 2 ;;
     --domain) DOMAIN="${2:?missing value for --domain}"; shift 2 ;;
     --public-host) PUBLIC_HOST="${2:?missing value for --public-host}"; shift 2 ;;
@@ -168,6 +172,10 @@ confirm() {
   fi
   value="$(prompt "$label" "$default")"
   [[ "$value" =~ ^[Yy]([Ee][Ss])?$ ]]
+}
+
+valid_project_name() {
+  [[ "$1" =~ ^[a-z0-9][a-z0-9_-]*$ ]]
 }
 
 valid_email() {
@@ -280,6 +288,8 @@ ADMIN_EMAIL="$(prompt "Administrator email" "${ADMIN_EMAIL:-admin@example.com}")
 valid_email "$ADMIN_EMAIL" || die "invalid administrator email: $ADMIN_EMAIL"
 
 INSTALL_DIR="$(prompt "Installation directory" "$INSTALL_DIR")"
+PROJECT_NAME="$(prompt "Docker Compose project name" "$PROJECT_NAME")"
+valid_project_name "$PROJECT_NAME" || die "invalid Docker Compose project name: $PROJECT_NAME (use lowercase letters, digits, hyphens or underscores)"
 [[ -n "$INSTALL_DIR" && "$INSTALL_DIR" == /* ]] || die "installation directory must be an absolute path"
 
 if [[ "${EUID:-$(id -u)}" -ne 0 && "$INSTALL_DIR" == /opt/* ]]; then
@@ -398,6 +408,7 @@ Mode:           $MODE
 Public URL:     $APP_URL
 Admin email:    $ADMIN_EMAIL
 Install dir:    $INSTALL_DIR
+Docker project: $PROJECT_NAME
 HTTP mapping:   $HTTP_BIND:$HTTP_PORT -> container:80
 Backup retain:  $BACKUP_RETENTION
 Database mode:   $DB_MODE
@@ -420,6 +431,7 @@ umask 077
 mkdir -p data/storage/app data/plugins backups
 
 cat > .env <<EOF
+COMPOSE_PROJECT_NAME=$PROJECT_NAME
 TXBOARD_IMAGE=$IMAGE
 TXBOARD_ADMIN_EMAIL=$ADMIN_EMAIL
 TXBOARD_MODE=$MODE
@@ -739,6 +751,7 @@ TXBoard installation completed.
 
 Panel:       $APP_URL/admin/
 Install dir: $INSTALL_DIR
+Docker name: $PROJECT_NAME
 Image:       $IMAGE
 
 The administrator password was printed by txboard:install above.
