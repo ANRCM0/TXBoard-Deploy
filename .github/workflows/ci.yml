@@ -69,6 +69,28 @@ jobs:
           sudo grep -q 'host.docker.internal:host-gateway' compose.yaml
           sudo rm -rf /tmp/txboard-deploy-external-ci
 
+      - name: Reject stale managed MySQL volume
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-stale-volume-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18083
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_DB_MODE: local
+        run: |
+          sudo docker volume create txboard_database-data >/dev/null
+          trap 'sudo docker volume rm txboard_database-data >/dev/null 2>&1 || true; sudo rm -rf /tmp/txboard-stale-volume-ci' EXIT
+
+          set +e
+          output="$(sudo -E bash install.sh --yes 2>&1)"
+          status=$?
+          set -e
+
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -q 'existing managed MySQL volume txboard_database-data detected'
+          test ! -e /tmp/txboard-stale-volume-ci/.env
+
       - name: Check public image manifest
         run: docker manifest inspect ghcr.io/paimoncai/txboard:latest >/dev/null
 

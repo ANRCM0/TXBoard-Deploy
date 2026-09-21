@@ -59,6 +59,25 @@ curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/insta
 
 默认模式。部署脚本会启动 MySQL 8.4 容器、创建独立数据卷，并自动生成数据库密码与 root 密码。
 
+为了避免“旧 MySQL 数据卷 + 新随机密码”导致 `SQLSTATE[HY000] [1045] Access denied`，新安装会检查固定的 `txboard_database-data` 卷：
+
+- 未发现旧卷：正常生成新密码并初始化 MySQL。
+- 交互安装发现旧卷：默认停止并保留数据；只有明确确认后才删除旧卷并执行全新安装。
+- `--yes` 无人值守安装发现旧卷：直接失败，不会自动删除任何数据库数据。
+- 确定旧卷可以丢弃时，可显式使用 `--reset-local-db`。该参数会永久删除旧 MySQL 数据卷。
+
+例如完全重装测试环境：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/install.sh |
+sudo bash -s -- --yes --reset-local-db \
+  --email admin@example.com \
+  --mode http \
+  --public-host 127.0.0.1
+```
+
+> `--reset-local-db` 是破坏性操作，只用于确认不需要旧数据库内容的全新安装。生产环境出现残留卷时，应优先恢复原部署配置和数据库凭据，而不是删除卷。
+
 ### 2. 外部 MySQL
 
 适用于已有 MySQL、云数据库或独立数据库服务器。安装器会：
@@ -318,6 +337,8 @@ external
 
 外部数据库无人值守安装至少需要设置 `TXBOARD_DB_HOST`、`TXBOARD_DB_USERNAME` 和 `TXBOARD_DB_PASSWORD`；端口默认 `3306`，库名默认 `txboard`。
 
+内置 MySQL 的无人值守安装如果检测到已有 `txboard_database-data`，会安全退出。只有明确确认旧数据可删除时才追加 `--reset-local-db`。
+
 ## 常用运维
 
 ```bash
@@ -389,6 +410,7 @@ Deploy 仓库只依赖以下稳定运行接口：
 - Bash 语法（install / update / manager）
 - 非交互 render-only 安装
 - 内置 / 外部数据库 Compose 渲染
+- 残留内置 MySQL 数据卷的安全拒绝逻辑
 - 完整 smoke install 后的管理命令可用性
 - 生成的 Compose 配置
 - 生成的 Compose 不包含 `build:`
