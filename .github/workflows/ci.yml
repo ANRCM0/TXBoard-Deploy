@@ -94,7 +94,7 @@ jobs:
       - name: Verify installed state
         run: |
           cd /tmp/txboard-deploy-smoke
-          sudo docker compose exec -T txboard php artisan xboard:install-status --no-interaction
+          sudo docker compose exec -T txboard php artisan tttxboard:install-status --no-interaction
           curl -fsS http://127.0.0.1:18081/api/health | grep -q '"status":"ok"'
           sudo test -x /tmp/txboard-deploy-smoke/txboard.sh
           sudo test -x /tmp/txboard-deploy-smoke/update.sh
@@ -106,7 +106,7 @@ jobs:
           sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
           sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
           sudo /tmp/txboard-deploy-smoke/update.sh --dir /tmp/txboard-deploy-smoke --yes --skip-backup
-          sudo docker compose exec -T txboard php artisan xboard:install-status --no-interaction
+          sudo docker compose exec -T txboard php artisan tttxboard:install-status --no-interaction
 
       - name: Cleanup
         if: always()
