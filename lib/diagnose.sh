@@ -29,7 +29,7 @@ diagnose_run() {
 
   echo "=== install ==="
   if compose ps --status running -q txboard | grep -q .; then
-    compose exec -T txboard php artisan tttxboard:install-status --no-interaction >/dev/null &&
+    compose exec -T txboard php artisan txboard:install-status --no-interaction >/dev/null &&
       echo "install-status: OK" || { echo "install-status: FAIL"; failed=1; }
     compose exec -T txboard sh -lc 'redis-cli -s /data/redis.sock ping' 2>/dev/null | grep -q PONG &&
       echo "redis: OK" || { echo "redis: FAIL"; failed=1; }
