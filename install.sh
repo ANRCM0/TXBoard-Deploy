@@ -72,10 +72,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "${EUID:-$(id -u)}" -ne 0 && "$INSTALL_DIR" == /opt/* ]]; then
-  die "default installation under /opt requires root. Re-run with sudo or use --dir."
-fi
-
 command -v docker >/dev/null 2>&1 || die "Docker Engine is required."
 docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required."
 if [[ "$RENDER_ONLY" -eq 0 ]]; then
@@ -158,10 +154,6 @@ detect_host() {
   printf '%s' "${host:-127.0.0.1}"
 }
 
-if [[ -e "$INSTALL_DIR/compose.yaml" || -e "$INSTALL_DIR/.env" || -e "$INSTALL_DIR/api.env" ]]; then
-  die "an existing TXBoard deployment was found in $INSTALL_DIR. Use update.sh instead of reinstalling."
-fi
-
 if [[ -z "$MODE" ]]; then
   if [[ "$ASSUME_YES" -eq 1 ]]; then
     MODE="http"
@@ -192,11 +184,22 @@ IMAGE_TAG="$(prompt "TXBoard image tag" "$IMAGE_TAG")"
 [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "invalid image tag: $IMAGE_TAG"
 IMAGE="$IMAGE_REPO:$IMAGE_TAG"
 
+if [[ "$ASSUME_YES" -eq 1 && -z "$ADMIN_EMAIL" ]]; then
+  die "--yes requires --email or TXBOARD_ADMIN_EMAIL"
+fi
 ADMIN_EMAIL="$(prompt "Administrator email" "${ADMIN_EMAIL:-admin@example.com}")"
 valid_email "$ADMIN_EMAIL" || die "invalid administrator email: $ADMIN_EMAIL"
 
 INSTALL_DIR="$(prompt "Installation directory" "$INSTALL_DIR")"
 [[ -n "$INSTALL_DIR" && "$INSTALL_DIR" == /* ]] || die "installation directory must be an absolute path"
+
+if [[ "${EUID:-$(id -u)}" -ne 0 && "$INSTALL_DIR" == /opt/* ]]; then
+  die "installation under /opt requires root. Re-run with sudo or choose another --dir."
+fi
+
+if [[ -e "$INSTALL_DIR/compose.yaml" || -e "$INSTALL_DIR/.env" || -e "$INSTALL_DIR/api.env" ]]; then
+  die "an existing TXBoard deployment was found in $INSTALL_DIR. Use update.sh instead of reinstalling."
+fi
 
 APP_URL=""
 SITE_ADDRESS=":80"
@@ -430,21 +433,21 @@ services:
     restart: unless-stopped
     logging: *default-logging
     environment:
-      MYSQL_DATABASE: ${TXBOARD_DB_DATABASE:-txboard}
-      MYSQL_USER: ${TXBOARD_DB_USERNAME:-txboard}
-      MYSQL_PASSWORD: ${TXBOARD_DB_PASSWORD:?missing TXBOARD_DB_PASSWORD}
-      MYSQL_ROOT_PASSWORD: ${TXBOARD_DB_ROOT_PASSWORD:?missing TXBOARD_DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: \${TXBOARD_DB_DATABASE:-txboard}
+      MYSQL_USER: \${TXBOARD_DB_USERNAME:-txboard}
+      MYSQL_PASSWORD: \${TXBOARD_DB_PASSWORD:?missing TXBOARD_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: \${TXBOARD_DB_ROOT_PASSWORD:?missing TXBOARD_DB_ROOT_PASSWORD}
     volumes:
       - database-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "--host=127.0.0.1", "--user=root", "--password=${TXBOARD_DB_ROOT_PASSWORD:?}"]
+      test: ["CMD", "mysqladmin", "ping", "--host=127.0.0.1", "--user=root", "--password=\${TXBOARD_DB_ROOT_PASSWORD:?}"]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 40s
 
   txboard:
-    image: ${TXBOARD_IMAGE:?missing TXBOARD_IMAGE}
+    image: \${TXBOARD_IMAGE:?missing TXBOARD_IMAGE}
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 30s
@@ -460,19 +463,19 @@ services:
       - caddy-config:/caddy-config
     environment:
       docker: "true"
-      ADMIN_ACCOUNT: ${TXBOARD_ADMIN_EMAIL:?missing TXBOARD_ADMIN_EMAIL}
+      ADMIN_ACCOUNT: \${TXBOARD_ADMIN_EMAIL:?missing TXBOARD_ADMIN_EMAIL}
       DB_CONNECTION: mysql
       DB_HOST: database
       DB_PORT: 3306
-      DB_DATABASE: ${TXBOARD_DB_DATABASE:-txboard}
-      DB_USERNAME: ${TXBOARD_DB_USERNAME:-txboard}
-      DB_PASSWORD: ${TXBOARD_DB_PASSWORD:?missing TXBOARD_DB_PASSWORD}
+      DB_DATABASE: \${TXBOARD_DB_DATABASE:-txboard}
+      DB_USERNAME: \${TXBOARD_DB_USERNAME:-txboard}
+      DB_PASSWORD: \${TXBOARD_DB_PASSWORD:?missing TXBOARD_DB_PASSWORD}
       REDIS_HOST: /data/redis.sock
       REDIS_PORT: 0
       REDIS_PASSWORD: "null"
-      SUBSCRIBE_PATH: ${TXBOARD_SUBSCRIBE_PATH:-s}
-      TXBOARD_SITE_ADDRESS: ${TXBOARD_SITE_ADDRESS:-:80}
-      TXBOARD_TLS_DIRECTIVE: ${TXBOARD_TLS_DIRECTIVE:-}
+      SUBSCRIBE_PATH: \${TXBOARD_SUBSCRIBE_PATH:-s}
+      TXBOARD_SITE_ADDRESS: \${TXBOARD_SITE_ADDRESS:-:80}
+      TXBOARD_TLS_DIRECTIVE: \${TXBOARD_TLS_DIRECTIVE:-}
       ENABLE_CADDY: "true"
       ENABLE_HORIZON: "true"
       ENABLE_REDIS: "true"
@@ -497,13 +500,13 @@ $PORTS_BLOCK
     environment:
       DB_HOST: database
       DB_PORT: 3306
-      DB_DATABASE: ${TXBOARD_DB_DATABASE:-txboard}
-      DB_USERNAME: ${TXBOARD_DB_USERNAME:-txboard}
-      DB_PASSWORD: ${TXBOARD_DB_PASSWORD:?missing TXBOARD_DB_PASSWORD}
+      DB_DATABASE: \${TXBOARD_DB_DATABASE:-txboard}
+      DB_USERNAME: \${TXBOARD_DB_USERNAME:-txboard}
+      DB_PASSWORD: \${TXBOARD_DB_PASSWORD:?missing TXBOARD_DB_PASSWORD}
       BACKUP_DIR: /backups
       BACKUP_SOURCE_DIR: /backup-source/api
-      BACKUP_INTERVAL: ${TXBOARD_BACKUP_INTERVAL:-86400}
-      BACKUP_RETENTION: ${TXBOARD_BACKUP_RETENTION:-7}
+      BACKUP_INTERVAL: \${TXBOARD_BACKUP_INTERVAL:-86400}
+      BACKUP_RETENTION: \${TXBOARD_BACKUP_RETENTION:-7}
     volumes:
       - ./backup.sh:/usr/local/bin/txboard-backup.sh:ro
       - ./backups:/backups
@@ -517,7 +520,8 @@ volumes:
   caddy-config:
 EOF
 
-chmod 600 .env api.env compose.yaml
+chmod 600 .env api.env
+chmod 644 compose.yaml
 docker compose config >/dev/null
 
 if [[ "$RENDER_ONLY" -eq 1 ]]; then

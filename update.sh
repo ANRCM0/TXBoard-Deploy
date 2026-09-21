@@ -51,7 +51,8 @@ current_image="$(grep -E '^TXBOARD_IMAGE=' .env | tail -1 | cut -d= -f2-)"
 
 if [[ -n "$IMAGE_TAG" ]]; then
   [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "invalid image tag: $IMAGE_TAG"
-  new_image="ghcr.io/paimoncai/txboard:$IMAGE_TAG"
+  image_repo="${current_image%:*}"
+  new_image="$image_repo:$IMAGE_TAG"
 else
   new_image="$current_image"
 fi
@@ -64,6 +65,14 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
   [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]] || { log "cancelled"; exit 0; }
 fi
 
+if [[ "$SKIP_BACKUP" -eq 0 ]]; then
+  log "creating one-shot backup before update..."
+  docker compose run --rm -e BACKUP_INTERVAL=0 backup
+fi
+
+log "pulling $new_image ..."
+docker pull "$new_image"
+
 if [[ "$new_image" != "$current_image" ]]; then
   tmp="$(mktemp)"
   awk -v value="$new_image" '
@@ -75,14 +84,6 @@ if [[ "$new_image" != "$current_image" ]]; then
   chmod --reference=.env "$tmp" 2>/dev/null || chmod 600 "$tmp"
   mv "$tmp" .env
 fi
-
-if [[ "$SKIP_BACKUP" -eq 0 ]]; then
-  log "creating one-shot backup before update..."
-  docker compose run --rm -e BACKUP_INTERVAL=0 backup
-fi
-
-log "pulling $new_image ..."
-docker compose pull txboard
 
 log "recreating TXBoard..."
 docker compose up -d --remove-orphans --wait txboard
