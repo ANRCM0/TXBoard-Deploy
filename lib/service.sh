@@ -1,70 +1,48 @@
 #!/usr/bin/env bash
 
 service_status() {
-  tx_require_docker
-  tx_require_install
-  tx_compose ps
+  docker_ok; need_install
+  printf 'Directory: %s\nMode: %s\nURL: %s\nImage: %s\n\n'     "$TXBOARD_INSTALL_DIR" "$(detect_mode)"     "$(env_get "$TXBOARD_INSTALL_DIR/api.env" APP_URL)"     "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_IMAGE)"
+  compose ps
 }
 
-service_start() {
-  tx_require_docker
-  tx_require_install
-  tx_compose up -d --remove-orphans
-}
-
-service_stop() {
-  tx_require_docker
-  tx_require_install
-  tx_compose stop
-}
-
-service_restart() {
-  tx_require_docker
-  tx_require_install
-  tx_compose restart txboard
-  tx_compose up -d --wait txboard
-}
-
-service_logs() {
-  tx_require_docker
-  tx_require_install
-  tx_compose logs --tail=200 -f txboard
-}
+service_start() { docker_ok; need_install; compose up -d --remove-orphans; }
+service_stop() { docker_ok; need_install; compose stop; }
+service_restart() { docker_ok; need_install; compose restart txboard; compose up -d --wait txboard; }
 
 service_stats() {
-  tx_require_docker
-  tx_require_install
+  docker_ok; need_install
   local ids
-  ids="$(tx_compose ps -q)"
-  [[ -n "$ids" ]] || { tx_warn "no running TXBoard containers"; return 0; }
+  ids="$(compose ps -q)"
+  [[ -n "$ids" ]] || { warn "no running TXBoard containers"; return 0; }
   docker stats --no-stream $ids
 }
 
 service_menu() {
+  local choice
   while true; do
-    clear 2>/dev/null || true
-    cat <<'EOF'
-TXBoard Service Management
-
-1. Status
-2. Start
-3. Stop
-4. Restart TXBoard
-5. Follow logs
-6. Resource usage
-0. Back
-EOF
-    printf 'Select [0-6]: ' > /dev/tty
-    IFS= read -r choice < /dev/tty || return 0
+    choice="$(choose "1 status  2 start  3 stop  4 restart  5 resources  0 back" "1" "5")"
     case "$choice" in
-      1) service_status; tx_pause ;;
-      2) service_start; tx_pause ;;
-      3) service_stop; tx_pause ;;
-      4) service_restart; tx_pause ;;
-      5) service_logs ;;
-      6) service_stats; tx_pause ;;
+      1) service_status; pause ;;
+      2) service_start; pause ;;
+      3) service_stop; pause ;;
+      4) service_restart; pause ;;
+      5) service_stats; pause ;;
       0) return 0 ;;
-      *) tx_warn "invalid choice"; sleep 1 ;;
     esac
   done
+}
+
+logs_menu() {
+  docker_ok; need_install
+  local choice service=""
+  choice="$(choose "1 TXBoard  2 MySQL  3 Backup  4 All  0 back" "1" "4")"
+  case "$choice" in
+    1) service=txboard ;;
+    2) service=database ;;
+    3) service=backup ;;
+    4) service="" ;;
+    0) return 0 ;;
+  esac
+  if [[ -n "$service" ]]; then compose logs -f --tail=200 "$service"; else compose logs -f --tail=200; fi
 }
