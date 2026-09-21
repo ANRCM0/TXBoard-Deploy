@@ -247,7 +247,7 @@ docker pull target-image
         ↓
 docker compose up -d --force-recreate --wait txboard
         ↓
-xboard:install-status
+txboard:install-status
         ↓
 失败时自动恢复旧镜像并重新拉起 TXBoard
 ```
@@ -377,8 +377,8 @@ Deploy 仓库只依赖以下稳定运行接口：
 
 - TXBoard image
 - `/api/health`
-- `php artisan xboard:install`
-- `php artisan xboard:install-status`
+- `php artisan txboard:install`
+- `php artisan txboard:install-status`
 
 部署逻辑不应该依赖 TXBoard 源码目录结构。
 

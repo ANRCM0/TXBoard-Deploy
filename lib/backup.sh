@@ -75,7 +75,7 @@ backup_restore() {
 
   compose up -d --wait txboard
   compose up -d backup
-  compose exec -T txboard php artisan xboard:install-status --no-interaction >/dev/null ||
+  compose exec -T txboard php artisan txboard:install-status --no-interaction >/dev/null ||
     die "restore validation failed"
   log "restored $name"
 }
