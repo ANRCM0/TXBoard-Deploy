@@ -1,58 +1,114 @@
 #!/usr/bin/env bash
 
 TXBOARD_INSTALL_DIR="${TXBOARD_INSTALL_DIR:-/opt/txboard}"
-TXBOARD_DEPLOY_BASE_URL="${TXBOARD_DEPLOY_BASE_URL:-https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main}"
+TXBOARD_DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main}"
 
-tx_log() { printf '[TXBoard] %s\n' "$*"; }
-tx_warn() { printf '[TXBoard] WARNING: %s\n' "$*" >&2; }
-tx_die() { printf '[TXBoard] ERROR: %s\n' "$*" >&2; exit 1; }
+log() { printf '[TXBoard] %s\n' "$*"; }
+warn() { printf '[TXBoard] WARNING: %s\n' "$*" >&2; }
+die() { printf '[TXBoard] ERROR: %s\n' "$*" >&2; exit 1; }
 
-tx_require_docker() {
-  command -v docker >/dev/null 2>&1 || tx_die "Docker Engine is required."
-  docker compose version >/dev/null 2>&1 || tx_die "Docker Compose v2 is required."
-  docker info >/dev/null 2>&1 || tx_die "Docker daemon is not reachable."
+require_tty() { [[ -r /dev/tty ]] || die "interactive TTY required"; }
+
+docker_ok() {
+  command -v docker >/dev/null 2>&1 || die "Docker Engine is required"
+  docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required"
+  docker info >/dev/null 2>&1 || die "Docker daemon is not reachable"
 }
 
-tx_require_install() {
+need_install() {
   [[ -f "$TXBOARD_INSTALL_DIR/compose.yaml" && -f "$TXBOARD_INSTALL_DIR/.env" && -f "$TXBOARD_INSTALL_DIR/api.env" ]] ||
-    tx_die "no TXBoard deployment found in $TXBOARD_INSTALL_DIR"
+    die "no TXBoard deployment found in $TXBOARD_INSTALL_DIR"
 }
 
-tx_compose() {
+compose() {
   (cd "$TXBOARD_INSTALL_DIR" && docker compose "$@")
 }
 
-tx_confirm() {
-  local prompt="${1:-Continue?}" default="${2:-N}" answer
-  if [[ ! -r /dev/tty ]]; then
-    return 1
+prompt() {
+  require_tty
+  local label="$1" default="${2-}" value=""
+  if [[ -n "$default" ]]; then
+    printf '%s [%s]: ' "$label" "$default" > /dev/tty
+  else
+    printf '%s: ' "$label" > /dev/tty
   fi
-  printf '%s [%s]: ' "$prompt" "$default" > /dev/tty
-  IFS= read -r answer < /dev/tty || true
-  answer="${answer:-$default}"
+  IFS= read -r value < /dev/tty || true
+  printf '%s' "${value:-$default}"
+}
+
+choose() {
+  local label="$1" default="$2" max="$3" value=""
+  while true; do
+    value="$(prompt "$label" "$default")"
+    [[ "$value" =~ ^[0-9]+$ ]] && (( value >= 0 && value <= max )) && {
+      printf '%s' "$value"
+      return
+    }
+    warn "please choose a number from 0 to $max"
+  done
+}
+
+confirm() {
+  local answer
+  answer="$(prompt "$1" "${2:-N}")"
   [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]
 }
 
-tx_pause() {
+pause() {
   [[ -r /dev/tty ]] || return 0
   printf '\nPress Enter to continue...' > /dev/tty
   IFS= read -r _ < /dev/tty || true
 }
 
-tx_env_get() {
-  local key="$1" file="${2:-$TXBOARD_INSTALL_DIR/.env}"
-  awk -F= -v k="$key" '$1==k {sub(/^[^=]*=/,""); value=$0} END {print value}' "$file"
+env_get() {
+  local file="$1" key="$2"
+  grep -E "^$key=" "$file" 2>/dev/null | tail -1 | cut -d= -f2- || true
 }
 
-tx_env_set() {
-  local key="$1" value="$2" file="${3:-$TXBOARD_INSTALL_DIR/.env}" tmp
+env_set() {
+  local file="$1" key="$2" value="$3" tmp
   tmp="$(mktemp)"
   awk -v key="$key" -v value="$value" '
     BEGIN { done=0 }
-    index($0, key "=")==1 { print key "=" value; done=1; next }
+    index($0,key"=")==1 { print key "=" value; done=1; next }
     { print }
     END { if (!done) print key "=" value }
   ' "$file" > "$tmp"
   chmod --reference="$file" "$tmp" 2>/dev/null || chmod 600 "$tmp"
   mv "$tmp" "$file"
+}
+
+fetch() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$1"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- "$1"
+  else
+    die "curl or wget is required"
+  fi
+}
+
+valid_domain() {
+  [[ "$1" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]]
+}
+
+valid_port() {
+  [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 ))
+}
+
+detect_mode() {
+  local mode site bind
+  mode="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_MODE)"
+  case "$mode" in
+    auto-https|external-https|http) printf '%s' "$mode"; return ;;
+  esac
+  site="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_SITE_ADDRESS)"
+  bind="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_BIND)"
+  if [[ -n "$site" && "$site" != ":80" ]]; then
+    printf 'auto-https'
+  elif [[ "$bind" == "127.0.0.1" ]]; then
+    printf 'external-https'
+  else
+    printf 'http'
+  fi
 }
