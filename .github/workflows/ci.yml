@@ -42,6 +42,258 @@ jobs:
           test "$(sudo stat -c '%a' /tmp/txboard-deploy-ci/.env)" = "600"
           test "$(sudo stat -c '%a' /tmp/txboard-deploy-ci/api.env)" = "600"
 
+      - name: Render external database deployment
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-external-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18082
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_DB_MODE: external
+          TXBOARD_DB_HOST: mysql.example.internal
+          TXBOARD_DB_PORT: 3307
+          TXBOARD_DB_DATABASE: txboard_ci
+          TXBOARD_DB_USERNAME: txboard_ci
+          TXBOARD_DB_PASSWORD: ci-secret
+        run: |
+          sudo -E bash install.sh --yes --render-only
+          cd /tmp/txboard-deploy-external-ci
+          sudo docker compose --env-file .env config >/dev/null
+          ! sudo docker compose --env-file .env config --services | grep -qx database
+          sudo grep -q '^TXBOARD_DB_MODE=external
+  smoke-install:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      TXBOARD_DEPLOY_RAW_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run unattended full installation
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-smoke
+          TXBOARD_ADMIN_EMAIL: smoke@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18081
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_BACKUP_RETENTION: 1
+        run: sudo -E bash install.sh --yes
+
+      - name: Verify installed state
+        run: |
+          cd /tmp/txboard-deploy-smoke
+          sudo docker compose exec -T txboard php artisan xboard:install-status --no-interaction
+          curl -fsS http://127.0.0.1:18081/api/health | grep -q '"status":"ok"'
+          sudo test -x /tmp/txboard-deploy-smoke/txboard.sh
+          sudo test -x /tmp/txboard-deploy-smoke/update.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/common.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/backup.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
+          sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo txboard status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
+          sudo /tmp/txboard-deploy-smoke/update.sh --dir /tmp/txboard-deploy-smoke --yes --skip-backup
+          sudo docker compose exec -T txboard php artisan xboard:install-status --no-interaction
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -f /tmp/txboard-deploy-smoke/compose.yaml ]; then
+            cd /tmp/txboard-deploy-smoke
+            sudo docker compose down -v --remove-orphans || true
+          fi
+          sudo rm -rf /tmp/txboard-deploy-smoke
+ .env
+          sudo grep -q '^TXBOARD_DB_HOST=mysql.example.internal
+  smoke-install:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      TXBOARD_DEPLOY_RAW_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run unattended full installation
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-smoke
+          TXBOARD_ADMIN_EMAIL: smoke@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18081
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_BACKUP_RETENTION: 1
+        run: sudo -E bash install.sh --yes
+
+      - name: Verify installed state
+        run: |
+          cd /tmp/txboard-deploy-smoke
+          sudo docker compose exec -T txboard php artisan xboard:install-status --no-interaction
+          curl -fsS http://127.0.0.1:18081/api/health | grep -q '"status":"ok"'
+          sudo test -x /tmp/txboard-deploy-smoke/txboard.sh
+          sudo test -x /tmp/txboard-deploy-smoke/update.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/common.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/backup.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
+          sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo txboard status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
+          sudo /tmp/txboard-deploy-smoke/update.sh --dir /tmp/txboard-deploy-smoke --yes --skip-backup
+          sudo docker compose exec -T txboard php artisan xboard:install-status --no-interaction
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -f /tmp/txboard-deploy-smoke/compose.yaml ]; then
+            cd /tmp/txboard-deploy-smoke
+            sudo docker compose down -v --remove-orphans || true
+          fi
+          sudo rm -rf /tmp/txboard-deploy-smoke
+ .env
+          sudo grep -q '^TXBOARD_DB_PORT=3307
+  smoke-install:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      TXBOARD_DEPLOY_RAW_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run unattended full installation
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-smoke
+          TXBOARD_ADMIN_EMAIL: smoke@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18081
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_BACKUP_RETENTION: 1
+        run: sudo -E bash install.sh --yes
+
+      - name: Verify installed state
+        run: |
+          cd /tmp/txboard-deploy-smoke
+          sudo docker compose exec -T txboard php artisan xboard:install-status --no-interaction
+          curl -fsS http://127.0.0.1:18081/api/health | grep -q '"status":"ok"'
+          sudo test -x /tmp/txboard-deploy-smoke/txboard.sh
+          sudo test -x /tmp/txboard-deploy-smoke/update.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/common.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/backup.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
+          sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo txboard status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
+          sudo /tmp/txboard-deploy-smoke/update.sh --dir /tmp/txboard-deploy-smoke --yes --skip-backup
+          sudo docker compose exec -T txboard php artisan xboard:install-status --no-interaction
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -f /tmp/txboard-deploy-smoke/compose.yaml ]; then
+            cd /tmp/txboard-deploy-smoke
+            sudo docker compose down -v --remove-orphans || true
+          fi
+          sudo rm -rf /tmp/txboard-deploy-smoke
+ .env
+          sudo grep -q '^DB_HOST=mysql.example.internal
+  smoke-install:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      TXBOARD_DEPLOY_RAW_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run unattended full installation
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-smoke
+          TXBOARD_ADMIN_EMAIL: smoke@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18081
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_BACKUP_RETENTION: 1
+        run: sudo -E bash install.sh --yes
+
+      - name: Verify installed state
+        run: |
+          cd /tmp/txboard-deploy-smoke
+          sudo docker compose exec -T txboard php artisan xboard:install-status --no-interaction
+          curl -fsS http://127.0.0.1:18081/api/health | grep -q '"status":"ok"'
+          sudo test -x /tmp/txboard-deploy-smoke/txboard.sh
+          sudo test -x /tmp/txboard-deploy-smoke/update.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/common.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/backup.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
+          sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo txboard status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
+          sudo /tmp/txboard-deploy-smoke/update.sh --dir /tmp/txboard-deploy-smoke --yes --skip-backup
+          sudo docker compose exec -T txboard php artisan xboard:install-status --no-interaction
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -f /tmp/txboard-deploy-smoke/compose.yaml ]; then
+            cd /tmp/txboard-deploy-smoke
+            sudo docker compose down -v --remove-orphans || true
+          fi
+          sudo rm -rf /tmp/txboard-deploy-smoke
+ api.env
+          sudo grep -q '^DB_PORT=3307
+  smoke-install:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      TXBOARD_DEPLOY_RAW_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run unattended full installation
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-smoke
+          TXBOARD_ADMIN_EMAIL: smoke@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18081
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_BACKUP_RETENTION: 1
+        run: sudo -E bash install.sh --yes
+
+      - name: Verify installed state
+        run: |
+          cd /tmp/txboard-deploy-smoke
+          sudo docker compose exec -T txboard php artisan xboard:install-status --no-interaction
+          curl -fsS http://127.0.0.1:18081/api/health | grep -q '"status":"ok"'
+          sudo test -x /tmp/txboard-deploy-smoke/txboard.sh
+          sudo test -x /tmp/txboard-deploy-smoke/update.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/common.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/backup.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
+          sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo txboard status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
+          sudo /tmp/txboard-deploy-smoke/update.sh --dir /tmp/txboard-deploy-smoke --yes --skip-backup
+          sudo docker compose exec -T txboard php artisan xboard:install-status --no-interaction
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -f /tmp/txboard-deploy-smoke/compose.yaml ]; then
+            cd /tmp/txboard-deploy-smoke
+            sudo docker compose down -v --remove-orphans || true
+          fi
+          sudo rm -rf /tmp/txboard-deploy-smoke
+ api.env
+          sudo grep -q 'host.docker.internal:host-gateway' compose.yaml
+          sudo rm -rf /tmp/txboard-deploy-external-ci
+
       - name: Check public image manifest
         run: docker manifest inspect ghcr.io/paimoncai/txboard:latest >/dev/null
 
