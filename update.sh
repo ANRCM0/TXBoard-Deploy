@@ -54,29 +54,40 @@ get_env() {
 refresh_tools() {
   local manager_tmp="$INSTALL_DIR/.txboard.sh.tmp"
   local updater_tmp="$INSTALL_DIR/.update.sh.tmp"
+  local module tmp
+  mkdir -p "$INSTALL_DIR/lib"
 
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$DEPLOY_RAW_BASE/txboard.sh" -o "$manager_tmp" &&
-      curl -fsSL "$DEPLOY_RAW_BASE/update.sh" -o "$updater_tmp" || {
-        rm -f "$manager_tmp" "$updater_tmp"
-        warn "could not refresh TXBoard management tools"
-        return 0
-      }
-  elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$manager_tmp" "$DEPLOY_RAW_BASE/txboard.sh" &&
-      wget -qO "$updater_tmp" "$DEPLOY_RAW_BASE/update.sh" || {
-        rm -f "$manager_tmp" "$updater_tmp"
-        warn "could not refresh TXBoard management tools"
-        return 0
-      }
-  else
-    warn "curl/wget not found; management tools were not refreshed"
+  download_file() {
+    local url="$1" dest="$2"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL "$url" -o "$dest"
+    elif command -v wget >/dev/null 2>&1; then
+      wget -qO "$dest" "$url"
+    else
+      return 1
+    fi
+  }
+
+  if ! download_file "$DEPLOY_RAW_BASE/txboard.sh" "$manager_tmp" ||
+     ! download_file "$DEPLOY_RAW_BASE/update.sh" "$updater_tmp"; then
+    rm -f "$manager_tmp" "$updater_tmp"
+    warn "could not refresh TXBoard management tools"
     return 0
   fi
 
+  for module in common service backup config diagnose uninstall; do
+    tmp="$INSTALL_DIR/lib/.$module.sh.tmp"
+    if ! download_file "$DEPLOY_RAW_BASE/lib/$module.sh" "$tmp"; then
+      rm -f "$manager_tmp" "$updater_tmp" "$INSTALL_DIR/lib/."*.tmp
+      warn "could not refresh manager module: $module"
+      return 0
+    fi
+    mv "$tmp" "$INSTALL_DIR/lib/$module.sh"
+  done
+
   mv "$manager_tmp" "$INSTALL_DIR/txboard.sh"
   mv "$updater_tmp" "$INSTALL_DIR/update.sh"
-  chmod 755 "$INSTALL_DIR/txboard.sh" "$INSTALL_DIR/update.sh"
+  chmod 755 "$INSTALL_DIR/txboard.sh" "$INSTALL_DIR/update.sh" "$INSTALL_DIR"/lib/*.sh
   if [[ "${EUID:-$(id -u)}" -eq 0 && -d /usr/local/bin ]]; then
     ln -sfn "$INSTALL_DIR/txboard.sh" /usr/local/bin/txboard
   fi
