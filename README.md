@@ -101,6 +101,8 @@ TXBoard
 ├── api.env
 ├── compose.yaml
 ├── backup.sh
+├── txboard.sh
+├── update.sh
 ├── backups/
 └── data/
     ├── plugins/
@@ -112,6 +114,8 @@ TXBoard
 - `.env`：Docker Stack 参数与数据库随机密钥
 - `api.env`：TXBoard Laravel 持久化运行配置
 - `compose.yaml`：由交互参数生成，只引用镜像，不包含 `build:`
+- `txboard.sh`：统一管理入口，提供安装、更新、服务、日志、备份、配置、诊断与卸载
+- `update.sh`：独立镜像更新器，包含更新前备份与失败自动回滚
 - `data/storage`：上传文件与 Laravel 持久化数据
 - `data/plugins`：用户安装的 TXBoard 插件
 - `backups`：数据库、APP_KEY 和上传文件备份
@@ -137,6 +141,60 @@ txboard:
 
 因此用户服务器不需要 TXBoard 源码。
 
+## 管理菜单
+
+安装完成后，默认会保存管理脚本到：
+
+```text
+/opt/txboard/txboard.sh
+```
+
+以 root 安装时还会创建：
+
+```text
+/usr/local/bin/txboard -> /opt/txboard/txboard.sh
+```
+
+之后直接运行：
+
+```bash
+sudo txboard
+```
+
+已有旧部署不需要重装。执行一次新版更新脚本即可在更新成功后自动安装/刷新管理命令：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/update.sh | sudo bash
+```
+
+主菜单提供：
+
+```text
+1) Install TXBoard
+2) Update TXBoard
+3) Service management
+4) View logs
+5) Backup management
+6) Configuration
+7) Diagnostics
+8) Uninstall TXBoard
+0) Exit
+```
+
+也可以不用菜单，直接调用子命令：
+
+```bash
+sudo txboard status
+sudo txboard update
+sudo txboard update latest
+sudo txboard backup
+sudo txboard diagnose
+```
+
+备份管理支持创建、查看、恢复、删除和修改保留数量。恢复前会自动创建一次不参与保留数量裁剪的安全备份，并保留当前访问 URL / Cookie 安全设置；完整卸载前也会先备份，并把部署目录额外打包到用户 HOME 目录。
+
+配置菜单可以切换 Caddy 自动 HTTPS、外部 HTTPS 反向代理和 HTTP 模式，并同步修改 Docker 端口映射、`APP_URL` 与安全 Cookie 配置。配置应用失败时会恢复修改前的配置文件。
+
 ## 更新
 
 默认更新当前使用的 image tag：
@@ -155,12 +213,16 @@ sudo bash -s -- --tag latest
 更新脚本默认先执行一次备份，然后：
 
 ```text
-docker compose pull txboard
+docker pull target-image
         ↓
-docker compose up -d --wait txboard
+docker compose up -d --force-recreate --wait txboard
         ↓
 xboard:install-status
+        ↓
+失败时自动恢复旧镜像并重新拉起 TXBoard
 ```
+
+更新器会记录更新前正在运行容器的 image ID。即使使用的是会移动的 `latest` 标签，更新失败时也会尝试把旧 image ID 重新标记回原标签后启动，因此不是只做字符串级的 tag 回退。
 
 不希望更新前自动备份：
 
@@ -256,6 +318,7 @@ TXBoard
 
 TXBoard-Deploy
   ├── install.sh
+  ├── txboard.sh
   └── update.sh
 ```
 
@@ -272,8 +335,9 @@ Deploy 仓库只依赖以下稳定运行接口：
 
 本仓库 CI 验证：
 
-- Bash 语法
+- Bash 语法（install / update / manager）
 - 非交互 render-only 安装
+- 完整 smoke install 后的管理命令可用性
 - 生成的 Compose 配置
 - 生成的 Compose 不包含 `build:`
 - 默认 TXBoard 公共镜像 manifest 可被匿名读取

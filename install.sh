@@ -11,6 +11,7 @@ PUBLIC_HOST="${TXBOARD_PUBLIC_HOST:-}"
 HTTP_PORT="${TXBOARD_HTTP_PORT:-}"
 HTTPS_PORT="${TXBOARD_HTTPS_PORT:-}"
 BACKUP_RETENTION="${TXBOARD_BACKUP_RETENTION:-7}"
+DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main}"
 ASSUME_YES=0
 RENDER_ONLY=0
 
@@ -154,6 +155,38 @@ detect_host() {
   printf '%s' "${host:-127.0.0.1}"
 }
 
+install_deploy_tools() {
+  local manager_tmp="$INSTALL_DIR/.txboard.sh.tmp"
+  local updater_tmp="$INSTALL_DIR/.update.sh.tmp"
+
+  if command -v curl >/dev/null 2>&1; then
+    if ! curl -fsSL "$DEPLOY_RAW_BASE/txboard.sh" -o "$manager_tmp" ||
+       ! curl -fsSL "$DEPLOY_RAW_BASE/update.sh" -o "$updater_tmp"; then
+      rm -f "$manager_tmp" "$updater_tmp"
+      warn "failed to download TXBoard management tools"
+      return 0
+    fi
+  elif command -v wget >/dev/null 2>&1; then
+    if ! wget -qO "$manager_tmp" "$DEPLOY_RAW_BASE/txboard.sh" ||
+       ! wget -qO "$updater_tmp" "$DEPLOY_RAW_BASE/update.sh"; then
+      rm -f "$manager_tmp" "$updater_tmp"
+      warn "failed to download TXBoard management tools"
+      return 0
+    fi
+  else
+    warn "curl/wget not found; skipping TXBoard management command installation"
+    return 0
+  fi
+
+  mv "$manager_tmp" "$INSTALL_DIR/txboard.sh"
+  mv "$updater_tmp" "$INSTALL_DIR/update.sh"
+  chmod 755 "$INSTALL_DIR/txboard.sh" "$INSTALL_DIR/update.sh"
+
+  if [[ "${EUID:-$(id -u)}" -eq 0 && -d /usr/local/bin ]]; then
+    ln -sfn "$INSTALL_DIR/txboard.sh" /usr/local/bin/txboard
+  fi
+}
+
 if [[ -z "$MODE" ]]; then
   if [[ "$ASSUME_YES" -eq 1 ]]; then
     MODE="http"
@@ -282,6 +315,9 @@ mkdir -p data/storage/app data/plugins backups
 cat > .env <<EOF
 TXBOARD_IMAGE=$IMAGE
 TXBOARD_ADMIN_EMAIL=$ADMIN_EMAIL
+TXBOARD_MODE=$MODE
+TXBOARD_DOMAIN=$DOMAIN
+TXBOARD_PUBLIC_HOST=$PUBLIC_HOST
 TXBOARD_DB_DATABASE=txboard
 TXBOARD_DB_USERNAME=txboard
 TXBOARD_DB_PASSWORD=$DB_PASSWORD
@@ -549,6 +585,9 @@ docker compose up -d --wait txboard >/dev/null
 log "starting periodic backups..."
 docker compose up -d backup
 
+log "installing TXBoard management command..."
+install_deploy_tools
+
 cat <<EOF
 
 TXBoard installation completed.
@@ -560,11 +599,16 @@ Image:       $IMAGE
 The administrator password was printed by xboard:install above.
 Store it now; the deploy script does not save that password.
 
+Management:
+  sudo txboard
+  $INSTALL_DIR/txboard.sh
+
 Useful commands:
-  cd $INSTALL_DIR
-  docker compose ps
-  docker compose logs -f txboard
+  sudo txboard status
+  sudo txboard logs
+  sudo txboard backup
+  sudo txboard diagnose
 
 Update:
-  curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/update.sh | sudo bash
+  sudo txboard update
 EOF
