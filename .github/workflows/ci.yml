@@ -76,6 +76,8 @@ jobs:
           sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
           sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
           sudo txboard status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
           sudo /tmp/txboard-deploy-smoke/update.sh --dir /tmp/txboard-deploy-smoke --yes --skip-backup
           sudo docker compose exec -T txboard php artisan xboard:install-status --no-interaction
 
