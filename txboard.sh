@@ -7,6 +7,12 @@ if command -v readlink >/dev/null 2>&1; then
   [[ -n "$RESOLVED" ]] && SELF="$RESOLVED"
 fi
 SCRIPT_DIR="$(cd -- "$(dirname -- "$SELF")" && pwd)"
+
+if [[ "${1:-}" == "--dir" ]]; then
+  export TXBOARD_INSTALL_DIR="${2:?missing path for --dir}"
+  shift 2
+fi
+
 LIB_DIR="${TXBOARD_MANAGER_LIB_DIR:-$SCRIPT_DIR/lib}"
 
 for module in common service backup config diagnose uninstall; do
