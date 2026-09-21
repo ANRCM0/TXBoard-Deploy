@@ -1,101 +1,101 @@
 #!/usr/bin/env bash
 
-backup_create() {
-  tx_require_docker
-  tx_require_install
-  tx_log "creating one-shot backup..."
-  tx_compose run --rm -e BACKUP_INTERVAL=0 backup
+backup_list() {
+  need_install
+  find "$TXBOARD_INSTALL_DIR/backups" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null |
+    grep -E '^[0-9]{8}T[0-9]{6}Z$' | sort -r || true
 }
 
-backup_list() {
-  tx_require_install
-  local dir="$TXBOARD_INSTALL_DIR/backups"
-  [[ -d "$dir" ]] || { tx_warn "backup directory does not exist"; return 0; }
-  printf '%-20s %-12s %-12s\n' "BACKUP" "DB" "STORAGE"
-  local item
-  for item in "$dir"/20*T*Z; do
-    [[ -d "$item" ]] || continue
-    printf '%-20s %-12s %-12s\n' "$(basename "$item")"       "$([[ -s "$item/db.sql.gz" ]] && echo yes || echo no)"       "$([[ -s "$item/storage-app.tar.gz" ]] && echo yes || echo no)"
+backup_create() {
+  docker_ok; need_install
+  compose run --rm -e BACKUP_INTERVAL=0 backup
+}
+
+backup_safety() {
+  docker_ok; need_install
+  compose run --rm -e BACKUP_INTERVAL=0 -e BACKUP_RETENTION=0 backup
+}
+
+backup_pick() {
+  local -a items=()
+  local i choice
+  mapfile -t items < <(backup_list)
+  ((${#items[@]})) || die "no backups found"
+  for i in "${!items[@]}"; do
+    printf '%d) %s\n' "$((i+1))" "${items[$i]}" > /dev/tty
   done
+  choice="$(choose "Backup" "1" "${#items[@]}")"
+  ((choice > 0)) || return 1
+  printf '%s' "${items[$((choice-1))]}"
 }
 
 backup_restore() {
-  tx_require_docker
-  tx_require_install
-  backup_list
-  printf '\nBackup name: ' > /dev/tty
-  local name dir
-  IFS= read -r name < /dev/tty || return 1
-  [[ "$name" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || tx_die "invalid backup name"
-  dir="$TXBOARD_INSTALL_DIR/backups/$name"
-  [[ -s "$dir/db.sql.gz" ]] || tx_die "database dump not found: $dir/db.sql.gz"
+  require_tty; docker_ok; need_install
+  local name path db user pass root app_url secure
+  name="$(backup_pick)" || return 0
+  path="$TXBOARD_INSTALL_DIR/backups/$name"
+  gzip -t "$path/db.sql.gz" || die "corrupt database backup"
 
-  tx_confirm "Restore $name? Current database and storage may be overwritten." "N" || return 0
+  confirm "Restore $name? A safety backup will be created first." "N" || return 0
+  backup_safety
 
-  tx_log "stopping TXBoard application..."
-  tx_compose stop txboard
+  db="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_DATABASE)"; db="${db:-txboard}"
+  user="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_USERNAME)"; user="${user:-txboard}"
+  pass="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_PASSWORD)"
+  root="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_ROOT_PASSWORD)"
+  app_url="$(env_get "$TXBOARD_INSTALL_DIR/api.env" APP_URL)"
+  secure="$(env_get "$TXBOARD_INSTALL_DIR/api.env" SESSION_SECURE_COOKIE)"
+  [[ "$db" =~ ^[A-Za-z0-9_]+$ && -n "$root" ]] || die "invalid database configuration"
 
-  tx_log "restoring database..."
-  local db user pass
-  db="$(tx_env_get TXBOARD_DB_DATABASE)"; db="${db:-txboard}"
-  user="$(tx_env_get TXBOARD_DB_USERNAME)"; user="${user:-txboard}"
-  pass="$(tx_env_get TXBOARD_DB_PASSWORD)"
-  gzip -dc "$dir/db.sql.gz" | tx_compose exec -T -e MYSQL_PWD="$pass" database     mysql --user="$user" "$db"
+  compose stop backup txboard || true
+  compose up -d --wait database
+  compose exec -T -e MYSQL_PWD="$root" database mysql -uroot -e     "DROP DATABASE IF EXISTS $db; CREATE DATABASE $db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+  gzip -dc "$path/db.sql.gz" | compose exec -T -e MYSQL_PWD="$root" database mysql -uroot "$db"
 
-  if [[ -s "$dir/storage-app.tar.gz" ]]; then
-    tx_log "restoring storage/app..."
-    mkdir -p "$TXBOARD_INSTALL_DIR/data/storage/app"
-    rm -rf "$TXBOARD_INSTALL_DIR/data/storage/app"/*
-    tar -xzf "$dir/storage-app.tar.gz" -C "$TXBOARD_INSTALL_DIR/data/storage/app"
-  fi
-
-  if [[ -s "$dir/env" ]]; then
-    tx_log "restoring api.env..."
-    cp "$dir/env" "$TXBOARD_INSTALL_DIR/api.env"
+  if [[ -f "$path/env" ]]; then
+    cp "$path/env" "$TXBOARD_INSTALL_DIR/api.env"
     chmod 600 "$TXBOARD_INSTALL_DIR/api.env"
+    env_set "$TXBOARD_INSTALL_DIR/api.env" DB_HOST database
+    env_set "$TXBOARD_INSTALL_DIR/api.env" DB_DATABASE "$db"
+    env_set "$TXBOARD_INSTALL_DIR/api.env" DB_USERNAME "$user"
+    env_set "$TXBOARD_INSTALL_DIR/api.env" DB_PASSWORD "$pass"
+    env_set "$TXBOARD_INSTALL_DIR/api.env" APP_URL "$app_url"
+    env_set "$TXBOARD_INSTALL_DIR/api.env" SESSION_SECURE_COOKIE "$secure"
   fi
 
-  tx_log "starting TXBoard..."
-  tx_compose up -d --wait txboard
-  tx_compose exec -T txboard php artisan xboard:install-status --no-interaction
-  tx_log "restore completed: $name"
-}
+  if [[ -f "$path/storage-app.tar.gz" ]]; then
+    mkdir -p "$TXBOARD_INSTALL_DIR/data/storage/app"
+    find "$TXBOARD_INSTALL_DIR/data/storage/app" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+    tar -xzf "$path/storage-app.tar.gz" -C "$TXBOARD_INSTALL_DIR/data/storage/app"
+  fi
 
-backup_delete() {
-  tx_require_install
-  backup_list
-  printf '\nBackup name to delete: ' > /dev/tty
-  local name dir
-  IFS= read -r name < /dev/tty || return 1
-  [[ "$name" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || tx_die "invalid backup name"
-  dir="$TXBOARD_INSTALL_DIR/backups/$name"
-  [[ -d "$dir" ]] || tx_die "backup not found: $name"
-  tx_confirm "Delete backup $name?" "N" || return 0
-  rm -rf "$dir"
-  tx_log "deleted: $name"
+  compose up -d --wait txboard
+  compose up -d backup
+  compose exec -T txboard php artisan xboard:install-status --no-interaction >/dev/null ||
+    die "restore validation failed"
+  log "restored $name"
 }
 
 backup_menu() {
+  local choice name value
   while true; do
-    clear 2>/dev/null || true
-    cat <<'EOF'
-TXBoard Backup Management
-
-1. Create backup now
-2. List backups
-3. Restore backup
-4. Delete backup
-0. Back
-EOF
-    printf 'Select [0-4]: ' > /dev/tty
-    IFS= read -r choice < /dev/tty || return 0
+    choice="$(choose "1 create  2 list  3 restore  4 delete  5 retention  0 back" "1" "5")"
     case "$choice" in
-      1) backup_create; tx_pause ;;
-      2) backup_list; tx_pause ;;
-      3) backup_restore; tx_pause ;;
-      4) backup_delete; tx_pause ;;
+      1) backup_create; pause ;;
+      2) backup_list; pause ;;
+      3) backup_restore; pause ;;
+      4)
+        name="$(backup_pick)" || continue
+        confirm "Delete $name?" "N" && rm -rf "$TXBOARD_INSTALL_DIR/backups/$name"
+        ;;
+      5)
+        value="$(prompt "Retention (0=keep all)" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION)")"
+        [[ "$value" =~ ^[0-9]+$ ]] || { warn "invalid retention"; continue; }
+        env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION "$value"
+        docker_ok
+        compose up -d --force-recreate backup
+        ;;
       0) return 0 ;;
-      *) tx_warn "invalid choice"; sleep 1 ;;
     esac
   done
 }
