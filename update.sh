@@ -46,7 +46,24 @@ docker info >/dev/null 2>&1 || die "Docker daemon is not reachable."
 
 cd "$INSTALL_DIR"
 
-current_image="$(grep -E '^TXBOARD_IMAGE=' .env | tail -1 | cut -d= -f2-)"
+get_env() {
+  grep -E "^$1=" .env | tail -1 | cut -d= -f2- || true
+}
+
+set_image() {
+  local value="$1" tmp
+  tmp="$(mktemp)"
+  awk -v value="$value" '
+    BEGIN { done=0 }
+    /^TXBOARD_IMAGE=/ { print "TXBOARD_IMAGE=" value; done=1; next }
+    { print }
+    END { if (!done) print "TXBOARD_IMAGE=" value }
+  ' .env > "$tmp"
+  chmod --reference=.env "$tmp" 2>/dev/null || chmod 600 "$tmp"
+  mv "$tmp" .env
+}
+
+current_image="$(get_env TXBOARD_IMAGE)"
 [[ -n "$current_image" ]] || die "TXBOARD_IMAGE is missing from $INSTALL_DIR/.env"
 
 if [[ -n "$IMAGE_TAG" ]]; then
@@ -55,6 +72,15 @@ if [[ -n "$IMAGE_TAG" ]]; then
   new_image="$image_repo:$IMAGE_TAG"
 else
   new_image="$current_image"
+fi
+
+container_id="$(docker compose ps -q txboard 2>/dev/null || true)"
+old_image_id=""
+if [[ -n "$container_id" ]]; then
+  old_image_id="$(docker inspect "$container_id" --format '{{.Image}}' 2>/dev/null || true)"
+fi
+if [[ -z "$old_image_id" ]]; then
+  old_image_id="$(docker image inspect "$current_image" --format '{{.Id}}' 2>/dev/null || true)"
 fi
 
 if [[ "$ASSUME_YES" -eq 0 ]]; then
@@ -74,22 +100,42 @@ log "pulling $new_image ..."
 docker pull "$new_image"
 
 if [[ "$new_image" != "$current_image" ]]; then
-  tmp="$(mktemp)"
-  awk -v value="$new_image" '
-    BEGIN { done=0 }
-    /^TXBOARD_IMAGE=/ { print "TXBOARD_IMAGE=" value; done=1; next }
-    { print }
-    END { if (!done) print "TXBOARD_IMAGE=" value }
-  ' .env > "$tmp"
-  chmod --reference=.env "$tmp" 2>/dev/null || chmod 600 "$tmp"
-  mv "$tmp" .env
+  set_image "$new_image"
 fi
 
+rollback() {
+  warn "update validation failed; attempting automatic rollback to $current_image"
+  set_image "$current_image"
+
+  if [[ -n "$old_image_id" ]] && docker image inspect "$old_image_id" >/dev/null 2>&1; then
+    if docker tag "$old_imae_id" "$current_image"; then
+      log "restored previous image tag from $old_image_id"
+    else
+      warn "could not re-tag the previous image; rollback will use the currently available tag"
+    fi
+  else
+    warn "previous image id is unavailable; tag-level rollback only"
+  fi
+
+  if docker compose up -d --force-recreate --remove-orphans --wait txboard &&
+     docker compose exec -T txboard php artisan xboard:install-status --no-interaction >/dev/null; then
+    log "rollback completed successfully"
+    return 0
+  fi
+
+  warn "automatic rollback failed; inspect: cd $INSTALL_DIR && docker compose logs txboard"
+  return 1
+}
+
 log "recreating TXBoard..."
-docker compose up -d --remove-orphans --wait txboard
+if ! docker compose up -d --force-recreate --remove-orphans --wait txboard; then
+  rollback || true
+  die "update failed while starting the new container"
+fi
 
 if ! docker compose exec -T txboard php artisan xboard:install-status --no-interaction >/dev/null; then
-  die "updated container is running but installation state is incomplete"
+  rollback || true
+  die "updated container failed installation-state validation"
 fi
 
 log "update completed: $new_image"
