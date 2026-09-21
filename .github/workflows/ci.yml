@@ -29,13 +29,15 @@ jobs:
           test -f /tmp/txboard-deploy-ci/compose.yaml
           test -f /tmp/txboard-deploy-ci/.env
           test -f /tmp/txboard-deploy-ci/api.env
-          docker compose -f /tmp/txboard-deploy-ci/compose.yaml \
+          sudo docker compose -f /tmp/txboard-deploy-ci/compose.yaml \
             --env-file /tmp/txboard-deploy-ci/.env config >/dev/null
 
       - name: Require image-only Compose
         run: |
-          ! grep -Eq '^[[:space:]]*build:' /tmp/txboard-deploy-ci/compose.yaml
-          grep -q 'ghcr.io/paimoncai/txboard:latest' /tmp/txboard-deploy-ci/.env
+          ! sudo grep -Eq '^[[:space:]]*build:' /tmp/txboard-deploy-ci/compose.yaml
+          sudo grep -q 'ghcr.io/paimoncai/txboard:latest' /tmp/txboard-deploy-ci/.env
+          test "$(sudo stat -c '%a' /tmp/txboard-deploy-ci/.env)" = "600"
+          test "$(sudo stat -c '%a' /tmp/txboard-deploy-ci/api.env)" = "600"
 
       - name: Check public image manifest
         run: docker manifest inspect ghcr.io/paimoncai/txboard:latest >/dev/null
