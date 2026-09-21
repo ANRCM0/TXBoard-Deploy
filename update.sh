@@ -137,7 +137,7 @@ fi
 
 if [[ "$SKIP_BACKUP" -eq 0 ]]; then
   log "creating one-shot backup before update..."
-  docker compose run --rm -e BACKUP_INTERVAL=0 backup
+  docker compose run --rm -e BACKUP_INTERVAL=0 backup </dev/null
 fi
 
 log "pulling $new_image ..."
@@ -162,7 +162,7 @@ rollback() {
   fi
 
   if docker compose up -d --force-recreate --remove-orphans --wait txboard &&
-     docker compose exec -T txboard php artisan txboard:install-status --no-interaction >/dev/null; then
+     docker compose exec -T txboard php artisan txboard:install-status --no-interaction </dev/null >/dev/null; then
     log "rollback completed successfully"
     return 0
   fi
@@ -177,7 +177,7 @@ if ! docker compose up -d --force-recreate --remove-orphans --wait txboard; then
   die "update failed while starting the new container"
 fi
 
-if ! docker compose exec -T txboard php artisan txboard:install-status --no-interaction >/dev/null; then
+if ! docker compose exec -T txboard php artisan txboard:install-status --no-interaction </dev/null >/dev/null; then
   rollback || true
   die "updated container failed installation-state validation"
 fi
