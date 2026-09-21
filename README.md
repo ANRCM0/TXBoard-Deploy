@@ -44,6 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/insta
 - TXBoard 镜像标签，例如 `latest`
 - 管理员邮箱
 - 安装目录
+- Docker Compose 项目名（默认 `txboard`）
 - 公网访问模式
 - 域名或 IP
 - HTTP / HTTPS 端口
@@ -140,7 +141,7 @@ TXBoard
 
 其中：
 
-- `.env`：Docker Stack 参数与数据库随机密钥
+- `.env`：Docker Stack 参数、固定的 Compose 项目名与数据库随机密钥
 - `api.env`：TXBoard Laravel 持久化运行配置
 - `compose.yaml`：由交互参数生成，只引用镜像，不包含 `build:`
 - `txboard.sh`：统一管理入口，只负责菜单与命令路由
@@ -285,6 +286,7 @@ sudo env \
 TXBOARD_IMAGE_REPO
 TXBOARD_IMAGE_TAG
 TXBOARD_INSTALL_DIR
+TXBOARD_PROJECT_NAME
 TXBOARD_ADMIN_EMAIL
 TXBOARD_MODE
 TXBOARD_DOMAIN
@@ -315,6 +317,8 @@ http
 local
 external
 ```
+
+`TXBOARD_PROJECT_NAME` 用于固定 Docker Compose 项目名，默认值为 `txboard`。项目名只能包含小写字母、数字、连字符和下划线，并且必须以字母或数字开头。也可以使用 `--project-name` 参数设置。容器名将稳定使用该项目前缀，例如 `txboard-txboard-1`；不同实例应使用不同项目名。
 
 外部数据库无人值守安装至少需要设置 `TXBOARD_DB_HOST`、`TXBOARD_DB_USERNAME` 和 `TXBOARD_DB_PASSWORD`；端口默认 `3306`，库名默认 `txboard`。
 
