@@ -717,13 +717,13 @@ log "starting TXBoard bootstrap container..."
 docker compose up -d --remove-orphans txboard
 
 log "initializing TXBoard..."
-docker compose exec -T txboard php artisan ttxboard:install
+docker compose exec -T txboard php artisan txboard:install
 
 log "restarting TXBoard with the completed runtime configuration..."
 docker compose restart txboard >/dev/null
 docker compose up -d --wait txboard >/dev/null
 
-if ! docker compose exec -T txboard php artisan tttxboard:install-status --no-interaction >/dev/null; then
+if ! docker compose exec -T txboard php artisan txboard:install-status --no-interaction >/dev/null; then
   die "TXBoard installation state is incomplete. Inspect: cd $INSTALL_DIR && docker compose logs txboard"
 fi
 
