@@ -70,6 +70,9 @@ jobs:
           sudo test -x /tmp/txboard-deploy-smoke/txboard.sh
           sudo test -x /tmp/txboard-deploy-smoke/update.sh
           sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo txboard status >/dev/null
+          sudo /tmp/txboard-deploy-smoke/update.sh --dir /tmp/txboard-deploy-smoke --yes --skip-backup
+          sudo docker compose exec -T txboard php artisan xboard:install-status --no-interaction
 
       - name: Cleanup
         if: always()
