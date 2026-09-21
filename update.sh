@@ -5,6 +5,7 @@ INSTALL_DIR="${TXBOARD_INSTALL_DIR:-/opt/txboard}"
 IMAGE_TAG=""
 SKIP_BACKUP=0
 ASSUME_YES=0
+DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main}"
 
 log() { printf '[TXBoard Deploy] %s\n' "$*"; }
 warn() { printf '[TXBoard Deploy] WARNING: %s\n' "$*" >&2; }
@@ -48,6 +49,38 @@ cd "$INSTALL_DIR"
 
 get_env() {
   grep -E "^$1=" .env | tail -1 | cut -d= -f2- || true
+}
+
+refresh_tools() {
+  local manager_tmp="$INSTALL_DIR/.txboard.sh.tmp"
+  local updater_tmp="$INSTALL_DIR/.update.sh.tmp"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$DEPLOY_RAW_BASE/txboard.sh" -o "$manager_tmp" &&
+      curl -fsSL "$DEPLOY_RAW_BASE/update.sh" -o "$updater_tmp" || {
+        rm -f "$manager_tmp" "$updater_tmp"
+        warn "could not refresh TXBoard management tools"
+        return 0
+      }
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$manager_tmp" "$DEPLOY_RAW_BASE/txboard.sh" &&
+      wget -qO "$updater_tmp" "$DEPLOY_RAW_BASE/update.sh" || {
+        rm -f "$manager_tmp" "$updater_tmp"
+        warn "could not refresh TXBoard management tools"
+        return 0
+      }
+  else
+    warn "curl/wget not found; management tools were not refreshed"
+    return 0
+  fi
+
+  mv "$manager_tmp" "$INSTALL_DIR/txboard.sh"
+  mv "$updater_tmp" "$INSTALL_DIR/update.sh"
+  chmod 755 "$INSTALL_DIR/txboard.sh" "$INSTALL_DIR/update.sh"
+  if [[ "${EUID:-$(id -u)}" -eq 0 && -d /usr/local/bin ]]; then
+    ln -sfn "$INSTALL_DIR/txboard.sh" /usr/local/bin/txboard
+  fi
+  log "management command refreshed"
 }
 
 set_image() {
@@ -139,4 +172,5 @@ if ! docker compose exec -T txboard php artisan xboard:install-status --no-inter
 fi
 
 log "update completed: $new_image"
+refresh_tools
 docker compose ps txboard

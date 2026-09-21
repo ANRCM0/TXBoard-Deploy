@@ -161,6 +161,12 @@ txboard:
 sudo txboard
 ```
 
+已有旧部署不需要重装。执行一次新版更新脚本即可在更新成功后自动安装/刷新管理命令：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/update.sh | sudo bash
+```
+
 主菜单提供：
 
 ```text
