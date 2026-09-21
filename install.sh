@@ -712,18 +712,18 @@ else
 fi
 
 # Start the real application container before installation, but do not wait for
-# its health check yet. xboard:install relies on the normal container runtime.
+# its health check yet. txboard:install relies on the normal container runtime.
 log "starting TXBoard bootstrap container..."
 docker compose up -d --remove-orphans txboard
 
 log "initializing TXBoard..."
-docker compose exec -T txboard php artisan xboard:install
+docker compose exec -T txboard php artisan ttxboard:install
 
 log "restarting TXBoard with the completed runtime configuration..."
 docker compose restart txboard >/dev/null
 docker compose up -d --wait txboard >/dev/null
 
-if ! docker compose exec -T txboard php artisan xboard:install-status --no-interaction >/dev/null; then
+if ! docker compose exec -T txboard php artisan tttxboard:install-status --no-interaction >/dev/null; then
   die "TXBoard installation state is incomplete. Inspect: cd $INSTALL_DIR && docker compose logs txboard"
 fi
 
@@ -741,7 +741,7 @@ Panel:       $APP_URL/admin/
 Install dir: $INSTALL_DIR
 Image:       $IMAGE
 
-The administrator password was printed by xboard:install above.
+The administrator password was printed by txboard:install above.
 Store it now; the deploy script does not save that password.
 
 Management:
