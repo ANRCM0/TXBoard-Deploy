@@ -103,6 +103,13 @@ TXBoard
 ├── backup.sh
 ├── txboard.sh
 ├── update.sh
+├── lib/
+│   ├── common.sh
+│   ├── service.sh
+│   ├── backup.sh
+│   ├── config.sh
+│   ├── diagnose.sh
+│   └── uninstall.sh
 ├── backups/
 └── data/
     ├── plugins/
@@ -114,7 +121,8 @@ TXBoard
 - `.env`：Docker Stack 参数与数据库随机密钥
 - `api.env`：TXBoard Laravel 持久化运行配置
 - `compose.yaml`：由交互参数生成，只引用镜像，不包含 `build:`
-- `txboard.sh`：统一管理入口，提供安装、更新、服务、日志、备份、配置、诊断与卸载
+- `txboard.sh`：统一管理入口，只负责菜单与命令路由
+- `lib/`：服务、备份恢复、配置、诊断和卸载等独立运维模块
 - `update.sh`：独立镜像更新器，包含更新前备份与失败自动回滚
 - `data/storage`：上传文件与 Laravel 持久化数据
 - `data/plugins`：用户安装的 TXBoard 插件
