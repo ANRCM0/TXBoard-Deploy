@@ -21,6 +21,9 @@ DB_ROOT_PASSWORD="${TXBOARD_DB_ROOT_PASSWORD:-}"
 DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main}"
 ASSUME_YES=0
 RENDER_ONLY=0
+RESET_LOCAL_DB=0
+COMPOSE_PROJECT_NAME="txboard"
+LOCAL_DB_VOLUME="${COMPOSE_PROJECT_NAME}_database-data"
 
 log() { printf '[TXBoard Deploy] %s\n' "$*"; }
 warn() { printf '[TXBoard Deploy] WARNING: %s\n' "$*" >&2; }
@@ -51,6 +54,8 @@ Options:
   --db-user USER      Database username (default: txboard)
   --db-password PASS  Database password (prefer environment variable)
   --yes               Non-interactive; use CLI/environment/default values
+  --reset-local-db    Delete an existing managed MySQL volume before a fresh install
+                      (DESTRUCTIVE: all data in that volume will be lost)
   --render-only       Generate and validate files, do not pull/start containers
   -h, --help          Show this help
 
@@ -93,6 +98,7 @@ while [[ $# -gt 0 ]]; do
     --db-user) DB_USERNAME="${2:?missing value for --db-user}"; shift 2 ;;
     --db-password) DB_PASSWORD="${2:?missing value for --db-password}"; shift 2 ;;
     --yes) ASSUME_YES=1; shift ;;
+    --reset-local-db) RESET_LOCAL_DB=1; shift ;;
     --render-only) RENDER_ONLY=1; ASSUME_YES=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
@@ -315,6 +321,40 @@ case "$DB_MODE" in
     DB_PORT="3306"
     [[ "$DB_DATABASE" =~ ^[A-Za-z0-9_]+$ ]] || die "invalid database name: $DB_DATABASE"
     [[ -n "$DB_USERNAME" && ! "$DB_USERNAME" =~ [[:space:]] ]] || die "invalid database username"
+
+    # MYSQL_USER/MYSQL_PASSWORD/MYSQL_ROOT_PASSWORD only initialize an empty
+    # /var/lib/mysql. Reusing a stale Compose volume with freshly generated
+    # credentials leaves the old MySQL users unchanged and makes TXBoard fail
+    # with SQLSTATE[HY000] [1045]. Detect that state before generating secrets.
+    if [[ "$RENDER_ONLY" -eq 0 ]] && docker volume inspect "$LOCAL_DB_VOLUME" >/dev/null 2>&1; then
+      if [[ "$RESET_LOCAL_DB" -eq 1 ]]; then
+        warn "deleting existing managed MySQL volume: $LOCAL_DB_VOLUME"
+        docker volume rm "$LOCAL_DB_VOLUME" >/dev/null ||
+          die "cannot remove $LOCAL_DB_VOLUME; it may still be attached to another TXBoard container"
+      elif [[ "$ASSUME_YES" -eq 1 ]]; then
+        die "existing managed MySQL volume $LOCAL_DB_VOLUME detected. Refusing to generate new credentials for an initialized database. Preserve it by recovering the original deployment/credentials, or rerun a disposable fresh install with --reset-local-db."
+      else
+        cat > /dev/tty <<EOF
+
+Existing TXBoard managed MySQL volume detected:
+
+  $LOCAL_DB_VOLUME
+
+MySQL initialization passwords are only applied to an empty data directory.
+Continuing with newly generated passwords would make the application fail
+authentication and can hide an existing database from the new deployment.
+
+EOF
+        if confirm "Delete this database volume and continue with a completely fresh install? ALL DATABASE DATA WILL BE LOST." "N"; then
+          warn "deleting existing managed MySQL volume: $LOCAL_DB_VOLUME"
+          docker volume rm "$LOCAL_DB_VOLUME" >/dev/null ||
+            die "cannot remove $LOCAL_DB_VOLUME; it may still be attached to another TXBoard container"
+        else
+          die "installation stopped to preserve the existing database volume"
+        fi
+      fi
+    fi
+
     DB_PASSWORD="${DB_PASSWORD:-$(random_hex)}"
     DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-$(random_hex)}"
     ;;
@@ -608,7 +648,7 @@ YAML
 fi
 
 cat > compose.yaml <<EOF
-name: txboard
+name: $COMPOSE_PROJECT_NAME
 
 x-logging: &default-logging
   driver: json-file
