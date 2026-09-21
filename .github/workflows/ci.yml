@@ -16,6 +16,7 @@ jobs:
           bash -n install.sh
           bash -n update.sh
           bash -n txboard.sh
+          for f in lib/*.sh; do bash -n "$f"; done
 
       - name: Render deployment
         env:
@@ -70,6 +71,9 @@ jobs:
           curl -fsS http://127.0.0.1:18081/api/health | grep -q '"status":"ok"'
           sudo test -x /tmp/txboard-deploy-smoke/txboard.sh
           sudo test -x /tmp/txboard-deploy-smoke/update.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/common.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/backup.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
           sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
           sudo txboard status >/dev/null
           sudo /tmp/txboard-deploy-smoke/update.sh --dir /tmp/txboard-deploy-smoke --yes --skip-backup
