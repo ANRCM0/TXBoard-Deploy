@@ -1,0 +1,41 @@
+name: deploy-ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check shell syntax
+        run: |
+          bash -n install.sh
+          bash -n update.sh
+
+      - name: Render deployment
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18080
+          TXBOARD_IMAGE_TAG: latest
+        run: |
+          sudo -E bash install.sh --yes --render-only
+          test -f /tmp/txboard-deploy-ci/compose.yaml
+          test -f /tmp/txboard-deploy-ci/.env
+          test -f /tmp/txboard-deploy-ci/api.env
+          docker compose -f /tmp/txboard-deploy-ci/compose.yaml \
+            --env-file /tmp/txboard-deploy-ci/.env config >/dev/null
+
+      - name: Require image-only Compose
+        run: |
+          ! grep -Eq '^[[:space:]]*build:' /tmp/txboard-deploy-ci/compose.yaml
+          grep -q 'ghcr.io/paimoncai/txboard:latest' /tmp/txboard-deploy-ci/.env
+
+      - name: Check public image manifest
+        run: docker manifest inspect ghcr.io/paimoncai/txboard:latest >/dev/null
