@@ -11,6 +11,13 @@ PUBLIC_HOST="${TXBOARD_PUBLIC_HOST:-}"
 HTTP_PORT="${TXBOARD_HTTP_PORT:-}"
 HTTPS_PORT="${TXBOARD_HTTPS_PORT:-}"
 BACKUP_RETENTION="${TXBOARD_BACKUP_RETENTION:-7}"
+DB_MODE="${TXBOARD_DB_MODE:-}"
+DB_HOST="${TXBOARD_DB_HOST:-}"
+DB_PORT="${TXBOARD_DB_PORT:-3306}"
+DB_DATABASE="${TXBOARD_DB_DATABASE:-txboard}"
+DB_USERNAME="${TXBOARD_DB_USERNAME:-txboard}"
+DB_PASSWORD="${TXBOARD_DB_PASSWORD:-}"
+DB_ROOT_PASSWORD="${TXBOARD_DB_ROOT_PASSWORD:-}"
 DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main}"
 ASSUME_YES=0
 RENDER_ONLY=0
@@ -37,6 +44,12 @@ Options:
   --https-port PORT   Host HTTPS port (auto-https only)
   --backup-retention N
                       Number of backup archives to retain (default: 7)
+  --db-mode MODE      local | external (default: local)
+  --db-host HOST      External MySQL host
+  --db-port PORT      External MySQL port (default: 3306)
+  --db-name NAME      Database name (default: txboard)
+  --db-user USER      Database username (default: txboard)
+  --db-password PASS  Database password (prefer environment variable)
   --yes               Non-interactive; use CLI/environment/default values
   --render-only       Generate and validate files, do not pull/start containers
   -h, --help          Show this help
@@ -52,6 +65,13 @@ Environment variables:
   TXBOARD_HTTP_PORT
   TXBOARD_HTTPS_PORT
   TXBOARD_BACKUP_RETENTION
+  TXBOARD_DB_MODE
+  TXBOARD_DB_HOST
+  TXBOARD_DB_PORT
+  TXBOARD_DB_DATABASE
+  TXBOARD_DB_USERNAME
+  TXBOARD_DB_PASSWORD
+  TXBOARD_DB_ROOT_PASSWORD
 EOF
 }
 
@@ -66,6 +86,12 @@ while [[ $# -gt 0 ]]; do
     --http-port) HTTP_PORT="${2:?missing value for --http-port}"; shift 2 ;;
     --https-port) HTTPS_PORT="${2:?missing value for --https-port}"; shift 2 ;;
     --backup-retention) BACKUP_RETENTION="${2:?missing value for --backup-retention}"; shift 2 ;;
+    --db-mode) DB_MODE="${2:?missing value for --db-mode}"; shift 2 ;;
+    --db-host) DB_HOST="${2:?missing value for --db-host}"; shift 2 ;;
+    --db-port) DB_PORT="${2:?missing value for --db-port}"; shift 2 ;;
+    --db-name) DB_DATABASE="${2:?missing value for --db-name}"; shift 2 ;;
+    --db-user) DB_USERNAME="${2:?missing value for --db-user}"; shift 2 ;;
+    --db-password) DB_PASSWORD="${2:?missing value for --db-password}"; shift 2 ;;
     --yes) ASSUME_YES=1; shift ;;
     --render-only) RENDER_ONLY=1; ASSUME_YES=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -101,6 +127,25 @@ prompt() {
   fi
   IFS= read -r value < /dev/tty || true
   printf '%s' "${value:-$default}"
+}
+
+prompt_secret() {
+  local label="$1" default="${2-}" value=""
+  if [[ "$ASSUME_YES" -eq 1 ]]; then
+    printf '%s' "$default"
+    return
+  fi
+  printf '%s: ' "$label" > /dev/tty
+  IFS= read -r -s value < /dev/tty || true
+  printf '\n' > /dev/tty
+  printf '%s' "${value:-$default}"
+}
+
+dotenv_quote() {
+  local value="$1"
+  [[ "$value" != *"'"* && "$value" != *$'\n'* && "$value" != *$'\r'* ]] ||
+    die "database password cannot contain a single quote or newline"
+  printf "'%s'" "$value"
 }
 
 choose() {
@@ -245,6 +290,58 @@ if [[ -e "$INSTALL_DIR/compose.yaml" || -e "$INSTALL_DIR/.env" || -e "$INSTALL_D
   die "an existing TXBoard deployment was found in $INSTALL_DIR. Use update.sh instead of reinstalling."
 fi
 
+if [[ -z "$DB_MODE" ]]; then
+  if [[ "$ASSUME_YES" -eq 1 ]]; then
+    DB_MODE="local"
+  else
+    cat > /dev/tty <<'EOF'
+
+Choose database mode:
+  1) Managed MySQL 8.4 container
+  2) External MySQL server
+
+EOF
+    db_choice="$(choose "Database" "1" "2")"
+    case "$db_choice" in
+      1) DB_MODE="local" ;;
+      2) DB_MODE="external" ;;
+    esac
+  fi
+fi
+
+case "$DB_MODE" in
+  local)
+    DB_HOST="database"
+    DB_PORT="3306"
+    [[ "$DB_DATABASE" =~ ^[A-Za-z0-9_]+$ ]] || die "invalid database name: $DB_DATABASE"
+    [[ -n "$DB_USERNAME" && ! "$DB_USERNAME" =~ [[:space:]] ]] || die "invalid database username"
+    DB_PASSWORD="${DB_PASSWORD:-$(random_hex)}"
+    DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-$(random_hex)}"
+    ;;
+  external)
+    DB_HOST="$(prompt "External MySQL host" "$DB_HOST")"
+    DB_PORT="$(prompt "External MySQL port" "${DB_PORT:-3306}")"
+    DB_DATABASE="$(prompt "Database name" "${DB_DATABASE:-txboard}")"
+    DB_USERNAME="$(prompt "Database username" "$DB_USERNAME")"
+    if [[ "$ASSUME_YES" -eq 1 && -z "$DB_PASSWORD" ]]; then
+      die "external database mode requires TXBOARD_DB_PASSWORD or --db-password"
+    fi
+    DB_PASSWORD="$(prompt_secret "Database password" "$DB_PASSWORD")"
+    [[ -n "$DB_HOST" && ! "$DB_HOST" =~ [[:space:]] ]] || die "invalid external database host"
+    valid_port "$DB_PORT" || die "invalid external database port: $DB_PORT"
+    [[ "$DB_DATABASE" =~ ^[A-Za-z0-9_]+$ ]] || die "invalid database name: $DB_DATABASE"
+    [[ -n "$DB_USERNAME" && ! "$DB_USERNAME" =~ [[:space:]] ]] || die "invalid database username"
+    [[ -n "$DB_PASSWORD" ]] || die "database password cannot be empty"
+    DB_ROOT_PASSWORD=""
+    if [[ "$DB_HOST" == "127.0.0.1" || "$DB_HOST" == "localhost" ]]; then
+      warn "external DB host $DB_HOST points inside the container; use host.docker.internal for a database on this Docker host"
+    fi
+    ;;
+  *) die "invalid database mode: $DB_MODE" ;;
+esac
+
+DB_PASSWORD_ENV="$(dotenv_quote "$DB_PASSWORD")"
+
 APP_URL=""
 SITE_ADDRESS=":80"
 HTTP_BIND="0.0.0.0"
@@ -303,6 +400,8 @@ Admin email:    $ADMIN_EMAIL
 Install dir:    $INSTALL_DIR
 HTTP mapping:   $HTTP_BIND:$HTTP_PORT -> container:80
 Backup retain:  $BACKUP_RETENTION
+Database mode:   $DB_MODE
+Database:        $DB_HOST:$DB_PORT/$DB_DATABASE
 EOF
   if [[ "$PUBLISH_HTTPS" -eq 1 ]]; then
     printf 'HTTPS mapping:  %s:%s -> container:443\n' "$HTTPS_BIND" "$HTTPS_PORT" > /dev/tty
@@ -318,9 +417,6 @@ mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 umask 077
 
-DB_PASSWORD="$(random_hex)"
-DB_ROOT_PASSWORD="$(random_hex)"
-
 mkdir -p data/storage/app data/plugins backups
 
 cat > .env <<EOF
@@ -329,9 +425,12 @@ TXBOARD_ADMIN_EMAIL=$ADMIN_EMAIL
 TXBOARD_MODE=$MODE
 TXBOARD_DOMAIN=$DOMAIN
 TXBOARD_PUBLIC_HOST=$PUBLIC_HOST
-TXBOARD_DB_DATABASE=txboard
-TXBOARD_DB_USERNAME=txboard
-TXBOARD_DB_PASSWORD=$DB_PASSWORD
+TXBOARD_DB_MODE=$DB_MODE
+TXBOARD_DB_HOST=$DB_HOST
+TXBOARD_DB_PORT=$DB_PORT
+TXBOARD_DB_DATABASE=$DB_DATABASE
+TXBOARD_DB_USERNAME=$DB_USERNAME
+TXBOARD_DB_PASSWORD=$DB_PASSWORD_ENV
 TXBOARD_DB_ROOT_PASSWORD=$DB_ROOT_PASSWORD
 TXBOARD_HTTP_BIND=$HTTP_BIND
 TXBOARD_HTTP_PORT=$HTTP_PORT
@@ -353,11 +452,11 @@ APP_URL=$APP_URL
 LOG_CHANNEL=stack
 LOG_LEVEL=warning
 DB_CONNECTION=mysql
-DB_HOST=database
-DB_PORT=3306
-DB_DATABASE=txboard
-DB_USERNAME=txboard
-DB_PASSWORD=$DB_PASSWORD
+DB_HOST=$DB_HOST
+DB_PORT=$DB_PORT
+DB_DATABASE=$DB_DATABASE
+DB_USERNAME=$DB_USERNAME
+DB_PASSWORD=$DB_PASSWORD_ENV
 REDIS_HOST=/data/redis.sock
 REDIS_PASSWORD=null
 REDIS_PORT=0
@@ -465,6 +564,49 @@ else
   PORTS_BLOCK='      - "${TXBOARD_HTTP_BIND:-0.0.0.0}:${TXBOARD_HTTP_PORT:-80}:80"'
 fi
 
+DATABASE_SERVICE_BLOCK=""
+TXBOARD_DB_DEPENDS_BLOCK=""
+BACKUP_DB_DEPENDS_BLOCK=""
+DATABASE_VOLUME_BLOCK=""
+DB_EXTRA_HOSTS_BLOCK=""
+
+if [[ "$DB_MODE" == "local" ]]; then
+  DATABASE_SERVICE_BLOCK="$(cat <<'YAML'
+  database:
+    image: mysql:8.4.11
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      MYSQL_DATABASE: ${TXBOARD_DB_DATABASE:-txboard}
+      MYSQL_USER: ${TXBOARD_DB_USERNAME:-txboard}
+      MYSQL_PASSWORD: ${TXBOARD_DB_PASSWORD:?missing TXBOARD_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${TXBOARD_DB_ROOT_PASSWORD:?missing TXBOARD_DB_ROOT_PASSWORD}
+    volumes:
+      - database-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "--host=127.0.0.1", "--user=root", "--password=${TXBOARD_DB_ROOT_PASSWORD:?}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+YAML
+)"
+  TXBOARD_DB_DEPENDS_BLOCK="$(cat <<'YAML'
+    depends_on:
+      database:
+        condition: service_healthy
+YAML
+)"
+  BACKUP_DB_DEPENDS_BLOCK="$TXBOARD_DB_DEPENDS_BLOCK"
+  DATABASE_VOLUME_BLOCK="  database-data:"
+else
+  DB_EXTRA_HOSTS_BLOCK="$(cat <<'YAML'
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+YAML
+)"
+fi
+
 cat > compose.yaml <<EOF
 name: txboard
 
@@ -475,32 +617,14 @@ x-logging: &default-logging
     max-file: "3"
 
 services:
-  database:
-    image: mysql:8.4.11
-    restart: unless-stopped
-    logging: *default-logging
-    environment:
-      MYSQL_DATABASE: \${TXBOARD_DB_DATABASE:-txboard}
-      MYSQL_USER: \${TXBOARD_DB_USERNAME:-txboard}
-      MYSQL_PASSWORD: \${TXBOARD_DB_PASSWORD:?missing TXBOARD_DB_PASSWORD}
-      MYSQL_ROOT_PASSWORD: \${TXBOARD_DB_ROOT_PASSWORD:?missing TXBOARD_DB_ROOT_PASSWORD}
-    volumes:
-      - database-data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "--host=127.0.0.1", "--user=root", "--password=\${TXBOARD_DB_ROOT_PASSWORD:?}"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 40s
-
+$DATABASE_SERVICE_BLOCK
   txboard:
     image: \${TXBOARD_IMAGE:?missing TXBOARD_IMAGE}
     restart: unless-stopped
     logging: *default-logging
     stop_grace_period: 30s
-    depends_on:
-      database:
-        condition: service_healthy
+$TXBOARD_DB_DEPENDS_BLOCK
+$DB_EXTRA_HOSTS_BLOCK
     volumes:
       - ./data/storage:/www/storage
       - ./data/plugins:/www/plugins
@@ -512,8 +636,8 @@ services:
       docker: "true"
       ADMIN_ACCOUNT: \${TXBOARD_ADMIN_EMAIL:?missing TXBOARD_ADMIN_EMAIL}
       DB_CONNECTION: mysql
-      DB_HOST: database
-      DB_PORT: 3306
+      DB_HOST: \${TXBOARD_DB_HOST:-database}
+      DB_PORT: \${TXBOARD_DB_PORT:-3306}
       DB_DATABASE: \${TXBOARD_DB_DATABASE:-txboard}
       DB_USERNAME: \${TXBOARD_DB_USERNAME:-txboard}
       DB_PASSWORD: \${TXBOARD_DB_PASSWORD:?missing TXBOARD_DB_PASSWORD}
@@ -540,13 +664,12 @@ $PORTS_BLOCK
     image: mysql:8.4.11
     restart: unless-stopped
     logging: *default-logging
-    depends_on:
-      database:
-        condition: service_healthy
+$BACKUP_DB_DEPENDS_BLOCK
+$DB_EXTRA_HOSTS_BLOCK
     entrypoint: ["/bin/sh", "/usr/local/bin/txboard-backup.sh"]
     environment:
-      DB_HOST: database
-      DB_PORT: 3306
+      DB_HOST: \${TXBOARD_DB_HOST:-database}
+      DB_PORT: \${TXBOARD_DB_PORT:-3306}
       DB_DATABASE: \${TXBOARD_DB_DATABASE:-txboard}
       DB_USERNAME: \${TXBOARD_DB_USERNAME:-txboard}
       DB_PASSWORD: \${TXBOARD_DB_PASSWORD:?missing TXBOARD_DB_PASSWORD}
@@ -561,7 +684,7 @@ $PORTS_BLOCK
       - ./data/storage/app:/backup-source/api/storage/app:ro
 
 volumes:
-  database-data:
+$DATABASE_VOLUME_BLOCK
   api-redis:
   caddy-data:
   caddy-config:
@@ -579,8 +702,14 @@ fi
 log "pulling TXBoard and infrastructure images..."
 docker compose pull
 
-log "starting database..."
-docker compose up -d --remove-orphans --wait database
+if [[ "$DB_MODE" == "local" ]]; then
+  log "starting managed database..."
+  docker compose up -d --remove-orphans --wait database
+else
+  log "checking external database connectivity..."
+  docker compose run --rm --no-deps --entrypoint sh backup -lc \
+    'MYSQL_PWD="$DB_PASSWORD" mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="SELECT 1" >/dev/null'
+fi
 
 # Start the real application container before installation, but do not wait for
 # its health check yet. xboard:install relies on the normal container runtime.
