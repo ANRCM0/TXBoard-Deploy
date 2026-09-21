@@ -748,13 +748,13 @@ if [[ "$DB_MODE" == "local" ]]; then
 
   log "verifying managed database credentials..."
   if ! docker compose exec -T database sh -lc \
-      'MYSQL_PWD="$MYSQL_PASSWORD" mysql --protocol=TCP --host=127.0.0.1 --port=3306 --user="$MYSQL_USER" --database="$MYSQL_DATABASE" --execute="SELECT 1" >/dev/null'; then
+      'MYSQL_PWD="$MYSQL_PASSWORD" mysql --protocol=TCP --host=127.0.0.1 --port=3306 --user="$MYSQL_USER" --database="$MYSQL_DATABASE" --execute="SELECT 1" >/dev/null' </dev/null; then
     die "managed MySQL rejected the configured TXBoard credentials. The database volume may have been initialized with older passwords. Preserve existing data and recover its original credentials, or remove the stale deployment and rerun a disposable fresh install with --reset-local-db."
   fi
 else
   log "checking external database connectivity..."
   docker compose run --rm --no-deps --entrypoint sh backup -lc \
-    'MYSQL_PWD="$DB_PASSWORD" mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="SELECT 1" >/dev/null'
+    'MYSQL_PWD="$DB_PASSWORD" mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="SELECT 1" >/dev/null' </dev/null
 fi
 
 # Start the real application container before installation, but do not wait for
@@ -763,13 +763,13 @@ log "starting TXBoard bootstrap container..."
 docker compose up -d --remove-orphans txboard
 
 log "initializing TXBoard..."
-docker compose exec -T txboard php artisan txboard:install
+docker compose exec -T txboard php artisan txboard:install </dev/null
 
 log "restarting TXBoard with the completed runtime configuration..."
 docker compose restart txboard >/dev/null
 docker compose up -d --wait txboard >/dev/null
 
-if ! docker compose exec -T txboard php artisan txboard:install-status --no-interaction >/dev/null; then
+if ! docker compose exec -T txboard php artisan txboard:install-status --no-interaction </dev/null >/dev/null; then
   die "TXBoard installation state is incomplete. Inspect: cd $INSTALL_DIR && docker compose logs txboard"
 fi
 
