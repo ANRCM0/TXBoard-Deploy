@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 
-TXBOARD_INSTALL_DIR="${TXBOARD_INSTALL_DIR:-/opt/txboard}"
+if [[ -n "${TXBOARD_INSTALL_DIR:-}" ]]; then
+  TXBOARD_INSTALL_DIR="$TXBOARD_INSTALL_DIR"
+elif [[ -n "${SCRIPT_DIR:-}" && -f "$SCRIPT_DIR/compose.yaml" ]]; then
+  TXBOARD_INSTALL_DIR="$SCRIPT_DIR"
+else
+  TXBOARD_INSTALL_DIR="/opt/txboard"
+fi
 TXBOARD_DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main}"
 
 log() { printf '[TXBoard] %s\n' "$*"; }
