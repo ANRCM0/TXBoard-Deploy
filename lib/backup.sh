@@ -31,6 +31,10 @@ backup_pick() {
 
 backup_restore() {
   require_tty; docker_ok; need_install
+  if [[ "$(database_mode)" == "external" ]]; then
+    warn "automatic restore is disabled for external databases; create backups here and restore them with your database provider/admin tooling"
+    return 0
+  fi
   local name path db user pass root app_url secure
   name="$(backup_pick)" || return 0
   path="$TXBOARD_INSTALL_DIR/backups/$name"
