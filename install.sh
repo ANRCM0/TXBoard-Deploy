@@ -579,19 +579,24 @@ fi
 log "pulling TXBoard and infrastructure images..."
 docker compose pull
 
-log "starting database and TXBoard..."
-docker compose up -d --remove-orphans --wait database txboard
+log "starting database..."
+docker compose up -d --remove-orphans --wait database
+
+# The TXBoard image health check requires an initialized database. Bootstrap the
+# schema and administrator in one-off containers before waiting for the
+# long-lived application container to become healthy.
+log "preparing TXBoard database schema..."
+docker compose run --rm --no-deps txboard php artisan migrate --force --no-interaction
 
 log "initializing TXBoard..."
-docker compose exec -T txboard php artisan xboard:install
+docker compose run --rm --no-deps txboard php artisan xboard:install
+
+log "starting TXBoard and waiting for full readiness..."
+docker compose up -d --remove-orphans --wait txboard
 
 if ! docker compose exec -T txboard php artisan xboard:install-status --no-interaction >/dev/null; then
   die "TXBoard installation state is incomplete. Inspect: cd $INSTALL_DIR && docker compose logs txboard"
 fi
-
-log "restarting application with the completed runtime configuration..."
-docker compose restart txboard >/dev/null
-docker compose up -d --wait txboard >/dev/null
 
 log "starting periodic backups..."
 docker compose up -d backup
