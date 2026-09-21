@@ -582,17 +582,17 @@ docker compose pull
 log "starting database..."
 docker compose up -d --remove-orphans --wait database
 
-# The TXBoard image health check requires an initialized database. Bootstrap the
-# schema and administrator in one-off containers before waiting for the
-# long-lived application container to become healthy.
-log "preparing TXBoard database schema..."
-docker compose run --rm --no-deps txboard php artisan migrate --force --no-interaction
+# Start the real application container before installation, but do not wait for
+# its health check yet. xboard:install relies on the normal container runtime.
+log "starting TXBoard bootstrap container..."
+docker compose up -d --remove-orphans txboard
 
 log "initializing TXBoard..."
-docker compose run --rm --no-deps txboard php artisan xboard:install
+docker compose exec -T txboard php artisan xboard:install
 
-log "starting TXBoard and waiting for full readiness..."
-docker compose up -d --remove-orphans --wait txboard
+log "restarting TXBoard with the completed runtime configuration..."
+docker compose restart txboard >/dev/null
+docker compose up -d --wait txboard >/dev/null
 
 if ! docker compose exec -T txboard php artisan xboard:install-status --no-interaction >/dev/null; then
   die "TXBoard installation state is incomplete. Inspect: cd $INSTALL_DIR && docker compose logs txboard"
