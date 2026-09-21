@@ -162,7 +162,7 @@ rollback() {
   fi
 
   if docker compose up -d --force-recreate --remove-orphans --wait txboard &&
-     docker compose exec -T txboard php artisan tttxboard:install-status --no-interaction >/dev/null; then
+     docker compose exec -T txboard php artisan txboard:install-status --no-interaction >/dev/null; then
     log "rollback completed successfully"
     return 0
   fi
@@ -177,7 +177,7 @@ if ! docker compose up -d --force-recreate --remove-orphans --wait txboard; then
   die "update failed while starting the new container"
 fi
 
-if ! docker compose exec -T txboard php artisan tttxboard:install-status --no-interaction >/dev/null; then
+if ! docker compose exec -T txboard php artisan txboard:install-status --no-interaction >/dev/null; then
   rollback || true
   die "updated container failed installation-state validation"
 fi
