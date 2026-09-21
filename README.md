@@ -180,11 +180,12 @@ sudo txboard
 ```bash
 sudo txboard status
 sudo txboard update
+sudo txboard update latest
 sudo txboard backup
 sudo txboard diagnose
 ```
 
-备份管理支持创建、查看、恢复、删除和修改保留数量。恢复前会自动创建一次安全备份；完整卸载前也会先备份，并把部署目录额外打包到用户 HOME 目录。
+备份管理支持创建、查看、恢复、删除和修改保留数量。恢复前会自动创建一次不参与保留数量裁剪的安全备份，并保留当前访问 URL / Cookie 安全设置；完整卸载前也会先备份，并把部署目录额外打包到用户 HOME 目录。
 
 配置菜单可以切换 Caddy 自动 HTTPS、外部 HTTPS 反向代理和 HTTP 模式，并同步修改 Docker 端口映射、`APP_URL` 与安全 Cookie 配置。配置应用失败时会恢复修改前的配置文件。
 

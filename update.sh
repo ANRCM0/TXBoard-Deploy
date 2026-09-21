@@ -108,7 +108,7 @@ rollback() {
   set_image "$current_image"
 
   if [[ -n "$old_image_id" ]] && docker image inspect "$old_image_id" >/dev/null 2>&1; then
-    if docker tag "$old_imae_id" "$current_image"; then
+    if docker tag "$old_image_id" "$current_image"; then
       log "restored previous image tag from $old_image_id"
     else
       warn "could not re-tag the previous image; rollback will use the currently available tag"
