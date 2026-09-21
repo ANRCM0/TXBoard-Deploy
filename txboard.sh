@@ -1,7 +1,19 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-DIR="${TXBOARD_INSTALL_DIR:-/opt/txboard}"
+SELF="${BASH_SOURCE[0]}"
+if command -v readlink >/dev/null 2>&1; then
+  RESOLVED="$(readlink -f "$SELF" 2>/dev/null || true)"
+  [[ -n "$RESOLVED" ]] && SELF="$RESOLVED"
+fi
+SCRIPT_DIR="$(cd -- "$(dirname -- "$SELF")" && pwd)"
+if [[ -n "${TXBOARD_INSTALL_DIR:-}" ]]; then
+  DIR="$TXBOARD_INSTALL_DIR"
+elif [[ -f "$SCRIPT_DIR/compose.yaml" ]]; then
+  DIR="$SCRIPT_DIR"
+else
+  DIR="/opt/txboard"
+fi
 RAW="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main}"
 CMD="${1:-menu}"
 ARG="${2:-}"
