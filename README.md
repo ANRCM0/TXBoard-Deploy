@@ -47,9 +47,31 @@ curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/insta
 - 公网访问模式
 - 域名或 IP
 - HTTP / HTTPS 端口
+- 数据库模式（内置 MySQL / 外部 MySQL）
+- 外部数据库的主机、端口、库名、用户名和密码
 - 备份保留数量
 
-数据库首版固定使用脚本托管的 MySQL 8.4，并自动生成随机数据库密码。
+## 数据库模式
+
+安装时可以选择两种数据库模式：
+
+### 1. 内置 MySQL
+
+默认模式。部署脚本会启动 MySQL 8.4 容器、创建独立数据卷，并自动生成数据库密码与 root 密码。
+
+### 2. 外部 MySQL
+
+适用于已有 MySQL、云数据库或独立数据库服务器。安装器会：
+
+- 不创建本地 `database` 服务和 `database-data` 卷
+- 将外部数据库参数写入 TXBoard 运行配置
+- 在正式安装前使用 MySQL 客户端执行 `SELECT 1` 验证数据库、账号和网络连通性
+- 继续使用 backup 容器对外部数据库执行定时备份
+- 为容器加入 `host.docker.internal -> host-gateway`，因此同机数据库可以使用 `host.docker.internal`
+
+外部数据库需要提前创建目标数据库，并给 TXBoard 用户授予该数据库的建表、修改表、索引及数据读写权限。数据库地址必须能从 Docker 容器访问。
+
+> 外部数据库可以正常创建 TXBoard 备份，但管理器暂不自动执行整库恢复。恢复外部数据库时应使用数据库提供商/管理员工具导入 `backups/<时间>/db.sql.gz`，避免部署脚本在权限和托管策略未知的数据库上执行破坏性重建。
 
 ## 访问模式
 
@@ -199,7 +221,7 @@ sudo txboard backup
 sudo txboard diagnose
 ```
 
-备份管理支持创建、查看、恢复、删除和修改保留数量。恢复前会自动创建一次不参与保留数量裁剪的安全备份，并保留当前访问 URL / Cookie 安全设置；完整卸载前也会先备份，并把部署目录额外打包到用户 HOME 目录。
+备份管理支持创建、查看、恢复、删除和修改保留数量。内置 MySQL 模式下，恢复前会自动创建一次不参与保留数量裁剪的安全备份，并保留当前访问 URL / Cookie 安全设置；外部 MySQL 模式仍支持备份，但自动整库恢复会被禁用。完整卸载前也会先备份，并把部署目录额外打包到用户 HOME 目录。
 
 配置菜单可以切换 Caddy 自动 HTTPS、外部 HTTPS 反向代理和 HTTP 模式，并同步修改 Docker 端口映射、`APP_URL` 与安全 Cookie 配置。配置应用失败时会恢复修改前的配置文件。
 
@@ -249,6 +271,11 @@ sudo env \
   TXBOARD_DOMAIN=panel.example.com \
   TXBOARD_ADMIN_EMAIL=admin@example.com \
   TXBOARD_IMAGE_TAG=latest \
+  TXBOARD_DB_MODE=external \
+  TXBOARD_DB_HOST=mysql.example.com \
+  TXBOARD_DB_DATABASE=txboard \
+  TXBOARD_DB_USERNAME=txboard \
+  TXBOARD_DB_PASSWORD='replace-me' \
   bash -s -- --yes
 ```
 
@@ -265,6 +292,13 @@ TXBOARD_PUBLIC_HOST
 TXBOARD_HTTP_PORT
 TXBOARD_HTTPS_PORT
 TXBOARD_BACKUP_RETENTION
+TXBOARD_DB_MODE
+TXBOARD_DB_HOST
+TXBOARD_DB_PORT
+TXBOARD_DB_DATABASE
+TXBOARD_DB_USERNAME
+TXBOARD_DB_PASSWORD
+TXBOARD_DB_ROOT_PASSWORD
 ```
 
 `TXBOARD_MODE`：
@@ -274,6 +308,15 @@ auto-https
 external-https
 http
 ```
+
+`TXBOARD_DB_MODE`：
+
+```text
+local
+external
+```
+
+外部数据库无人值守安装至少需要设置 `TXBOARD_DB_HOST`、`TXBOARD_DB_USERNAME` 和 `TXBOARD_DB_PASSWORD`；端口默认 `3306`，库名默认 `txboard`。
 
 ## 常用运维
 
@@ -345,6 +388,7 @@ Deploy 仓库只依赖以下稳定运行接口：
 
 - Bash 语法（install / update / manager）
 - 非交互 render-only 安装
+- 内置 / 外部数据库 Compose 渲染
 - 完整 smoke install 后的管理命令可用性
 - 生成的 Compose 配置
 - 生成的 Compose 不包含 `build:`

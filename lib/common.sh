@@ -67,8 +67,21 @@ pause() {
 }
 
 env_get() {
-  local file="$1" key="$2"
-  grep -E "^$key=" "$file" 2>/dev/null | tail -1 | cut -d= -f2- || true
+  local file="$1" key="$2" value
+  value="$(grep -E "^$key=" "$file" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+  if [[ "$value" == \'*\' && ${#value} -ge 2 ]]; then
+    value="${value:1:${#value}-2}"
+  fi
+  printf '%s' "$value"
+}
+
+database_mode() {
+  local mode
+  mode="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_MODE)"
+  case "$mode" in
+    external) printf 'external' ;;
+    *) printf 'local' ;;
+  esac
 }
 
 env_set() {
