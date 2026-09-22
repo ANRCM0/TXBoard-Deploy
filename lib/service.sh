@@ -4,10 +4,10 @@ service_status() {
   docker_ok; need_install
   local db_mode db_target
   db_mode="$(database_mode)"
-  if [[ "$db_mode" == "external" ]]; then
-    db_target="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_HOST):$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_PORT)/$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_DATABASE)"
-  else
+  if [[ "$db_mode" == "local" ]]; then
     db_target="managed MySQL container"
+  else
+    db_target="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_HOST):$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_PORT)/$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_DATABASE)"
   fi
 
   printf 'Directory: %s\nMode: %s\nURL: %s\nImage: %s\nDatabase: %s (%s)\n\n' \
@@ -58,7 +58,7 @@ logs_follow() {
       ;;
     database|mysql)
       [[ "$(database_mode)" == "local" ]] ||
-        die "database logs are unavailable in external database mode"
+        die "database logs are available only for the managed MySQL mode"
       compose logs -f --tail=200 database
       ;;
     *)
@@ -71,7 +71,7 @@ logs_menu() {
   docker_ok; need_install
   local choice service="all"
 
-  if [[ "$(database_mode)" == "external" ]]; then
+  if [[ "$(database_mode)" != "local" ]]; then
     choice="$(choose "1 TXBoard  2 Backup  3 All  0 back" "1" "3")"
     case "$choice" in
       1) service=txboard ;;

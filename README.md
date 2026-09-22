@@ -27,9 +27,8 @@ user server
 服务器需要：
 
 - Linux amd64 / arm64
-- Docker Engine
-- Docker Compose v2
-- 能访问 GHCR
+- 能访问 GitHub / GHCR
+- Docker Engine + Docker Compose v2；交互安装检测不到时可选择自动安装 Docker
 
 运行：
 
@@ -48,13 +47,14 @@ curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/insta
 - 公网访问模式
 - 域名或 IP
 - HTTP / HTTPS 端口
-- 数据库模式（内置 MySQL / 外部 MySQL）
+- 数据库模式（内置 MySQL / 宿主机 MySQL 自动接入 / 外部 MySQL）
+- 宿主机模式自动检测系统 MySQL、1Panel / Docker MySQL / MariaDB
 - 外部数据库的主机、端口、库名、用户名和密码
 - 备份保留数量
 
 ## 数据库模式
 
-安装时可以选择两种数据库模式：
+安装时可以选择三种数据库模式：
 
 ### 1. 内置 MySQL
 
@@ -79,19 +79,40 @@ sudo bash -s -- --yes --reset-local-db \
 
 > `--reset-local-db` 是破坏性操作，只用于确认不需要旧数据库内容的全新安装。生产环境出现残留卷时，应优先恢复原部署配置和数据库凭据，而不是删除卷。
 
-### 2. 外部 MySQL
+### 2. 宿主机 MySQL（自动）
 
-适用于已有 MySQL、云数据库或独立数据库服务器。安装器会：
+适用于这台服务器上已经存在 MySQL / MariaDB，尤其是 1Panel、Docker 或系统服务安装的数据库。
+
+安装器会优先检测本机运行中的 MySQL / MariaDB Docker 容器：
+
+- 检测到 1Panel / Docker 数据库容器后，可在多个容器中交互选择。
+- 自动创建或更新 TXBoard 数据库用户与数据库，并生成随机应用密码。
+- 自动创建专用 `txboard-db-link` Docker 网络。
+- 把数据库容器接入该网络，TXBoard 与 backup 容器直接通过 Docker 私网访问数据库，不需要开放 3306 到公网。
+- 无人值守模式存在多个数据库容器时，可用 `TXBOARD_DB_CONTAINER` 或 `--db-container` 明确指定。
+
+如果没有检测到数据库容器，安装器会尝试系统 MySQL / MariaDB：
+
+- 自动通过本机 socket 管理数据库并创建 TXBoard 数据库与用户。
+- 先从临时 Docker 容器验证 `host.docker.internal` 是否能直连。
+- 如果系统 MySQL 只监听 `127.0.0.1`，不会直接把 3306 改成公网监听；安装器会自动启用 `db-proxy` sidecar。
+- `db-proxy` 只监听 Docker bridge 的宿主机网关地址，并转发到宿主机 `127.0.0.1:MySQL端口`，解决 Docker 无法访问 loopback-only MySQL 的问题，同时避免把数据库端口暴露到公网。
+
+宿主机模式仍会在 TXBoard 正式安装前，从应用实际使用的 Docker 网络执行一次 `SELECT 1` 验证。
+
+### 3. 外部 MySQL
+
+适用于云数据库、独立数据库服务器或由你自行管理网络与权限的 MySQL。安装器会：
 
 - 不创建本地 `database` 服务和 `database-data` 卷
 - 将外部数据库参数写入 TXBoard 运行配置
 - 在正式安装前使用 MySQL 客户端执行 `SELECT 1` 验证数据库、账号和网络连通性
 - 继续使用 backup 容器对外部数据库执行定时备份
-- 为容器加入 `host.docker.internal -> host-gateway`，因此同机数据库可以使用 `host.docker.internal`
-- 交互安装输入 `127.0.0.1` / `localhost` 时会提示替换为 `host.docker.internal`；无人值守模式会直接拒绝这两个地址
-- 数据库探测失败时会明确提示检查宿主机监听地址、Docker 端口发布、防火墙和 MySQL 用户 host 权限
+- 为容器加入 `host.docker.internal -> host-gateway` 兼容映射
+- 交互安装输入 `127.0.0.1` / `localhost` 时会建议切换到“宿主机 MySQL（自动）”模式；无人值守模式会直接拒绝这两个地址
+- 数据库探测失败时会明确提示检查数据库地址、防火墙和 MySQL 用户 host 权限
 
-外部数据库需要提前创建目标数据库，并给 TXBoard 用户授予该数据库的建表、修改表、索引及数据读写权限。数据库地址必须能从 Docker 容器访问。注意：即使使用 `host.docker.internal`，如果宿主机 MySQL 只监听 `127.0.0.1`，Docker bridge 容器仍无法连接；需要让 MySQL 或其容器对宿主机可达地址监听/发布端口。
+外部数据库需要提前创建目标数据库，并给 TXBoard 用户授予该数据库的建表、修改表、索引及数据读写权限。数据库地址必须能从 Docker 容器访问。同机 MySQL 建议直接选择宿主机模式，让安装器处理 Docker 网络或 loopback-only 访问。
 
 HTTP 模式下的 “Public host / IP” 会写入 `APP_URL`。标准部署模式不允许填写 `0.0.0.0` / `::`；如果只是临时测试，可以在安装向导中启用 **test deployment mode**，此时允许使用通配地址，Compose 端口仍正常监听 `0.0.0.0`。测试模式会持久化为 `TXBOARD_TEST_MODE=true`，并在部署摘要与 `txboard config-show` 中显示。
 
@@ -263,7 +284,7 @@ sudo txboard diagnose
 sudo txboard help
 ```
 
-备份管理支持创建、查看、恢复、删除和修改保留数量。内置 MySQL 模式下，恢复前会自动创建一次不参与保留数量裁剪的安全备份，并保留当前访问 URL / Cookie 安全设置；外部 MySQL 模式仍支持备份，但自动整库恢复会被禁用。完整卸载前也会先备份，并把部署目录额外打包到用户 HOME 目录。
+备份管理支持创建、查看、恢复、删除和修改保留数量。内置 MySQL 模式下，恢复前会自动创建一次不参与保留数量裁剪的安全备份，并保留当前访问 URL / Cookie 安全设置；宿主机 / 外部 MySQL 模式仍支持备份，但自动整库恢复会被禁用。完整卸载前也会先备份，并把部署目录额外打包到用户 HOME 目录。
 
 配置菜单可以切换 Caddy 自动 HTTPS、外部 HTTPS 反向代理和 HTTP 模式，并同步修改 Docker 端口映射、`APP_URL` 与安全 Cookie 配置。配置应用失败时会恢复修改前的配置文件。
 
@@ -336,6 +357,7 @@ TXBOARD_HTTP_PORT
 TXBOARD_HTTPS_PORT
 TXBOARD_BACKUP_RETENTION
 TXBOARD_TEST_MODE
+TXBOARD_AUTO_INSTALL_DOCKER
 TXBOARD_DB_MODE
 TXBOARD_DB_HOST
 TXBOARD_DB_PORT
@@ -343,6 +365,10 @@ TXBOARD_DB_DATABASE
 TXBOARD_DB_USERNAME
 TXBOARD_DB_PASSWORD
 TXBOARD_DB_ROOT_PASSWORD
+TXBOARD_DB_ADMIN_PASSWORD
+TXBOARD_DB_CONTAINER
+TXBOARD_DB_LINK_NETWORK
+TXBOARD_DB_PROXY_PORT
 ```
 
 `TXBOARD_MODE`：
@@ -369,8 +395,11 @@ sudo env \
 
 ```text
 local
+host
 external
 ```
+
+宿主机数据库无人值守安装时，如果机器上只有一个可管理的 MySQL / MariaDB 容器会自动选择；存在多个时应设置 `TXBOARD_DB_CONTAINER`。如果数据库管理员密码无法从容器环境或系统 socket 自动获得，可设置 `TXBOARD_DB_ADMIN_PASSWORD`。
 
 外部数据库无人值守安装至少需要设置 `TXBOARD_DB_HOST`、`TXBOARD_DB_USERNAME` 和 `TXBOARD_DB_PASSWORD`；端口默认 `3306`，库名默认 `txboard`。
 
@@ -446,7 +475,8 @@ Deploy 仓库只依赖以下稳定运行接口：
 
 - Bash 语法（install / update / manager）
 - 非交互 render-only 安装
-- 内置 / 外部数据库 Compose 渲染
+- 内置 / 宿主机 Docker / 外部数据库 Compose 渲染
+- 宿主机 MySQL 自动建库、建用户与 `txboard-db-link` 网络接入
 - 残留内置 MySQL 数据卷的安全拒绝逻辑
 - 完整 smoke install 后的管理命令与快捷子命令可用性
 - 外部数据库探测和手动备份容器显式禁用 TTY，兼容 pipe / CI / 无交互输入

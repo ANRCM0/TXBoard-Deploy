@@ -76,7 +76,7 @@ Quick commands:
   update [tag]         Update the current image, or switch to a tag
   backup               Create a backup now
   backups              List available backups
-  restore              Restore a managed-MySQL backup interactively
+  restore              Restore a managed-MySQL backup interactively (local mode only)
   config-show          Show current deployment configuration
   diagnose             Run diagnostics
   uninstall            Open the safe uninstall flow

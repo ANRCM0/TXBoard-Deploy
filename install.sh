@@ -12,6 +12,7 @@ HTTP_PORT="${TXBOARD_HTTP_PORT:-}"
 HTTPS_PORT="${TXBOARD_HTTPS_PORT:-}"
 BACKUP_RETENTION="${TXBOARD_BACKUP_RETENTION:-7}"
 TEST_MODE="${TXBOARD_TEST_MODE:-false}"
+AUTO_INSTALL_DOCKER="${TXBOARD_AUTO_INSTALL_DOCKER:-false}"
 DB_MODE="${TXBOARD_DB_MODE:-}"
 DB_HOST="${TXBOARD_DB_HOST:-}"
 DB_PORT="${TXBOARD_DB_PORT:-3306}"
@@ -19,6 +20,14 @@ DB_DATABASE="${TXBOARD_DB_DATABASE:-txboard}"
 DB_USERNAME="${TXBOARD_DB_USERNAME:-txboard}"
 DB_PASSWORD="${TXBOARD_DB_PASSWORD:-}"
 DB_ROOT_PASSWORD="${TXBOARD_DB_ROOT_PASSWORD:-}"
+DB_ADMIN_PASSWORD="${TXBOARD_DB_ADMIN_PASSWORD:-}"
+DB_CONTAINER="${TXBOARD_DB_CONTAINER:-}"
+DB_HOST_KIND=""
+DB_LINK_NETWORK="${TXBOARD_DB_LINK_NETWORK:-txboard-db-link}"
+DB_PROXY_REQUIRED=0
+DB_PROXY_BIND=""
+DB_PROXY_PORT="${TXBOARD_DB_PROXY_PORT:-13306}"
+DB_SOURCE_PORT=""
 DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main}"
 ASSUME_YES=0
 RENDER_ONLY=0
@@ -49,8 +58,9 @@ Options:
   --backup-retention N
                       Number of backup archives to retain (default: 7)
   --test-mode         Enable test deployment mode; permits wildcard public hosts
-  --db-mode MODE      local | external (default: local)
+  --db-mode MODE      local | host | external (default: local)
   --db-host HOST      External MySQL host
+  --db-container NAME  Host MySQL/MariaDB Docker container (host mode)
   --db-port PORT      External MySQL port (default: 3306)
   --db-name NAME      Database name (default: txboard)
   --db-user USER      Database username (default: txboard)
@@ -73,6 +83,7 @@ Environment variables:
   TXBOARD_HTTPS_PORT
   TXBOARD_BACKUP_RETENTION
   TXBOARD_TEST_MODE
+  TXBOARD_AUTO_INSTALL_DOCKER
   TXBOARD_DB_MODE
   TXBOARD_DB_HOST
   TXBOARD_DB_PORT
@@ -80,6 +91,10 @@ Environment variables:
   TXBOARD_DB_USERNAME
   TXBOARD_DB_PASSWORD
   TXBOARD_DB_ROOT_PASSWORD
+  TXBOARD_DB_ADMIN_PASSWORD
+  TXBOARD_DB_CONTAINER
+  TXBOARD_DB_LINK_NETWORK
+  TXBOARD_DB_PROXY_PORT
 EOF
 }
 
@@ -97,6 +112,7 @@ while [[ $# -gt 0 ]]; do
     --test-mode) TEST_MODE=true; shift ;;
     --db-mode) DB_MODE="${2:?missing value for --db-mode}"; shift 2 ;;
     --db-host) DB_HOST="${2:?missing value for --db-host}"; shift 2 ;;
+    --db-container) DB_CONTAINER="${2:?missing value for --db-container}"; shift 2 ;;
     --db-port) DB_PORT="${2:?missing value for --db-port}"; shift 2 ;;
     --db-name) DB_DATABASE="${2:?missing value for --db-name}"; shift 2 ;;
     --db-user) DB_USERNAME="${2:?missing value for --db-user}"; shift 2 ;;
@@ -108,12 +124,6 @@ while [[ $# -gt 0 ]]; do
     *) die "unknown option: $1" ;;
   esac
 done
-
-command -v docker >/dev/null 2>&1 || die "Docker Engine is required."
-docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required."
-if [[ "$RENDER_ONLY" -eq 0 ]]; then
-  docker info >/dev/null 2>&1 || die "Docker daemon is not reachable."
-fi
 
 case "$(uname -m)" in
   x86_64|amd64|aarch64|arm64) ;;
@@ -180,6 +190,42 @@ confirm() {
   [[ "$value" =~ ^[Yy]([Ee][Ss])?$ ]]
 }
 
+ensure_docker() {
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    if [[ "$RENDER_ONLY" -eq 0 ]]; then
+      docker info >/dev/null 2>&1 || die "Docker is installed but the daemon is not reachable."
+    fi
+    return
+  fi
+
+  local auto="${AUTO_INSTALL_DOCKER,,}"
+  if [[ "$ASSUME_YES" -eq 0 ]]; then
+    confirm "Docker + Compose v2 not found. Install Docker automatically?" "Y" ||
+      die "Docker Engine + Compose v2 are required."
+  elif [[ "$auto" != "1" && "$auto" != "true" && "$auto" != "yes" && "$auto" != "y" ]]; then
+    die "Docker + Compose v2 are required. For unattended automatic installation set TXBOARD_AUTO_INSTALL_DOCKER=true."
+  fi
+
+  [[ "${EUID:-$(id -u)}" -eq 0 ]] ||
+    die "automatic Docker installation requires root; rerun with sudo."
+
+  local tmp="/tmp/txboard-get-docker.sh"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL https://get.docker.com -o "$tmp"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$tmp" https://get.docker.com
+  else
+    die "curl or wget is required to install Docker automatically"
+  fi
+  sh "$tmp"
+  rm -f "$tmp"
+  command -v systemctl >/dev/null 2>&1 && systemctl enable --now docker >/dev/null 2>&1 || true
+  docker compose version >/dev/null 2>&1 || die "Docker installed, but Compose v2 is unavailable."
+  [[ "$RENDER_ONLY" -eq 1 ]] || docker info >/dev/null 2>&1 || die "Docker daemon is not reachable after installation."
+}
+
+ensure_docker
+
 valid_email() {
   [[ "$1" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]
 }
@@ -203,6 +249,30 @@ random_hex() {
     head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-48
   fi
 }
+
+load_install_database_module() {
+  local tmp script_dir
+  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+  if [[ -n "$script_dir" && -f "$script_dir/lib/install-database.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "$script_dir/lib/install-database.sh"
+    return
+  fi
+  tmp="$(mktemp)"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$DEPLOY_RAW_BASE/lib/install-database.sh" -o "$tmp" || { rm -f "$tmp"; die "failed to download database installer module"; }
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$tmp" "$DEPLOY_RAW_BASE/lib/install-database.sh" || { rm -f "$tmp"; die "failed to download database installer module"; }
+  else
+    rm -f "$tmp"
+    die "curl or wget is required to load the database installer module"
+  fi
+  # shellcheck source=/dev/null
+  source "$tmp"
+  rm -f "$tmp"
+}
+
+load_install_database_module
 
 detect_host() {
   local host=""
@@ -316,99 +386,7 @@ if [[ -e "$INSTALL_DIR/compose.yaml" || -e "$INSTALL_DIR/.env" || -e "$INSTALL_D
   die "an existing TXBoard deployment was found in $INSTALL_DIR. Use update.sh instead of reinstalling."
 fi
 
-if [[ -z "$DB_MODE" ]]; then
-  if [[ "$ASSUME_YES" -eq 1 ]]; then
-    DB_MODE="local"
-  else
-    cat > /dev/tty <<'EOF'
-
-Choose database mode:
-  1) Managed MySQL 8.4 container
-  2) External MySQL server
-
-EOF
-    db_choice="$(choose "Database" "1" "2")"
-    case "$db_choice" in
-      1) DB_MODE="local" ;;
-      2) DB_MODE="external" ;;
-    esac
-  fi
-fi
-
-case "$DB_MODE" in
-  local)
-    DB_HOST="database"
-    DB_PORT="3306"
-    [[ "$DB_DATABASE" =~ ^[A-Za-z0-9_]+$ ]] || die "invalid database name: $DB_DATABASE"
-    [[ -n "$DB_USERNAME" && ! "$DB_USERNAME" =~ [[:space:]] ]] || die "invalid database username"
-
-    # MYSQL_USER/MYSQL_PASSWORD/MYSQL_ROOT_PASSWORD only initialize an empty
-    # /var/lib/mysql. Reusing a stale Compose volume with freshly generated
-    # credentials leaves the old MySQL users unchanged and makes TXBoard fail
-    # with SQLSTATE[HY000] [1045]. Detect that state before generating secrets.
-    if [[ "$RENDER_ONLY" -eq 0 ]] && docker volume inspect "$LOCAL_DB_VOLUME" >/dev/null 2>&1; then
-      if [[ "$RESET_LOCAL_DB" -eq 1 ]]; then
-        warn "deleting existing managed MySQL volume: $LOCAL_DB_VOLUME"
-        docker volume rm "$LOCAL_DB_VOLUME" >/dev/null ||
-          die "cannot remove $LOCAL_DB_VOLUME; it may still be attached to another TXBoard container"
-      elif [[ "$ASSUME_YES" -eq 1 ]]; then
-        die "existing managed MySQL volume $LOCAL_DB_VOLUME detected. Refusing to generate new credentials for an initialized database. Preserve it by recovering the original deployment/credentials, or rerun a disposable fresh install with --reset-local-db."
-      else
-        cat > /dev/tty <<EOF
-
-Existing TXBoard managed MySQL volume detected:
-
-  $LOCAL_DB_VOLUME
-
-MySQL initialization passwords are only applied to an empty data directory.
-Continuing with newly generated passwords would make the application fail
-authentication and can hide an existing database from the new deployment.
-
-EOF
-        if confirm "Delete this database volume and continue with a completely fresh install? ALL DATABASE DATA WILL BE LOST." "N"; then
-          warn "deleting existing managed MySQL volume: $LOCAL_DB_VOLUME"
-          docker volume rm "$LOCAL_DB_VOLUME" >/dev/null ||
-            die "cannot remove $LOCAL_DB_VOLUME; it may still be attached to another TXBoard container"
-        else
-          die "installation stopped to preserve the existing database volume"
-        fi
-      fi
-    fi
-
-    DB_PASSWORD="${DB_PASSWORD:-$(random_hex)}"
-    DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-$(random_hex)}"
-    ;;
-  external)
-    DB_HOST="$(prompt "External MySQL host" "$DB_HOST")"
-    DB_PORT="$(prompt "External MySQL port" "${DB_PORT:-3306}")"
-    DB_DATABASE="$(prompt "Database name" "${DB_DATABASE:-txboard}")"
-    DB_USERNAME="$(prompt "Database username" "$DB_USERNAME")"
-    if [[ "$ASSUME_YES" -eq 1 && -z "$DB_PASSWORD" ]]; then
-      die "external database mode requires TXBOARD_DB_PASSWORD or --db-password"
-    fi
-    DB_PASSWORD="$(prompt_secret "Database password" "$DB_PASSWORD")"
-    [[ -n "$DB_HOST" && ! "$DB_HOST" =~ [[:space:]] ]] || die "invalid external database host"
-    valid_port "$DB_PORT" || die "invalid external database port: $DB_PORT"
-    [[ "$DB_DATABASE" =~ ^[A-Za-z0-9_]+$ ]] || die "invalid database name: $DB_DATABASE"
-    [[ -n "$DB_USERNAME" && ! "$DB_USERNAME" =~ [[:space:]] ]] || die "invalid database username"
-    [[ -n "$DB_PASSWORD" ]] || die "database password cannot be empty"
-
-    if [[ "$DB_HOST" == "127.0.0.1" || "$DB_HOST" == "localhost" ]]; then
-      if [[ "$ASSUME_YES" -eq 1 ]]; then
-        die "external database host '$DB_HOST' resolves inside the TXBoard container, not to the Docker host. Use host.docker.internal for MySQL running on this server."
-      fi
-      warn "external DB host $DB_HOST resolves inside the TXBoard container, not to the Docker host"
-      if confirm "Use host.docker.internal for MySQL running on this server?" "Y"; then
-        DB_HOST="host.docker.internal"
-      else
-        die "external database host must be reachable from the TXBoard container; 127.0.0.1/localhost cannot be used here"
-      fi
-    fi
-
-    DB_ROOT_PASSWORD=""
-    ;;
-  *) die "invalid database mode: $DB_MODE" ;;
-esac
+configure_database
 
 DB_PASSWORD_ENV="$(dotenv_quote "$DB_PASSWORD")"
 
@@ -511,6 +489,13 @@ TXBOARD_DB_DATABASE=$DB_DATABASE
 TXBOARD_DB_USERNAME=$DB_USERNAME
 TXBOARD_DB_PASSWORD=$DB_PASSWORD_ENV
 TXBOARD_DB_ROOT_PASSWORD=$DB_ROOT_PASSWORD
+TXBOARD_DB_HOST_KIND=$DB_HOST_KIND
+TXBOARD_DB_CONTAINER=$DB_CONTAINER
+TXBOARD_DB_LINK_NETWORK=$DB_LINK_NETWORK
+TXBOARD_DB_PROXY_REQUIRED=$DB_PROXY_REQUIRED
+TXBOARD_DB_PROXY_BIND=$DB_PROXY_BIND
+TXBOARD_DB_PROXY_PORT=$DB_PROXY_PORT
+TXBOARD_DB_SOURCE_PORT=$DB_SOURCE_PORT
 TXBOARD_HTTP_BIND=$HTTP_BIND
 TXBOARD_HTTP_PORT=$HTTP_PORT
 TXBOARD_HTTPS_BIND=$HTTPS_BIND
@@ -644,47 +629,15 @@ else
 fi
 
 DATABASE_SERVICE_BLOCK=""
+DB_PROXY_SERVICE_BLOCK=""
 TXBOARD_DB_DEPENDS_BLOCK=""
 BACKUP_DB_DEPENDS_BLOCK=""
 DATABASE_VOLUME_BLOCK=""
 DB_EXTRA_HOSTS_BLOCK=""
+DB_NETWORKS_BLOCK=""
+DB_NETWORK_DECL_BLOCK=""
 
-if [[ "$DB_MODE" == "local" ]]; then
-  DATABASE_SERVICE_BLOCK="$(cat <<'YAML'
-  database:
-    image: mysql:8.4.11
-    restart: unless-stopped
-    logging: *default-logging
-    environment:
-      MYSQL_DATABASE: ${TXBOARD_DB_DATABASE:-txboard}
-      MYSQL_USER: ${TXBOARD_DB_USERNAME:-txboard}
-      MYSQL_PASSWORD: ${TXBOARD_DB_PASSWORD:?missing TXBOARD_DB_PASSWORD}
-      MYSQL_ROOT_PASSWORD: ${TXBOARD_DB_ROOT_PASSWORD:?missing TXBOARD_DB_ROOT_PASSWORD}
-    volumes:
-      - database-data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "--host=127.0.0.1", "--user=root", "--password=${TXBOARD_DB_ROOT_PASSWORD:?}"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 40s
-YAML
-)"
-  TXBOARD_DB_DEPENDS_BLOCK="$(cat <<'YAML'
-    depends_on:
-      database:
-        condition: service_healthy
-YAML
-)"
-  BACKUP_DB_DEPENDS_BLOCK="$TXBOARD_DB_DEPENDS_BLOCK"
-  DATABASE_VOLUME_BLOCK="  database-data:"
-else
-  DB_EXTRA_HOSTS_BLOCK="$(cat <<'YAML'
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-YAML
-)"
-fi
+prepare_database_compose_blocks
 
 cat > compose.yaml <<EOF
 name: $COMPOSE_PROJECT_NAME
@@ -697,6 +650,7 @@ x-logging: &default-logging
 
 services:
 $DATABASE_SERVICE_BLOCK
+$DB_PROXY_SERVICE_BLOCK
   txboard:
     image: \${TXBOARD_IMAGE:?missing TXBOARD_IMAGE}
     restart: unless-stopped
@@ -704,6 +658,7 @@ $DATABASE_SERVICE_BLOCK
     stop_grace_period: 30s
 $TXBOARD_DB_DEPENDS_BLOCK
 $DB_EXTRA_HOSTS_BLOCK
+$DB_NETWORKS_BLOCK
     volumes:
       - ./data/storage:/www/storage
       - ./data/plugins:/www/plugins
@@ -745,6 +700,7 @@ $PORTS_BLOCK
     logging: *default-logging
 $BACKUP_DB_DEPENDS_BLOCK
 $DB_EXTRA_HOSTS_BLOCK
+$DB_NETWORKS_BLOCK
     entrypoint: ["/bin/sh", "/usr/local/bin/txboard-backup.sh"]
     environment:
       DB_HOST: \${TXBOARD_DB_HOST:-database}
@@ -767,6 +723,7 @@ $DATABASE_VOLUME_BLOCK
   api-redis:
   caddy-data:
   caddy-config:
+$DB_NETWORK_DECL_BLOCK
 EOF
 
 chmod 600 .env api.env
@@ -781,22 +738,7 @@ fi
 log "pulling TXBoard and infrastructure images..."
 docker compose pull
 
-if [[ "$DB_MODE" == "local" ]]; then
-  log "starting managed database..."
-  docker compose up -d --remove-orphans --wait database
-
-  log "verifying managed database credentials..."
-  if ! docker compose exec -T database sh -lc \
-      'MYSQL_PWD="$MYSQL_PASSWORD" mysql --protocol=TCP --host=127.0.0.1 --port=3306 --user="$MYSQL_USER" --database="$MYSQL_DATABASE" --execute="SELECT 1" >/dev/null' </dev/null; then
-    die "managed MySQL rejected the configured TXBoard credentials. The database volume may have been initialized with older passwords. Preserve existing data and recover its original credentials, or remove the stale deployment and rerun a disposable fresh install with --reset-local-db."
-  fi
-else
-  log "checking external database connectivity..."
-  if ! docker compose run -T --rm --no-deps --entrypoint sh backup -lc \
-      'MYSQL_PWD="$DB_PASSWORD" mysql --connect-timeout=5 --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="SELECT 1" >/dev/null' </dev/null; then
-    die "cannot connect to external MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE from the TXBoard container. If MySQL runs on this Docker host, use host.docker.internal and make sure MySQL/its container publishes or listens on a host-reachable address (not only 127.0.0.1). Also check firewall and user host permissions."
-  fi
-fi
+verify_database_connectivity
 
 # Start the real application container before installation, but do not wait for
 # its health check yet. txboard:install relies on the normal container runtime.

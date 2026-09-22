@@ -20,11 +20,13 @@ jobs:
 
       - name: Check installer and manager regressions
         run: |
-          grep -Fq 'docker compose run -T --rm --no-deps --entrypoint sh backup -lc' install.sh
-          grep -Fq "external database host '\$DB_HOST' resolves inside the TXBoard container" install.sh
+          grep -Fq 'docker compose run -T --rm --no-deps --entrypoint sh backup -lc' lib/install-database.sh
+          grep -Fq 'Switch to automatic host-MySQL mode instead?' lib/install-database.sh
+          grep -Fq 'MySQL on this server (auto-detect system / 1Panel / Docker)' lib/install-database.sh
           grep -Fq 'explicitly enable test deployment mode with --test-mode' install.sh
           grep -Fq 'TXBOARD_TEST_MODE=$TEST_MODE' install.sh
-          grep -Fq 'cannot connect to external MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE' install.sh
+          grep -Fq 'cannot connect to $DB_MODE MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE' lib/install-database.sh
+          grep -Fq 'Docker + Compose v2 not found. Install Docker automatically?' install.sh
           grep -Fq 'docker compose run -T --rm -e BACKUP_INTERVAL=0 backup' update.sh
           grep -Fq 'compose run -T --rm -e BACKUP_INTERVAL=0 backup' lib/backup.sh
           grep -Fq 'compose run -T --rm --no-deps --entrypoint sh backup -lc' lib/diagnose.sh
@@ -115,6 +117,41 @@ jobs:
           sudo grep -q '^DB_PORT=3307$' api.env
           sudo grep -q 'host.docker.internal:host-gateway' compose.yaml
           sudo rm -rf /tmp/txboard-deploy-external-ci
+
+      - name: Render host Docker database deployment
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-host-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18086
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_DB_MODE: host
+          TXBOARD_DB_CONTAINER: txboard-host-mysql-ci
+        run: |
+          sudo docker run -d --name txboard-host-mysql-ci \
+            -e MYSQL_ROOT_PASSWORD=ci-root-password \
+            mysql:8.4.11 >/dev/null
+          trap 'sudo docker rm -f txboard-host-mysql-ci >/dev/null 2>&1 || true; sudo docker network rm txboard-db-link >/dev/null 2>&1 || true; sudo rm -rf /tmp/txboard-deploy-host-ci' EXIT
+
+          for i in $(seq 1 30); do
+            if sudo docker exec -e MYSQL_PWD=ci-root-password txboard-host-mysql-ci \
+              mysqladmin ping -uroot --silent >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+
+          sudo -E bash install.sh --yes --render-only
+          cd /tmp/txboard-deploy-host-ci
+          sudo docker compose --env-file .env config >/dev/null
+          ! sudo docker compose --env-file .env config --services | grep -qx database
+          sudo grep -q '^TXBOARD_DB_MODE=host$' .env
+          sudo grep -q '^TXBOARD_DB_HOST_KIND=docker-container$' .env
+          sudo grep -q '^TXBOARD_DB_HOST=txboard-host-mysql-ci$' .env
+          sudo grep -q '^TXBOARD_DB_LINK_NETWORK=txboard-db-link$' .env
+          sudo grep -q 'name: txboard-db-link' compose.yaml
+          sudo docker inspect -f '{{json .NetworkSettings.Networks}}' txboard-host-mysql-ci | grep -q 'txboard-db-link'
 
       - name: Reject stale managed MySQL volume
         env:
