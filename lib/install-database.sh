@@ -138,6 +138,9 @@ EOF
   if [[ -z "$root_password" ]]; then
     root_password="$(install_db_container_env "$container_id" MYSQL_ROOT_PASSWORD)"
   fi
+  if [[ -z "$root_password" ]]; then
+    root_password="$(install_db_container_env "$container_id" MARIADB_ROOT_PASSWORD)"
+  fi
   sql="$(host_database_sql)"
 
   if ! wait_mysql_container_admin "$container_id" "$root_password"; then
@@ -153,8 +156,12 @@ EOF
   mysql_container_exec_root "$container_id" "$root_password" "$sql" >/dev/null
   connect_db_container_network "$container_id"
 
+  local container_port
+  container_port="$(mysql_container_exec_root "$container_id" "$root_password" "SELECT @@port;" 2>/dev/null | tail -n1 | tr -d '[:space:]')"
+  valid_port "$container_port" || container_port=3306
+
   DB_HOST="$container_name"
-  DB_PORT="3306"
+  DB_PORT="$container_port"
   DB_HOST_KIND="docker-container"
   DB_CONTAINER="$container_name"
   DB_ROOT_PASSWORD=""
