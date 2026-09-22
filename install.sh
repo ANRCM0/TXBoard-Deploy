@@ -850,14 +850,15 @@ EOF
       if [[ -f "$INSTALL_DIR/compose.yaml" ]]; then
         (cd "$INSTALL_DIR" && docker compose down --remove-orphans >/dev/null 2>&1) || true
       fi
-      rm -rf "$INSTALL_DIR"
       if [[ -L /usr/local/bin/txboard ]]; then
-        target="$(readlink -f /usr/local/bin/txboard 2>/dev/null || true)"
+        target="$(readlink /usr/local/bin/txboard 2>/dev/null || true)"
         [[ "$target" == "$INSTALL_DIR/txboard.sh" ]] && rm -f /usr/local/bin/txboard
       fi
+      rm -rf "$INSTALL_DIR"
       log "removed incomplete deployment files; preserved Docker volumes"
     else
       mkdir -p "$INSTALL_DIR"
+      touch "$INSTALL_DIR/.install-incomplete"
       install_deploy_tools
       die "incomplete installation preserved. Management tools were refreshed when possible. Re-run this installer and choose recovery, or use --recover-incomplete for unattended recovery."
     fi
