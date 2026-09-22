@@ -19,6 +19,14 @@ DB_DATABASE="${TXBOARD_DB_DATABASE:-txboard}"
 DB_USERNAME="${TXBOARD_DB_USERNAME:-txboard}"
 DB_PASSWORD="${TXBOARD_DB_PASSWORD:-}"
 DB_ROOT_PASSWORD="${TXBOARD_DB_ROOT_PASSWORD:-}"
+DB_ADMIN_PASSWORD="${TXBOARD_DB_ADMIN_PASSWORD:-}"
+DB_CONTAINER="${TXBOARD_DB_CONTAINER:-}"
+DB_HOST_KIND=""
+DB_LINK_NETWORK="${TXBOARD_DB_LINK_NETWORK:-txboard-db-link}"
+DB_PROXY_REQUIRED=0
+DB_PROXY_BIND=""
+DB_PROXY_PORT="${TXBOARD_DB_PROXY_PORT:-13306}"
+DB_SOURCE_PORT=""
 DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main}"
 ASSUME_YES=0
 RENDER_ONLY=0
@@ -49,8 +57,9 @@ Options:
   --backup-retention N
                       Number of backup archives to retain (default: 7)
   --test-mode         Enable test deployment mode; permits wildcard public hosts
-  --db-mode MODE      local | external (default: local)
+  --db-mode MODE      local | host | external (default: local)
   --db-host HOST      External MySQL host
+  --db-container NAME  Host MySQL/MariaDB Docker container (host mode)
   --db-port PORT      External MySQL port (default: 3306)
   --db-name NAME      Database name (default: txboard)
   --db-user USER      Database username (default: txboard)
@@ -80,6 +89,10 @@ Environment variables:
   TXBOARD_DB_USERNAME
   TXBOARD_DB_PASSWORD
   TXBOARD_DB_ROOT_PASSWORD
+  TXBOARD_DB_ADMIN_PASSWORD
+  TXBOARD_DB_CONTAINER
+  TXBOARD_DB_LINK_NETWORK
+  TXBOARD_DB_PROXY_PORT
 EOF
 }
 
@@ -97,6 +110,7 @@ while [[ $# -gt 0 ]]; do
     --test-mode) TEST_MODE=true; shift ;;
     --db-mode) DB_MODE="${2:?missing value for --db-mode}"; shift 2 ;;
     --db-host) DB_HOST="${2:?missing value for --db-host}"; shift 2 ;;
+    --db-container) DB_CONTAINER="${2:?missing value for --db-container}"; shift 2 ;;
     --db-port) DB_PORT="${2:?missing value for --db-port}"; shift 2 ;;
     --db-name) DB_DATABASE="${2:?missing value for --db-name}"; shift 2 ;;
     --db-user) DB_USERNAME="${2:?missing value for --db-user}"; shift 2 ;;
