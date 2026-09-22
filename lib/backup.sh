@@ -8,12 +8,12 @@ backup_list() {
 
 backup_create() {
   docker_ok; need_install
-  compose run --rm -e BACKUP_INTERVAL=0 backup
+  compose run -T --rm -e BACKUP_INTERVAL=0 backup
 }
 
 backup_safety() {
   docker_ok; need_install
-  compose run --rm -e BACKUP_INTERVAL=0 -e BACKUP_RETENTION=0 backup
+  compose run -T --rm -e BACKUP_INTERVAL=0 -e BACKUP_RETENTION=0 backup
 }
 
 backup_pick() {
