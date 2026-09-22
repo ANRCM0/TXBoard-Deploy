@@ -39,6 +39,12 @@ curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/insta
 
 即使脚本通过 pipe 执行，交互输入仍从 `/dev/tty` 读取。
 
+如果安装在拉镜像、数据库检查或应用初始化阶段中断，安装器会留下 `.install-incomplete` 标记，并提前安装 `txboard` 管理命令。之后再次运行安装器会识别未完成状态，允许在**保留 Docker 命名卷/数据库数据**的前提下清理生成文件并重新安装。无人值守环境可显式使用：
+
+```bash
+sudo bash install.sh --yes --recover-incomplete ...
+```
+
 安装向导会询问：
 
 - TXBoard 镜像标签，例如 `latest`
@@ -255,6 +261,7 @@ sudo txboard restore
 sudo txboard config              # 配置菜单
 sudo txboard config-show         # 直接查看配置
 sudo txboard diagnose
+sudo txboard recover             # 半安装状态下重新进入恢复流程
 sudo txboard help
 ```
 
