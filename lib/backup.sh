@@ -31,8 +31,8 @@ backup_pick() {
 
 backup_restore() {
   require_tty; docker_ok; need_install
-  if [[ "$(database_mode)" == "external" ]]; then
-    warn "automatic restore is disabled for external databases; create backups here and restore them with your database provider/admin tooling"
+  if [[ "$(database_mode)" != "local" ]]; then
+    warn "automatic restore is disabled for host/external databases; backups remain available, but restore them with database admin tooling"
     return 0
   fi
   local name path db user pass root app_url secure
