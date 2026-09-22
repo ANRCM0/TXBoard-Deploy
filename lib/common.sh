@@ -80,6 +80,7 @@ database_mode() {
   mode="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_MODE)"
   case "$mode" in
     external) printf 'external' ;;
+    host) printf 'host' ;;
     *) printf 'local' ;;
   esac
 }
