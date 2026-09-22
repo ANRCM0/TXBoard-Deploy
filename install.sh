@@ -219,7 +219,13 @@ random_hex() {
 }
 
 load_install_database_module() {
-  local tmp
+  local tmp script_dir
+  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+  if [[ -n "$script_dir" && -f "$script_dir/lib/install-database.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "$script_dir/lib/install-database.sh"
+    return
+  fi
   tmp="$(mktemp)"
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL "$DEPLOY_RAW_BASE/lib/install-database.sh" -o "$tmp" || { rm -f "$tmp"; die "failed to download database installer module"; }
@@ -700,22 +706,7 @@ fi
 log "pulling TXBoard and infrastructure images..."
 docker compose pull
 
-if [[ "$DB_MODE" == "local" ]]; then
-  log "starting managed database..."
-  docker compose up -d --remove-orphans --wait database
-
-  log "verifying managed database credentials..."
-  if ! docker compose exec -T database sh -lc \
-      'MYSQL_PWD="$MYSQL_PASSWORD" mysql --protocol=TCP --host=127.0.0.1 --port=3306 --user="$MYSQL_USER" --database="$MYSQL_DATABASE" --execute="SELECT 1" >/dev/null' </dev/null; then
-    die "managed MySQL rejected the configured TXBoard credentials. The database volume may have been initialized with older passwords. Preserve existing data and recover its original credentials, or remove the stale deployment and rerun a disposable fresh install with --reset-local-db."
-  fi
-else
-  log "checking external database connectivity..."
-  if ! docker compose run -T --rm --no-deps --entrypoint sh backup -lc \
-      'MYSQL_PWD="$DB_PASSWORD" mysql --connect-timeout=5 --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="SELECT 1" >/dev/null' </dev/null; then
-    die "cannot connect to external MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE from the TXBoard container. If MySQL runs on this Docker host, use host.docker.internal and make sure MySQL/its container publishes or listens on a host-reachable address (not only 127.0.0.1). Also check firewall and user host permissions."
-  fi
-fi
+verify_database_connectivity
 
 # Start the real application container before installation, but do not wait for
 # its health check yet. txboard:install relies on the normal container runtime.
