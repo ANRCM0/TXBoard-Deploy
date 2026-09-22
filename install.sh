@@ -451,6 +451,13 @@ TXBOARD_DB_DATABASE=$DB_DATABASE
 TXBOARD_DB_USERNAME=$DB_USERNAME
 TXBOARD_DB_PASSWORD=$DB_PASSWORD_ENV
 TXBOARD_DB_ROOT_PASSWORD=$DB_ROOT_PASSWORD
+TXBOARD_DB_HOST_KIND=$DB_HOST_KIND
+TXBOARD_DB_CONTAINER=$DB_CONTAINER
+TXBOARD_DB_LINK_NETWORK=$DB_LINK_NETWORK
+TXBOARD_DB_PROXY_REQUIRED=$DB_PROXY_REQUIRED
+TXBOARD_DB_PROXY_BIND=$DB_PROXY_BIND
+TXBOARD_DB_PROXY_PORT=$DB_PROXY_PORT
+TXBOARD_DB_SOURCE_PORT=$DB_SOURCE_PORT
 TXBOARD_HTTP_BIND=$HTTP_BIND
 TXBOARD_HTTP_PORT=$HTTP_PORT
 TXBOARD_HTTPS_BIND=$HTTPS_BIND
@@ -584,47 +591,15 @@ else
 fi
 
 DATABASE_SERVICE_BLOCK=""
+DB_PROXY_SERVICE_BLOCK=""
 TXBOARD_DB_DEPENDS_BLOCK=""
 BACKUP_DB_DEPENDS_BLOCK=""
 DATABASE_VOLUME_BLOCK=""
 DB_EXTRA_HOSTS_BLOCK=""
+DB_NETWORKS_BLOCK=""
+DB_NETWORK_DECL_BLOCK=""
 
-if [[ "$DB_MODE" == "local" ]]; then
-  DATABASE_SERVICE_BLOCK="$(cat <<'YAML'
-  database:
-    image: mysql:8.4.11
-    restart: unless-stopped
-    logging: *default-logging
-    environment:
-      MYSQL_DATABASE: ${TXBOARD_DB_DATABASE:-txboard}
-      MYSQL_USER: ${TXBOARD_DB_USERNAME:-txboard}
-      MYSQL_PASSWORD: ${TXBOARD_DB_PASSWORD:?missing TXBOARD_DB_PASSWORD}
-      MYSQL_ROOT_PASSWORD: ${TXBOARD_DB_ROOT_PASSWORD:?missing TXBOARD_DB_ROOT_PASSWORD}
-    volumes:
-      - database-data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "--host=127.0.0.1", "--user=root", "--password=${TXBOARD_DB_ROOT_PASSWORD:?}"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 40s
-YAML
-)"
-  TXBOARD_DB_DEPENDS_BLOCK="$(cat <<'YAML'
-    depends_on:
-      database:
-        condition: service_healthy
-YAML
-)"
-  BACKUP_DB_DEPENDS_BLOCK="$TXBOARD_DB_DEPENDS_BLOCK"
-  DATABASE_VOLUME_BLOCK="  database-data:"
-else
-  DB_EXTRA_HOSTS_BLOCK="$(cat <<'YAML'
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-YAML
-)"
-fi
+prepare_database_compose_blocks
 
 cat > compose.yaml <<EOF
 name: $COMPOSE_PROJECT_NAME
@@ -637,6 +612,7 @@ x-logging: &default-logging
 
 services:
 $DATABASE_SERVICE_BLOCK
+$DB_PROXY_SERVICE_BLOCK
   txboard:
     image: \${TXBOARD_IMAGE:?missing TXBOARD_IMAGE}
     restart: unless-stopped
@@ -644,6 +620,7 @@ $DATABASE_SERVICE_BLOCK
     stop_grace_period: 30s
 $TXBOARD_DB_DEPENDS_BLOCK
 $DB_EXTRA_HOSTS_BLOCK
+$DB_NETWORKS_BLOCK
     volumes:
       - ./data/storage:/www/storage
       - ./data/plugins:/www/plugins
@@ -685,6 +662,7 @@ $PORTS_BLOCK
     logging: *default-logging
 $BACKUP_DB_DEPENDS_BLOCK
 $DB_EXTRA_HOSTS_BLOCK
+$DB_NETWORKS_BLOCK
     entrypoint: ["/bin/sh", "/usr/local/bin/txboard-backup.sh"]
     environment:
       DB_HOST: \${TXBOARD_DB_HOST:-database}
@@ -707,6 +685,7 @@ $DATABASE_VOLUME_BLOCK
   api-redis:
   caddy-data:
   caddy-config:
+$DB_NETWORK_DECL_BLOCK
 EOF
 
 chmod 600 .env api.env
