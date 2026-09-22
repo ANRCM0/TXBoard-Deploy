@@ -27,6 +27,9 @@ jobs:
           bash txboard.sh help | grep -q 'logs \[service\]'
           bash txboard.sh help | grep -q 'config-show'
           bash txboard.sh help | grep -q 'backups'
+          bash txboard.sh help | grep -q 'recover'
+          grep -Fq '.install-incomplete' install.sh
+          grep -Fq -- '--recover-incomplete' install.sh
 
       - name: Render deployment
         env:
@@ -43,6 +46,25 @@ jobs:
           test -f /tmp/txboard-deploy-ci/api.env
           sudo docker compose -f /tmp/txboard-deploy-ci/compose.yaml \
             --env-file /tmp/txboard-deploy-ci/.env config >/dev/null
+
+      - name: Recover interrupted render
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-recovery-ci
+          TXBOARD_ADMIN_EMAIL: recovery@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18084
+          TXBOARD_IMAGE_TAG: latest
+        run: |
+          sudo mkdir -p /tmp/txboard-recovery-ci
+          printf 'services: {}\n' | sudo tee /tmp/txboard-recovery-ci/compose.yaml >/dev/null
+          sudo touch /tmp/txboard-recovery-ci/.env
+          printf 'INSTALLED=false\n' | sudo tee /tmp/txboard-recovery-ci/api.env >/dev/null
+          sudo touch /tmp/txboard-recovery-ci/.install-incomplete
+          sudo -E bash install.sh --yes --render-only --recover-incomplete
+          test -f /tmp/txboard-recovery-ci/compose.yaml
+          test ! -e /tmp/txboard-recovery-ci/.install-incomplete
+          sudo rm -rf /tmp/txboard-recovery-ci
 
       - name: Require image-only Compose
         run: |
