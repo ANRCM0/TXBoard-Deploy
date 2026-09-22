@@ -44,6 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/insta
 - 管理员邮箱
 - 安装目录
 - 是否启用测试部署模式
+- 是否启用内置 MCP Gateway（Hermes / OpenClaw 等 AI Agent）
 - 公网访问模式
 - 域名或 IP
 - HTTP / HTTPS 端口
@@ -286,7 +287,52 @@ sudo txboard help
 
 备份管理支持创建、查看、恢复、删除和修改保留数量。内置 MySQL 模式下，恢复前会自动创建一次不参与保留数量裁剪的安全备份，并保留当前访问 URL / Cookie 安全设置；宿主机 / 外部 MySQL 模式仍支持备份，但自动整库恢复会被禁用。完整卸载前也会先备份，并把部署目录额外打包到用户 HOME 目录。
 
-配置菜单可以切换 Caddy 自动 HTTPS、外部 HTTPS 反向代理和 HTTP 模式，并同步修改 Docker 端口映射、`APP_URL` 与安全 Cookie 配置。配置应用失败时会恢复修改前的配置文件。
+配置菜单可以切换 Caddy 自动 HTTPS、外部 HTTPS 反向代理和 HTTP 模式，并同步修改 Docker 端口映射、`APP_URL` 与安全 Cookie 配置。也可以交互式启用/关闭主镜像内置的 MCP Gateway；配置应用失败时会恢复修改前的配置文件。
+
+## MCP Gateway
+
+新版 TXBoard 主镜像已经内置 MCP Gateway，但默认关闭。交互安装时会询问：
+
+```text
+Enable MCP Gateway for AI Agents (Hermes / OpenClaw)? [N]:
+```
+
+启用后，部署文件写入：
+
+```env
+TXBOARD_ENABLE_MCP=true
+```
+
+TXBoard 仍然只暴露原有 HTTP/HTTPS 入口，MCP 通过同域路径提供：
+
+```text
+https://panel.example.com/mcp
+```
+
+MCP Node 进程只监听容器 loopback，不新增公网 3000 端口。Gateway 仍然只调用 TXBoard Agent Ops API，不直连 MySQL、Redis、TX-Node、SSH、Docker 或通用 Shell。
+
+如果选择的旧镜像标签尚未包含内置 MCP Gateway，安装器会在正式启动前明确拒绝开启 MCP，避免产生“配置已开启但运行时不存在”的假成功状态。
+
+已有部署可以运行：
+
+```bash
+sudo txboard config
+```
+
+然后选择 **MCP Gateway** 交互式开关。切换会重建 TXBoard 容器并等待 healthcheck；如果启动失败，部署工具会恢复原配置。
+
+无人值守安装支持：
+
+```bash
+sudo env TXBOARD_ENABLE_MCP=true bash install.sh --yes ...
+```
+
+或显式参数：
+
+```bash
+bash install.sh --enable-mcp ...
+bash install.sh --disable-mcp ...
+```
 
 ## 更新
 
@@ -358,6 +404,7 @@ TXBOARD_HTTPS_PORT
 TXBOARD_BACKUP_RETENTION
 TXBOARD_TEST_MODE
 TXBOARD_AUTO_INSTALL_DOCKER
+TXBOARD_ENABLE_MCP
 TXBOARD_DB_MODE
 TXBOARD_DB_HOST
 TXBOARD_DB_PORT
