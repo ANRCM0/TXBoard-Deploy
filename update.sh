@@ -137,7 +137,7 @@ fi
 
 if [[ "$SKIP_BACKUP" -eq 0 ]]; then
   log "creating one-shot backup before update..."
-  docker compose run --rm -e BACKUP_INTERVAL=0 backup </dev/null
+  docker compose run -T --rm -e BACKUP_INTERVAL=0 backup </dev/null
 fi
 
 log "pulling $new_image ..."
