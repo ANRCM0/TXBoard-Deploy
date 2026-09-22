@@ -218,6 +218,24 @@ random_hex() {
   fi
 }
 
+load_install_database_module() {
+  local tmp
+  tmp="$(mktemp)"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$DEPLOY_RAW_BASE/lib/install-database.sh" -o "$tmp" || { rm -f "$tmp"; die "failed to download database installer module"; }
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$tmp" "$DEPLOY_RAW_BASE/lib/install-database.sh" || { rm -f "$tmp"; die "failed to download database installer module"; }
+  else
+    rm -f "$tmp"
+    die "curl or wget is required to load the database installer module"
+  fi
+  # shellcheck source=/dev/null
+  source "$tmp"
+  rm -f "$tmp"
+}
+
+load_install_database_module
+
 detect_host() {
   local host=""
   host="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
