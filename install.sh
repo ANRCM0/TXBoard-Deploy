@@ -22,6 +22,7 @@ DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/Pa
 ASSUME_YES=0
 RENDER_ONLY=0
 RESET_LOCAL_DB=0
+RECOVER_INCOMPLETE=0
 COMPOSE_PROJECT_NAME="txboard"
 LOCAL_DB_VOLUME="${COMPOSE_PROJECT_NAME}_database-data"
 
@@ -56,6 +57,9 @@ Options:
   --yes               Non-interactive; use CLI/environment/default values
   --reset-local-db    Delete an existing managed MySQL volume before a fresh install
                       (DESTRUCTIVE: all data in that volume will be lost)
+  --recover-incomplete
+                      Remove files from a previously interrupted install and retry
+                      (database volumes are preserved)
   --render-only       Generate and validate files, do not pull/start containers
   -h, --help          Show this help
 
@@ -99,6 +103,7 @@ while [[ $# -gt 0 ]]; do
     --db-password) DB_PASSWORD="${2:?missing value for --db-password}"; shift 2 ;;
     --yes) ASSUME_YES=1; shift ;;
     --reset-local-db) RESET_LOCAL_DB=1; shift ;;
+    --recover-incomplete) RECOVER_INCOMPLETE=1; shift ;;
     --render-only) RENDER_ONLY=1; ASSUME_YES=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
@@ -293,7 +298,573 @@ if [[ "${EUID:-$(id -u)}" -ne 0 && "$INSTALL_DIR" == /opt/* ]]; then
 fi
 
 if [[ -e "$INSTALL_DIR/compose.yaml" || -e "$INSTALL_DIR/.env" || -e "$INSTALL_DIR/api.env" ]]; then
-  die "an existing TXBoard deployment was found in $INSTALL_DIR. Use update.sh instead of reinstalling."
+  incomplete=0
+  if [[ -f "$INSTALL_DIR/.install-incomplete" ]]; then
+    incomplete=1
+  elif [[ -f "$INSTALL_DIR/api.env" && ! -x "$INSTALL_DIR/txboard.sh" ]] &&
+       grep -q '^INSTALLED=false
+
+if [[ -z "$DB_MODE" ]]; then
+  if [[ "$ASSUME_YES" -eq 1 ]]; then
+    DB_MODE="local"
+  else
+    cat > /dev/tty <<'EOF'
+
+Choose database mode:
+  1) Managed MySQL 8.4 container
+  2) External MySQL server
+
+EOF
+    db_choice="$(choose "Database" "1" "2")"
+    case "$db_choice" in
+      1) DB_MODE="local" ;;
+      2) DB_MODE="external" ;;
+    esac
+  fi
+fi
+
+case "$DB_MODE" in
+  local)
+    DB_HOST="database"
+    DB_PORT="3306"
+    [[ "$DB_DATABASE" =~ ^[A-Za-z0-9_]+$ ]] || die "invalid database name: $DB_DATABASE"
+    [[ -n "$DB_USERNAME" && ! "$DB_USERNAME" =~ [[:space:]] ]] || die "invalid database username"
+
+    # MYSQL_USER/MYSQL_PASSWORD/MYSQL_ROOT_PASSWORD only initialize an empty
+    # /var/lib/mysql. Reusing a stale Compose volume with freshly generated
+    # credentials leaves the old MySQL users unchanged and makes TXBoard fail
+    # with SQLSTATE[HY000] [1045]. Detect that state before generating secrets.
+    if [[ "$RENDER_ONLY" -eq 0 ]] && docker volume inspect "$LOCAL_DB_VOLUME" >/dev/null 2>&1; then
+      if [[ "$RESET_LOCAL_DB" -eq 1 ]]; then
+        warn "deleting existing managed MySQL volume: $LOCAL_DB_VOLUME"
+        docker volume rm "$LOCAL_DB_VOLUME" >/dev/null ||
+          die "cannot remove $LOCAL_DB_VOLUME; it may still be attached to another TXBoard container"
+      elif [[ "$ASSUME_YES" -eq 1 ]]; then
+        die "existing managed MySQL volume $LOCAL_DB_VOLUME detected. Refusing to generate new credentials for an initialized database. Preserve it by recovering the original deployment/credentials, or rerun a disposable fresh install with --reset-local-db."
+      else
+        cat > /dev/tty <<EOF
+
+Existing TXBoard managed MySQL volume detected:
+
+  $LOCAL_DB_VOLUME
+
+MySQL initialization passwords are only applied to an empty data directory.
+Continuing with newly generated passwords would make the application fail
+authentication and can hide an existing database from the new deployment.
+
+EOF
+        if confirm "Delete this database volume and continue with a completely fresh install? ALL DATABASE DATA WILL BE LOST." "N"; then
+          warn "deleting existing managed MySQL volume: $LOCAL_DB_VOLUME"
+          docker volume rm "$LOCAL_DB_VOLUME" >/dev/null ||
+            die "cannot remove $LOCAL_DB_VOLUME; it may still be attached to another TXBoard container"
+        else
+          die "installation stopped to preserve the existing database volume"
+        fi
+      fi
+    fi
+
+    DB_PASSWORD="${DB_PASSWORD:-$(random_hex)}"
+    DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-$(random_hex)}"
+    ;;
+  external)
+    DB_HOST="$(prompt "External MySQL host" "$DB_HOST")"
+    DB_PORT="$(prompt "External MySQL port" "${DB_PORT:-3306}")"
+    DB_DATABASE="$(prompt "Database name" "${DB_DATABASE:-txboard}")"
+    DB_USERNAME="$(prompt "Database username" "$DB_USERNAME")"
+    if [[ "$ASSUME_YES" -eq 1 && -z "$DB_PASSWORD" ]]; then
+      die "external database mode requires TXBOARD_DB_PASSWORD or --db-password"
+    fi
+    DB_PASSWORD="$(prompt_secret "Database password" "$DB_PASSWORD")"
+    [[ -n "$DB_HOST" && ! "$DB_HOST" =~ [[:space:]] ]] || die "invalid external database host"
+    valid_port "$DB_PORT" || die "invalid external database port: $DB_PORT"
+    [[ "$DB_DATABASE" =~ ^[A-Za-z0-9_]+$ ]] || die "invalid database name: $DB_DATABASE"
+    [[ -n "$DB_USERNAME" && ! "$DB_USERNAME" =~ [[:space:]] ]] || die "invalid database username"
+    [[ -n "$DB_PASSWORD" ]] || die "database password cannot be empty"
+    DB_ROOT_PASSWORD=""
+    if [[ "$DB_HOST" == "127.0.0.1" || "$DB_HOST" == "localhost" ]]; then
+      warn "external DB host $DB_HOST points inside the container; use host.docker.internal for a database on this Docker host"
+    fi
+    ;;
+  *) die "invalid database mode: $DB_MODE" ;;
+esac
+
+DB_PASSWORD_ENV="$(dotenv_quote "$DB_PASSWORD")"
+
+APP_URL=""
+SITE_ADDRESS=":80"
+HTTP_BIND="0.0.0.0"
+HTTPS_BIND="0.0.0.0"
+SESSION_SECURE_COOKIE=false
+PUBLISH_HTTPS=0
+
+case "$MODE" in
+  auto-https)
+    DOMAIN="$(prompt "Panel domain" "$DOMAIN")"
+    valid_domain "$DOMAIN" || die "invalid domain: $DOMAIN"
+    HTTP_PORT="$(prompt "Host HTTP port" "${HTTP_PORT:-80}")"
+    HTTPS_PORT="$(prompt "Host HTTPS port" "${HTTPS_PORT:-443}")"
+    valid_port "$HTTP_PORT" || die "invalid HTTP port: $HTTP_PORT"
+    valid_port "$HTTPS_PORT" || die "invalid HTTPS port: $HTTPS_PORT"
+    SITE_ADDRESS="$DOMAIN"
+    APP_URL="https://$DOMAIN"
+    SESSION_SECURE_COOKIE=true
+    PUBLISH_HTTPS=1
+    ;;
+  external-https)
+    DOMAIN="$(prompt "Public panel domain" "$DOMAIN")"
+    valid_domain "$DOMAIN" || die "invalid domain: $DOMAIN"
+    HTTP_BIND="127.0.0.1"
+    HTTP_PORT="$(prompt "Local HTTP port for reverse proxy" "${HTTP_PORT:-8080}")"
+    valid_port "$HTTP_PORT" || die "invalid HTTP port: $HTTP_PORT"
+    APP_URL="https://$DOMAIN"
+    SESSION_SECURE_COOKIE=true
+    ;;
+  http)
+    PUBLIC_HOST="$(prompt "Public host / IP" "${PUBLIC_HOST:-$(detect_host)}")"
+    [[ -n "$PUBLIC_HOST" && ! "$PUBLIC_HOST" =~ [[:space:]] ]] || die "invalid public host"
+    HTTP_PORT="$(prompt "Host HTTP port" "${HTTP_PORT:-80}")"
+    valid_port "$HTTP_PORT" || die "invalid HTTP port: $HTTP_PORT"
+    if [[ "$HTTP_PORT" == "80" ]]; then
+      APP_URL="http://$PUBLIC_HOST"
+    else
+      APP_URL="http://$PUBLIC_HOST:$HTTP_PORT"
+    fi
+    ;;
+esac
+
+BACKUP_RETENTION="$(prompt "Backup archives to retain (0 = keep all)" "$BACKUP_RETENTION")"
+valid_nonnegative_int "$BACKUP_RETENTION" || die "backup retention must be a non-negative integer"
+
+if [[ "$ASSUME_YES" -eq 0 ]]; then
+  cat > /dev/tty <<EOF
+
+------------------------------------------------------------
+TXBoard deployment summary
+
+Image:          $IMAGE
+Mode:           $MODE
+Public URL:     $APP_URL
+Admin email:    $ADMIN_EMAIL
+Install dir:    $INSTALL_DIR
+HTTP mapping:   $HTTP_BIND:$HTTP_PORT -> container:80
+Backup retain:  $BACKUP_RETENTION
+Database mode:   $DB_MODE
+Database:        $DB_HOST:$DB_PORT/$DB_DATABASE
+EOF
+  if [[ "$PUBLISH_HTTPS" -eq 1 ]]; then
+    printf 'HTTPS mapping:  %s:%s -> container:443\n' "$HTTPS_BIND" "$HTTPS_PORT" > /dev/tty
+  fi
+  cat > /dev/tty <<'EOF'
+------------------------------------------------------------
+
+EOF
+  confirm "Continue installation?" "Y" || { log "cancelled"; exit 0; }
+fi
+
+mkdir -p "$INSTALL_DIR"
+cd "$INSTALL_DIR"
+umask 077
+
+mkdir -p data/storage/app data/plugins backups
+
+cat > .env <<EOF
+TXBOARD_IMAGE=$IMAGE
+TXBOARD_ADMIN_EMAIL=$ADMIN_EMAIL
+TXBOARD_MODE=$MODE
+TXBOARD_DOMAIN=$DOMAIN
+TXBOARD_PUBLIC_HOST=$PUBLIC_HOST
+TXBOARD_DB_MODE=$DB_MODE
+TXBOARD_DB_HOST=$DB_HOST
+TXBOARD_DB_PORT=$DB_PORT
+TXBOARD_DB_DATABASE=$DB_DATABASE
+TXBOARD_DB_USERNAME=$DB_USERNAME
+TXBOARD_DB_PASSWORD=$DB_PASSWORD_ENV
+TXBOARD_DB_ROOT_PASSWORD=$DB_ROOT_PASSWORD
+TXBOARD_HTTP_BIND=$HTTP_BIND
+TXBOARD_HTTP_PORT=$HTTP_PORT
+TXBOARD_HTTPS_BIND=$HTTPS_BIND
+TXBOARD_HTTPS_PORT=${HTTPS_PORT:-443}
+TXBOARD_SITE_ADDRESS=$SITE_ADDRESS
+TXBOARD_TLS_DIRECTIVE=
+TXBOARD_BACKUP_INTERVAL=86400
+TXBOARD_BACKUP_RETENTION=$BACKUP_RETENTION
+TXBOARD_SUBSCRIBE_PATH=s
+EOF
+
+cat > api.env <<EOF
+APP_NAME=TXBoard
+APP_ENV=production
+APP_KEY=
+APP_DEBUG=false
+APP_URL=$APP_URL
+LOG_CHANNEL=stack
+LOG_LEVEL=warning
+DB_CONNECTION=mysql
+DB_HOST=$DB_HOST
+DB_PORT=$DB_PORT
+DB_DATABASE=$DB_DATABASE
+DB_USERNAME=$DB_USERNAME
+DB_PASSWORD=$DB_PASSWORD_ENV
+REDIS_HOST=/data/redis.sock
+REDIS_PASSWORD=null
+REDIS_PORT=0
+BROADCAST_DRIVER=log
+CACHE_DRIVER=redis
+QUEUE_CONNECTION=redis
+SESSION_SECURE_COOKIE=$SESSION_SECURE_COOKIE
+CORS_ALLOWED_ORIGINS=
+CORS_ALLOWED_ORIGINS_PATTERNS=
+MAIL_MAILER=smtp
+MAIL_HOST=smtp.mailtrap.io
+MAIL_PORT=2525
+MAIL_USERNAME=null
+MAIL_PASSWORD=null
+MAIL_ENCRYPTION=null
+MAIL_FROM_ADDRESS=noreply@example.com
+MAIL_FROM_NAME=TXBoard
+MAILGUN_DOMAIN=
+MAILGUN_SECRET=
+INSTALLED=false
+EOF
+
+cat > backup.sh <<'BACKUP'
+#!/bin/sh
+set -eu
+
+DB_HOST="${DB_HOST:-database}"
+DB_PORT="${DB_PORT:-3306}"
+DB_DATABASE="${DB_DATABASE:?DB_DATABASE is required}"
+DB_USERNAME="${DB_USERNAME:?DB_USERNAME is required}"
+DB_PASSWORD="${DB_PASSWORD:-}"
+BACKUP_DIR="${BACKUP_DIR:-/backups}"
+BACKUP_RETENTION="${BACKUP_RETENTION:-7}"
+BACKUP_INTERVAL="${BACKUP_INTERVAL:-0}"
+BACKUP_SOURCE_DIR="${BACKUP_SOURCE_DIR:-/backup-source/api}"
+
+log() { echo "[backup] $(date -u '+%Y-%m-%dT%H:%M:%SZ') $*"; }
+
+prune() {
+  case "$BACKUP_RETENTION" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$BACKUP_RETENTION" -gt 0 ] || return 0
+  total=$(ls -1 "$BACKUP_DIR" 2>/dev/null | grep -cE '^[0-9]{8}T[0-9]{6}Z$' || true)
+  [ "$total" -gt "$BACKUP_RETENTION" ] || return 0
+  remove=$((total - BACKUP_RETENTION))
+  ls -1 "$BACKUP_DIR" | grep -E '^[0-9]{8}T[0-9]{6}Z$' | sort | head -n "$remove" |
+    while read -r old; do
+      [ -n "$old" ] && rm -rf "$BACKUP_DIR/$old"
+    done
+}
+
+run_backup() {
+  stamp=$(date -u '+%Y%m%dT%H%M%SZ')
+  dest="$BACKUP_DIR/$stamp"
+  mkdir -p "$dest"
+
+  log "dumping database -> $dest/db.sql.gz"
+  if ! MYSQL_PWD="$DB_PASSWORD" mysqldump \
+      --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" \
+      --single-transaction --quick --routines --events --triggers \
+      --set-gtid-purged=OFF --default-character-set=utf8mb4 \
+      "$DB_DATABASE" 2>/dev/null | gzip -9 > "$dest/db.sql.gz"; then
+    rm -rf "$dest"
+    return 1
+  fi
+
+  if [ ! -s "$dest/db.sql.gz" ] || ! gzip -t "$dest/db.sql.gz" 2>/dev/null; then
+    rm -rf "$dest"
+    return 1
+  fi
+
+  if [ -f "$BACKUP_SOURCE_DIR/.env" ]; then
+    cp "$BACKUP_SOURCE_DIR/.env" "$dest/env"
+    chmod 600 "$dest/env"
+  fi
+
+  if [ -d "$BACKUP_SOURCE_DIR/storage/app" ]; then
+    tar -czf "$dest/storage-app.tar.gz" -C "$BACKUP_SOURCE_DIR/storage/app" . 2>/dev/null || true
+  fi
+
+  {
+    echo "created_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    echo "database=$DB_DATABASE"
+    echo "db_host=$DB_HOST"
+  } > "$dest/MANIFEST"
+
+  prune
+  log "backup complete: $dest"
+}
+
+if [ "$BACKUP_INTERVAL" -gt 0 ] 2>/dev/null; then
+  while true; do
+    run_backup || log "backup failed; retrying next interval"
+    sleep "$BACKUP_INTERVAL"
+  done
+else
+  run_backup
+fi
+BACKUP
+chmod 700 backup.sh
+
+if [[ "$PUBLISH_HTTPS" -eq 1 ]]; then
+  PORTS_BLOCK='      - "${TXBOARD_HTTP_BIND:-0.0.0.0}:${TXBOARD_HTTP_PORT:-80}:80"
+      - "${TXBOARD_HTTPS_BIND:-0.0.0.0}:${TXBOARD_HTTPS_PORT:-443}:443"'
+else
+  PORTS_BLOCK='      - "${TXBOARD_HTTP_BIND:-0.0.0.0}:${TXBOARD_HTTP_PORT:-80}:80"'
+fi
+
+DATABASE_SERVICE_BLOCK=""
+TXBOARD_DB_DEPENDS_BLOCK=""
+BACKUP_DB_DEPENDS_BLOCK=""
+DATABASE_VOLUME_BLOCK=""
+DB_EXTRA_HOSTS_BLOCK=""
+
+if [[ "$DB_MODE" == "local" ]]; then
+  DATABASE_SERVICE_BLOCK="$(cat <<'YAML'
+  database:
+    image: mysql:8.4.11
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      MYSQL_DATABASE: ${TXBOARD_DB_DATABASE:-txboard}
+      MYSQL_USER: ${TXBOARD_DB_USERNAME:-txboard}
+      MYSQL_PASSWORD: ${TXBOARD_DB_PASSWORD:?missing TXBOARD_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${TXBOARD_DB_ROOT_PASSWORD:?missing TXBOARD_DB_ROOT_PASSWORD}
+    volumes:
+      - database-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "--host=127.0.0.1", "--user=root", "--password=${TXBOARD_DB_ROOT_PASSWORD:?}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+YAML
+)"
+  TXBOARD_DB_DEPENDS_BLOCK="$(cat <<'YAML'
+    depends_on:
+      database:
+        condition: service_healthy
+YAML
+)"
+  BACKUP_DB_DEPENDS_BLOCK="$TXBOARD_DB_DEPENDS_BLOCK"
+  DATABASE_VOLUME_BLOCK="  database-data:"
+else
+  DB_EXTRA_HOSTS_BLOCK="$(cat <<'YAML'
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+YAML
+)"
+fi
+
+cat > compose.yaml <<EOF
+name: $COMPOSE_PROJECT_NAME
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+$DATABASE_SERVICE_BLOCK
+  txboard:
+    image: \${TXBOARD_IMAGE:?missing TXBOARD_IMAGE}
+    restart: unless-stopped
+    logging: *default-logging
+    stop_grace_period: 30s
+$TXBOARD_DB_DEPENDS_BLOCK
+$DB_EXTRA_HOSTS_BLOCK
+    volumes:
+      - ./data/storage:/www/storage
+      - ./data/plugins:/www/plugins
+      - ./api.env:/www/.env
+      - api-redis:/data
+      - caddy-data:/caddy-data
+      - caddy-config:/caddy-config
+    environment:
+      docker: "true"
+      ADMIN_ACCOUNT: \${TXBOARD_ADMIN_EMAIL:?missing TXBOARD_ADMIN_EMAIL}
+      DB_CONNECTION: mysql
+      DB_HOST: \${TXBOARD_DB_HOST:-database}
+      DB_PORT: \${TXBOARD_DB_PORT:-3306}
+      DB_DATABASE: \${TXBOARD_DB_DATABASE:-txboard}
+      DB_USERNAME: \${TXBOARD_DB_USERNAME:-txboard}
+      DB_PASSWORD: \${TXBOARD_DB_PASSWORD:?missing TXBOARD_DB_PASSWORD}
+      REDIS_HOST: /data/redis.sock
+      REDIS_PORT: 0
+      REDIS_PASSWORD: "null"
+      SUBSCRIBE_PATH: \${TXBOARD_SUBSCRIBE_PATH:-s}
+      TXBOARD_SITE_ADDRESS: \${TXBOARD_SITE_ADDRESS:-:80}
+      TXBOARD_TLS_DIRECTIVE: \${TXBOARD_TLS_DIRECTIVE:-}
+      ENABLE_CADDY: "true"
+      ENABLE_HORIZON: "true"
+      ENABLE_REDIS: "true"
+      ENABLE_WS_SERVER: "true"
+    ports:
+$PORTS_BLOCK
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -s /data/redis.sock ping | grep -q PONG && php /opt/txboard/healthcheck.php"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  backup:
+    image: mysql:8.4.11
+    restart: unless-stopped
+    logging: *default-logging
+$BACKUP_DB_DEPENDS_BLOCK
+$DB_EXTRA_HOSTS_BLOCK
+    entrypoint: ["/bin/sh", "/usr/local/bin/txboard-backup.sh"]
+    environment:
+      DB_HOST: \${TXBOARD_DB_HOST:-database}
+      DB_PORT: \${TXBOARD_DB_PORT:-3306}
+      DB_DATABASE: \${TXBOARD_DB_DATABASE:-txboard}
+      DB_USERNAME: \${TXBOARD_DB_USERNAME:-txboard}
+      DB_PASSWORD: \${TXBOARD_DB_PASSWORD:?missing TXBOARD_DB_PASSWORD}
+      BACKUP_DIR: /backups
+      BACKUP_SOURCE_DIR: /backup-source/api
+      BACKUP_INTERVAL: \${TXBOARD_BACKUP_INTERVAL:-86400}
+      BACKUP_RETENTION: \${TXBOARD_BACKUP_RETENTION:-7}
+    volumes:
+      - ./backup.sh:/usr/local/bin/txboard-backup.sh:ro
+      - ./backups:/backups
+      - ./api.env:/backup-source/api/.env:ro
+      - ./data/storage/app:/backup-source/api/storage/app:ro
+
+volumes:
+$DATABASE_VOLUME_BLOCK
+  api-redis:
+  caddy-data:
+  caddy-config:
+EOF
+
+chmod 600 .env api.env
+chmod 644 compose.yaml
+docker compose config >/dev/null
+
+if [[ "$RENDER_ONLY" -eq 1 ]]; then
+  log "deployment files rendered and validated in $INSTALL_DIR"
+  exit 0
+fi
+
+# From this point onward, any failure leaves a recognizable incomplete install.
+# Install the manager before network/database/bootstrap work so recovery remains
+# available even when the application installation does not finish.
+touch "$INSTALL_DIR/.install-incomplete"
+log "installing TXBoard recovery/management command..."
+install_deploy_tools
+
+log "pulling TXBoard and infrastructure images..."
+docker compose pull
+
+if [[ "$DB_MODE" == "local" ]]; then
+  log "starting managed database..."
+  docker compose up -d --remove-orphans --wait database
+
+  log "verifying managed database credentials..."
+  if ! docker compose exec -T database sh -lc \
+      'MYSQL_PWD="$MYSQL_PASSWORD" mysql --protocol=TCP --host=127.0.0.1 --port=3306 --user="$MYSQL_USER" --database="$MYSQL_DATABASE" --execute="SELECT 1" >/dev/null' </dev/null; then
+    die "managed MySQL rejected the configured TXBoard credentials. The database volume may have been initialized with older passwords. Preserve existing data and recover its original credentials, or remove the stale deployment and rerun a disposable fresh install with --reset-local-db."
+  fi
+else
+  log "checking external database connectivity..."
+  docker compose run -T --rm --no-deps --entrypoint sh backup -lc \
+    'MYSQL_PWD="$DB_PASSWORD" mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="SELECT 1" >/dev/null' </dev/null
+fi
+
+# Start the real application container before installation, but do not wait for
+# its health check yet. txboard:install relies on the normal container runtime.
+log "starting TXBoard bootstrap container..."
+docker compose up -d --remove-orphans txboard
+
+log "initializing TXBoard..."
+docker compose exec -T txboard php artisan txboard:install </dev/null
+
+log "restarting TXBoard with the completed runtime configuration..."
+docker compose restart txboard >/dev/null
+docker compose up -d --wait txboard >/dev/null
+
+if ! docker compose exec -T txboard php artisan txboard:install-status --no-interaction </dev/null >/dev/null; then
+  die "TXBoard installation state is incomplete. Inspect: cd $INSTALL_DIR && docker compose logs txboard"
+fi
+
+log "starting periodic backups..."
+docker compose up -d backup
+
+rm -f "$INSTALL_DIR/.install-incomplete"
+log "refreshing TXBoard management command..."
+install_deploy_tools
+
+cat <<EOF
+
+TXBoard installation completed.
+
+Panel:       $APP_URL/admin/
+Install dir: $INSTALL_DIR
+Image:       $IMAGE
+
+The administrator password was printed by txboard:install above.
+Store it now; the deploy script does not save that password.
+
+Management:
+  sudo txboard
+  $INSTALL_DIR/txboard.sh
+
+Quick commands:
+  sudo txboard
+  sudo txboard status
+  sudo txboard update
+  sudo txboard restart
+  sudo txboard logs txboard
+  sudo txboard backup
+  sudo txboard config
+  sudo txboard diagnose
+  sudo txboard help
+EOF
+ "$INSTALL_DIR/api.env" 2>/dev/null; then
+    # Compatibility with interrupted installs created before the marker existed.
+    incomplete=1
+  fi
+
+  if [[ "$incomplete" -eq 1 ]]; then
+    warn "an incomplete TXBoard installation was found in $INSTALL_DIR"
+
+    recover_now=0
+    if [[ "$RECOVER_INCOMPLETE" -eq 1 ]]; then
+      recover_now=1
+    elif [[ "$ASSUME_YES" -eq 0 ]]; then
+      cat > /dev/tty <<EOF
+
+A previous TXBoard installation stopped before completion.
+
+The generated deployment files can be removed and the installer restarted.
+Named Docker volumes, including a managed MySQL data volume, will NOT be deleted.
+
+EOF
+      if confirm "Remove the incomplete deployment files and continue with a fresh install?" "N"; then
+        recover_now=1
+      fi
+    fi
+
+    if [[ "$recover_now" -eq 1 ]]; then
+      if [[ -f "$INSTALL_DIR/compose.yaml" ]]; then
+        (cd "$INSTALL_DIR" && docker compose down --remove-orphans >/dev/null 2>&1) || true
+      fi
+      rm -rf "$INSTALL_DIR"
+      if [[ -L /usr/local/bin/txboard ]]; then
+        target="$(readlink -f /usr/local/bin/txboard 2>/dev/null || true)"
+        [[ "$target" == "$INSTALL_DIR/txboard.sh" ]] && rm -f /usr/local/bin/txboard
+      fi
+      log "removed incomplete deployment files; preserved Docker volumes"
+    else
+      mkdir -p "$INSTALL_DIR"
+      install_deploy_tools
+      die "incomplete installation preserved. Management tools were refreshed when possible. Re-run this installer and choose recovery, or use --recover-incomplete for unattended recovery."
+    fi
+  else
+    install_deploy_tools
+    die "an existing TXBoard deployment was found in $INSTALL_DIR. Management tools were refreshed when possible; use 'sudo txboard' or update.sh instead of reinstalling."
+  fi
 fi
 
 if [[ -z "$DB_MODE" ]]; then
