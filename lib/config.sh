@@ -36,6 +36,8 @@ HTTP bind:         $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_BIND)
 HTTP port:         $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_PORT)
 HTTPS port:        $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTPS_PORT)
 Backup retention:  $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION)
+MCP Gateway:       $(if [[ "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_ENABLE_MCP)" == "true" ]]; then printf 'true'; else printf 'false'; fi)
+MCP URL:           $(if [[ "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_ENABLE_MCP)" == "true" ]]; then printf '%s/mcp' "$(env_get "$TXBOARD_INSTALL_DIR/api.env" APP_URL)"; else printf 'disabled'; fi)
 EOF
 }
 
@@ -105,10 +107,50 @@ config_access() {
   log "public URL updated: $url"
 }
 
+config_mcp() {
+  require_tty; docker_ok; need_install
+  local current default target tmp
+  current="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_ENABLE_MCP)"
+  [[ "$current" == "true" ]] || current=false
+  default="N"
+  [[ "$current" == "true" ]] && default="Y"
+
+  if confirm "Enable MCP Gateway for AI Agents (Hermes / OpenClaw)?" "$default"; then
+    target=true
+  else
+    target=false
+  fi
+
+  [[ "$target" != "$current" ]] || { log "MCP Gateway unchanged: $current"; return 0; }
+
+  if [[ "$target" == "true" ]] &&
+     ! compose run -T --rm --no-deps --entrypoint sh txboard -lc 'test -f /opt/txboard-mcp/dist/index.js' >/dev/null; then
+    die "current TXBoard image does not include the embedded MCP Gateway; update TXBoard before enabling MCP"
+  fi
+
+  tmp="$(mktemp)"
+  cp "$TXBOARD_INSTALL_DIR/.env" "$tmp"
+  env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_ENABLE_MCP "$target"
+
+  if ! (cd "$TXBOARD_INSTALL_DIR" && docker compose config >/dev/null) ||
+     ! compose up -d --force-recreate --wait txboard; then
+    cp "$tmp" "$TXBOARD_INSTALL_DIR/.env"
+    compose up -d --force-recreate txboard || true
+    rm -f "$tmp"
+    die "MCP configuration failed and was rolled back"
+  fi
+
+  rm -f "$tmp"
+  log "MCP Gateway: $target"
+  if [[ "$target" == "true" ]]; then
+    log "MCP endpoint: $(env_get "$TXBOARD_INSTALL_DIR/api.env" APP_URL)/mcp"
+  fi
+}
+
 config_menu() {
   local choice value image tag
   while true; do
-    choice="$(choose "1 show  2 access/domain/ports  3 image tag  4 backup retention  0 back" "1" "4")"
+    choice="$(choose "1 show  2 access/domain/ports  3 image tag  4 backup retention  5 MCP Gateway  0 back" "1" "5")"
     case "$choice" in
       1) config_show; pause ;;
       2) config_access; pause ;;
@@ -128,6 +170,10 @@ config_menu() {
         [[ "$value" =~ ^[0-9]+$ ]] || { warn "invalid retention"; continue; }
         env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION "$value"
         compose up -d --force-recreate backup
+        pause
+        ;;
+      5)
+        config_mcp
         pause
         ;;
       0) return 0 ;;
