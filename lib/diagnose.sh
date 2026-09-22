@@ -11,7 +11,7 @@ diagnose_run() {
 
   echo "=== database ==="
   if [[ "$(database_mode)" == "external" ]]; then
-    if compose run --rm --no-deps --entrypoint sh backup -lc \
+    if compose run -T --rm --no-deps --entrypoint sh backup -lc \
       'MYSQL_PWD="$DB_PASSWORD" mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="SELECT 1" >/dev/null'; then
       echo "external database: OK"
     else
