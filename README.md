@@ -216,28 +216,46 @@ sudo txboard
 curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/update.sh | sudo bash
 ```
 
-主菜单提供：
+直接运行 `sudo txboard` 会进入交互菜单。未发现部署时只显示安装入口；已安装时主菜单提供常用运维操作：
 
 ```text
-1) Install TXBoard
-2) Update TXBoard
-3) Service management
-4) View logs
-5) Backup management
-6) Configuration
-7) Diagnostics
-8) Uninstall TXBoard
-0) Exit
+ 1) Status
+ 2) Update
+ 3) Start services
+ 4) Stop services
+ 5) Restart TXBoard
+ 6) View logs
+ 7) Backup now
+ 8) Backup management
+ 9) Configuration
+10) Diagnostics
+11) Resource usage
+12) Uninstall
+ 0) Exit
 ```
 
-也可以不用菜单，直接调用子命令：
+也可以完全跳过菜单，直接调用快捷子命令：
 
 ```bash
-sudo txboard status
+sudo txboard status              # 状态
+sudo txboard ps                  # status 的快捷别名
+sudo txboard start
+sudo txboard stop
+sudo txboard restart
+sudo txboard stats               # 容器资源占用
+sudo txboard logs                # 所有服务日志
+sudo txboard logs txboard        # TXBoard 日志
+sudo txboard logs database       # 内置 MySQL 日志
+sudo txboard logs backup         # 备份服务日志
 sudo txboard update
 sudo txboard update latest
-sudo txboard backup
+sudo txboard backup              # 立即备份
+sudo txboard backups             # 查看备份列表
+sudo txboard restore
+sudo txboard config              # 配置菜单
+sudo txboard config-show         # 直接查看配置
 sudo txboard diagnose
+sudo txboard help
 ```
 
 备份管理支持创建、查看、恢复、删除和修改保留数量。内置 MySQL 模式下，恢复前会自动创建一次不参与保留数量裁剪的安全备份，并保留当前访问 URL / Cookie 安全设置；外部 MySQL 模式仍支持备份，但自动整库恢复会被禁用。完整卸载前也会先备份，并把部署目录额外打包到用户 HOME 目录。
@@ -353,7 +371,7 @@ docker compose exec txboard sh
 手动备份：
 
 ```bash
-docker compose run --rm -e BACKUP_INTERVAL=0 backup
+docker compose run -T --rm -e BACKUP_INTERVAL=0 backup
 ```
 
 不要随意执行：
@@ -411,7 +429,8 @@ Deploy 仓库只依赖以下稳定运行接口：
 - 非交互 render-only 安装
 - 内置 / 外部数据库 Compose 渲染
 - 残留内置 MySQL 数据卷的安全拒绝逻辑
-- 完整 smoke install 后的管理命令可用性
+- 完整 smoke install 后的管理命令与快捷子命令可用性
+- 外部数据库探测和手动备份容器显式禁用 TTY，兼容 pipe / CI / 无交互输入
 - 生成的 Compose 配置
 - 生成的 Compose 不包含 `build:`
 - 默认 TXBoard 公共镜像 manifest 可被匿名读取
