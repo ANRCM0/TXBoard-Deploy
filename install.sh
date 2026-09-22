@@ -753,7 +753,7 @@ if [[ "$DB_MODE" == "local" ]]; then
   fi
 else
   log "checking external database connectivity..."
-  docker compose run --rm --no-deps --entrypoint sh backup -lc \
+  docker compose run -T --rm --no-deps --entrypoint sh backup -lc \
     'MYSQL_PWD="$DB_PASSWORD" mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="SELECT 1" >/dev/null' </dev/null
 fi
 
@@ -794,12 +794,14 @@ Management:
   sudo txboard
   $INSTALL_DIR/txboard.sh
 
-Useful commands:
+Quick commands:
+  sudo txboard
   sudo txboard status
-  sudo txboard logs
-  sudo txboard backup
-  sudo txboard diagnose
-
-Update:
   sudo txboard update
+  sudo txboard restart
+  sudo txboard logs txboard
+  sudo txboard backup
+  sudo txboard config
+  sudo txboard diagnose
+  sudo txboard help
 EOF
