@@ -21,6 +21,9 @@ jobs:
       - name: Check installer and manager regressions
         run: |
           grep -Fq 'docker compose run -T --rm --no-deps --entrypoint sh backup -lc' install.sh
+          grep -Fq "external database host '\$DB_HOST' resolves inside the TXBoard container" install.sh
+          grep -Fq 'public host cannot be $PUBLIC_HOST' install.sh
+          grep -Fq 'cannot connect to external MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE' install.sh
           grep -Fq 'docker compose run -T --rm -e BACKUP_INTERVAL=0 backup' update.sh
           grep -Fq 'compose run -T --rm -e BACKUP_INTERVAL=0 backup' lib/backup.sh
           grep -Fq 'compose run -T --rm --no-deps --entrypoint sh backup -lc' lib/diagnose.sh
