@@ -21,7 +21,9 @@ jobs:
       - name: Check installer and manager regressions
         run: |
           grep -Fq 'docker compose run -T --rm --no-deps --entrypoint sh backup -lc' install.sh
+          grep -Fq 'docker compose run -T --rm -e BACKUP_INTERVAL=0 backup' update.sh
           grep -Fq 'compose run -T --rm -e BACKUP_INTERVAL=0 backup' lib/backup.sh
+          grep -Fq 'compose run -T --rm --no-deps --entrypoint sh backup -lc' lib/diagnose.sh
           bash txboard.sh help | grep -q 'logs \[service\]'
           bash txboard.sh help | grep -q 'config-show'
           bash txboard.sh help | grep -q 'backups'
