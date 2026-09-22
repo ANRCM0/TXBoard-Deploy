@@ -372,10 +372,20 @@ EOF
     [[ "$DB_DATABASE" =~ ^[A-Za-z0-9_]+$ ]] || die "invalid database name: $DB_DATABASE"
     [[ -n "$DB_USERNAME" && ! "$DB_USERNAME" =~ [[:space:]] ]] || die "invalid database username"
     [[ -n "$DB_PASSWORD" ]] || die "database password cannot be empty"
-    DB_ROOT_PASSWORD=""
+
     if [[ "$DB_HOST" == "127.0.0.1" || "$DB_HOST" == "localhost" ]]; then
-      warn "external DB host $DB_HOST points inside the container; use host.docker.internal for a database on this Docker host"
+      if [[ "$ASSUME_YES" -eq 1 ]]; then
+        die "external database host '$DB_HOST' resolves inside the TXBoard container, not to the Docker host. Use host.docker.internal for MySQL running on this server."
+      fi
+      warn "external DB host $DB_HOST resolves inside the TXBoard container, not to the Docker host"
+      if confirm "Use host.docker.internal for MySQL running on this server?" "Y"; then
+        DB_HOST="host.docker.internal"
+      else
+        die "external database host must be reachable from the TXBoard container; 127.0.0.1/localhost cannot be used here"
+      fi
     fi
+
+    DB_ROOT_PASSWORD=""
     ;;
   *) die "invalid database mode: $DB_MODE" ;;
 esac
@@ -414,6 +424,8 @@ case "$MODE" in
   http)
     PUBLIC_HOST="$(prompt "Public host / IP" "${PUBLIC_HOST:-$(detect_host)}")"
     [[ -n "$PUBLIC_HOST" && ! "$PUBLIC_HOST" =~ [[:space:]] ]] || die "invalid public host"
+    [[ "$PUBLIC_HOST" != "0.0.0.0" && "$PUBLIC_HOST" != "::" ]] ||
+      die "public host cannot be $PUBLIC_HOST; use the server IP/hostname here. The listener still binds to 0.0.0.0 automatically."
     HTTP_PORT="$(prompt "Host HTTP port" "${HTTP_PORT:-80}")"
     valid_port "$HTTP_PORT" || die "invalid HTTP port: $HTTP_PORT"
     if [[ "$HTTP_PORT" == "80" ]]; then
@@ -753,8 +765,10 @@ if [[ "$DB_MODE" == "local" ]]; then
   fi
 else
   log "checking external database connectivity..."
-  docker compose run -T --rm --no-deps --entrypoint sh backup -lc \
-    'MYSQL_PWD="$DB_PASSWORD" mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="SELECT 1" >/dev/null' </dev/null
+  if ! docker compose run -T --rm --no-deps --entrypoint sh backup -lc \
+      'MYSQL_PWD="$DB_PASSWORD" mysql --connect-timeout=5 --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="SELECT 1" >/dev/null' </dev/null; then
+    die "cannot connect to external MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE from the TXBoard container. If MySQL runs on this Docker host, use host.docker.internal and make sure MySQL/its container publishes or listens on a host-reachable address (not only 127.0.0.1). Also check firewall and user host permissions."
+  fi
 fi
 
 # Start the real application container before installation, but do not wait for
