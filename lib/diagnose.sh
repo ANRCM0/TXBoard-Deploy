@@ -10,12 +10,12 @@ diagnose_run() {
   compose ps || failed=1
 
   echo "=== database ==="
-  if [[ "$(database_mode)" == "external" ]]; then
+  if [[ "$(database_mode)" != "local" ]]; then
     if compose run -T --rm --no-deps --entrypoint sh backup -lc \
       'MYSQL_PWD="$DB_PASSWORD" mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="SELECT 1" >/dev/null'; then
-      echo "external database: OK"
+      echo "$(database_mode) database: OK"
     else
-      echo "external database: FAIL"
+      echo "$(database_mode) database: FAIL"
       failed=1
     fi
   else
