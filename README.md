@@ -87,8 +87,12 @@ sudo bash -s -- --yes --reset-local-db \
 - 在正式安装前使用 MySQL 客户端执行 `SELECT 1` 验证数据库、账号和网络连通性
 - 继续使用 backup 容器对外部数据库执行定时备份
 - 为容器加入 `host.docker.internal -> host-gateway`，因此同机数据库可以使用 `host.docker.internal`
+- 交互安装输入 `127.0.0.1` / `localhost` 时会提示替换为 `host.docker.internal`；无人值守模式会直接拒绝这两个地址
+- 数据库探测失败时会明确提示检查宿主机监听地址、Docker 端口发布、防火墙和 MySQL 用户 host 权限
 
-外部数据库需要提前创建目标数据库，并给 TXBoard 用户授予该数据库的建表、修改表、索引及数据读写权限。数据库地址必须能从 Docker 容器访问。
+外部数据库需要提前创建目标数据库，并给 TXBoard 用户授予该数据库的建表、修改表、索引及数据读写权限。数据库地址必须能从 Docker 容器访问。注意：即使使用 `host.docker.internal`，如果宿主机 MySQL 只监听 `127.0.0.1`，Docker bridge 容器仍无法连接；需要让 MySQL 或其容器对宿主机可达地址监听/发布端口。
+
+HTTP 模式下的 “Public host / IP” 是写入 `APP_URL` 的访问地址，不能填写 `0.0.0.0`；Compose 端口仍会自动监听 `0.0.0.0`。
 
 > 外部数据库可以正常创建 TXBoard 备份，但管理器暂不自动执行整库恢复。恢复外部数据库时应使用数据库提供商/管理员工具导入 `backups/<时间>/db.sql.gz`，避免部署脚本在权限和托管策略未知的数据库上执行破坏性重建。
 
