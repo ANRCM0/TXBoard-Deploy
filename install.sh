@@ -12,6 +12,7 @@ HTTP_PORT="${TXBOARD_HTTP_PORT:-}"
 HTTPS_PORT="${TXBOARD_HTTPS_PORT:-}"
 BACKUP_RETENTION="${TXBOARD_BACKUP_RETENTION:-7}"
 TEST_MODE="${TXBOARD_TEST_MODE:-false}"
+AUTO_INSTALL_DOCKER="${TXBOARD_AUTO_INSTALL_DOCKER:-false}"
 DB_MODE="${TXBOARD_DB_MODE:-}"
 DB_HOST="${TXBOARD_DB_HOST:-}"
 DB_PORT="${TXBOARD_DB_PORT:-3306}"
@@ -82,6 +83,7 @@ Environment variables:
   TXBOARD_HTTPS_PORT
   TXBOARD_BACKUP_RETENTION
   TXBOARD_TEST_MODE
+  TXBOARD_AUTO_INSTALL_DOCKER
   TXBOARD_DB_MODE
   TXBOARD_DB_HOST
   TXBOARD_DB_PORT
@@ -122,12 +124,6 @@ while [[ $# -gt 0 ]]; do
     *) die "unknown option: $1" ;;
   esac
 done
-
-command -v docker >/dev/null 2>&1 || die "Docker Engine is required."
-docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required."
-if [[ "$RENDER_ONLY" -eq 0 ]]; then
-  docker info >/dev/null 2>&1 || die "Docker daemon is not reachable."
-fi
 
 case "$(uname -m)" in
   x86_64|amd64|aarch64|arm64) ;;
@@ -193,6 +189,42 @@ confirm() {
   value="$(prompt "$label" "$default")"
   [[ "$value" =~ ^[Yy]([Ee][Ss])?$ ]]
 }
+
+ensure_docker() {
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    if [[ "$RENDER_ONLY" -eq 0 ]]; then
+      docker info >/dev/null 2>&1 || die "Docker is installed but the daemon is not reachable."
+    fi
+    return
+  fi
+
+  local auto="${AUTO_INSTALL_DOCKER,,}"
+  if [[ "$ASSUME_YES" -eq 0 ]]; then
+    confirm "Docker + Compose v2 not found. Install Docker automatically?" "Y" ||
+      die "Docker Engine + Compose v2 are required."
+  elif [[ "$auto" != "1" && "$auto" != "true" && "$auto" != "yes" && "$auto" != "y" ]]; then
+    die "Docker + Compose v2 are required. For unattended automatic installation set TXBOARD_AUTO_INSTALL_DOCKER=true."
+  fi
+
+  [[ "${EUID:-$(id -u)}" -eq 0 ]] ||
+    die "automatic Docker installation requires root; rerun with sudo."
+
+  local tmp="/tmp/txboard-get-docker.sh"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL https://get.docker.com -o "$tmp"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$tmp" https://get.docker.com
+  else
+    die "curl or wget is required to install Docker automatically"
+  fi
+  sh "$tmp"
+  rm -f "$tmp"
+  command -v systemctl >/dev/null 2>&1 && systemctl enable --now docker >/dev/null 2>&1 || true
+  docker compose version >/dev/null 2>&1 || die "Docker installed, but Compose v2 is unavailable."
+  [[ "$RENDER_ONLY" -eq 1 ]] || docker info >/dev/null 2>&1 || die "Docker daemon is not reachable after installation."
+}
+
+ensure_docker
 
 valid_email() {
   [[ "$1" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]
