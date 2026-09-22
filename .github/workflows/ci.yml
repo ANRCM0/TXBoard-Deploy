@@ -21,10 +21,12 @@ jobs:
       - name: Check installer and manager regressions
         run: |
           grep -Fq 'docker compose run -T --rm --no-deps --entrypoint sh backup -lc' install.sh
-          grep -Fq "external database host '\$DB_HOST' resolves inside the TXBoard container" install.sh
+          grep -Fq 'Switch to automatic host-MySQL mode instead?' lib/install-database.sh
+          grep -Fq 'MySQL on this server (auto-detect system / 1Panel / Docker)' lib/install-database.sh
           grep -Fq 'explicitly enable test deployment mode with --test-mode' install.sh
           grep -Fq 'TXBOARD_TEST_MODE=$TEST_MODE' install.sh
-          grep -Fq 'cannot connect to external MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE' install.sh
+          grep -Fq 'cannot connect to $DB_MODE MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE' lib/install-database.sh
+          grep -Fq 'Docker + Compose v2 not found. Install Docker automatically?' install.sh
           grep -Fq 'docker compose run -T --rm -e BACKUP_INTERVAL=0 backup' update.sh
           grep -Fq 'compose run -T --rm -e BACKUP_INTERVAL=0 backup' lib/backup.sh
           grep -Fq 'compose run -T --rm --no-deps --entrypoint sh backup -lc' lib/diagnose.sh
@@ -115,6 +117,322 @@ jobs:
           sudo grep -q '^DB_PORT=3307$' api.env
           sudo grep -q 'host.docker.internal:host-gateway' compose.yaml
           sudo rm -rf /tmp/txboard-deploy-external-ci
+
+      - name: Render host Docker database deployment
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-host-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18086
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_DB_MODE: host
+          TXBOARD_DB_CONTAINER: txboard-host-mysql-ci
+        run: |
+          sudo docker run -d --name txboard-host-mysql-ci             -e MYSQL_ROOT_PASSWORD=ci-root-password             mysql:8.4.11 >/dev/null
+          trap 'sudo docker rm -f txboard-host-mysql-ci >/dev/null 2>&1 || true; sudo docker network rm txboard-db-link >/dev/null 2>&1 || true; sudo rm -rf /tmp/txboard-deploy-host-ci' EXIT
+
+          for i in $(seq 1 30); do
+            if sudo docker exec -e MYSQL_PWD=ci-root-password txboard-host-mysql-ci               mysqladmin ping -uroot --silent >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+
+          sudo -E bash install.sh --yes --render-only
+          cd /tmp/txboard-deploy-host-ci
+          sudo docker compose --env-file .env config >/dev/null
+          ! sudo docker compose --env-file .env config --services | grep -qx database
+          sudo grep -q '^TXBOARD_DB_MODE=host        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-stale-volume-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18083
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_DB_MODE: local
+        run: |
+          sudo docker volume create txboard_database-data >/dev/null
+          trap 'sudo docker volume rm txboard_database-data >/dev/null 2>&1 || true; sudo rm -rf /tmp/txboard-stale-volume-ci' EXIT
+
+          set +e
+          output="$(sudo -E bash install.sh --yes 2>&1)"
+          status=$?
+          set -e
+
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -q 'existing managed MySQL volume txboard_database-data detected'
+          test ! -e /tmp/txboard-stale-volume-ci/.env
+
+      - name: Check public image manifest
+        run: docker manifest inspect ghcr.io/paimoncai/txboard:latest >/dev/null
+
+  smoke-install:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      TXBOARD_DEPLOY_RAW_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run unattended full installation
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-smoke
+          TXBOARD_ADMIN_EMAIL: smoke@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18081
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_BACKUP_RETENTION: 1
+        run: cat install.sh | sudo -E bash -s -- --yes
+
+      - name: Verify installed state
+        run: |
+          cd /tmp/txboard-deploy-smoke
+          sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
+          curl -fsS http://127.0.0.1:18081/api/health | grep -q '"status":"ok"'
+          sudo test -x /tmp/txboard-deploy-smoke/txboard.sh
+          sudo test -x /tmp/txboard-deploy-smoke/update.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/common.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/backup.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
+          sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo txboard status >/dev/null
+          sudo txboard config-show >/dev/null
+          sudo txboard backups >/dev/null
+          sudo txboard help | grep -q 'Quick commands'
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
+          cat /tmp/txboard-deploy-smoke/update.sh | sudo -E bash -s -- --dir /tmp/txboard-deploy-smoke --yes --skip-backup
+          sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -f /tmp/txboard-deploy-smoke/compose.yaml ]; then
+            cd /tmp/txboard-deploy-smoke
+            sudo docker compose down -v --remove-orphans || true
+          fi
+          sudo rm -rf /tmp/txboard-deploy-smoke
+ .env
+          sudo grep -q '^TXBOARD_DB_HOST_KIND=docker-container        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-stale-volume-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18083
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_DB_MODE: local
+        run: |
+          sudo docker volume create txboard_database-data >/dev/null
+          trap 'sudo docker volume rm txboard_database-data >/dev/null 2>&1 || true; sudo rm -rf /tmp/txboard-stale-volume-ci' EXIT
+
+          set +e
+          output="$(sudo -E bash install.sh --yes 2>&1)"
+          status=$?
+          set -e
+
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -q 'existing managed MySQL volume txboard_database-data detected'
+          test ! -e /tmp/txboard-stale-volume-ci/.env
+
+      - name: Check public image manifest
+        run: docker manifest inspect ghcr.io/paimoncai/txboard:latest >/dev/null
+
+  smoke-install:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      TXBOARD_DEPLOY_RAW_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run unattended full installation
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-smoke
+          TXBOARD_ADMIN_EMAIL: smoke@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18081
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_BACKUP_RETENTION: 1
+        run: cat install.sh | sudo -E bash -s -- --yes
+
+      - name: Verify installed state
+        run: |
+          cd /tmp/txboard-deploy-smoke
+          sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
+          curl -fsS http://127.0.0.1:18081/api/health | grep -q '"status":"ok"'
+          sudo test -x /tmp/txboard-deploy-smoke/txboard.sh
+          sudo test -x /tmp/txboard-deploy-smoke/update.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/common.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/backup.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
+          sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo txboard status >/dev/null
+          sudo txboard config-show >/dev/null
+          sudo txboard backups >/dev/null
+          sudo txboard help | grep -q 'Quick commands'
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
+          cat /tmp/txboard-deploy-smoke/update.sh | sudo -E bash -s -- --dir /tmp/txboard-deploy-smoke --yes --skip-backup
+          sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -f /tmp/txboard-deploy-smoke/compose.yaml ]; then
+            cd /tmp/txboard-deploy-smoke
+            sudo docker compose down -v --remove-orphans || true
+          fi
+          sudo rm -rf /tmp/txboard-deploy-smoke
+ .env
+          sudo grep -q '^TXBOARD_DB_HOST=txboard-host-mysql-ci        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-stale-volume-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18083
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_DB_MODE: local
+        run: |
+          sudo docker volume create txboard_database-data >/dev/null
+          trap 'sudo docker volume rm txboard_database-data >/dev/null 2>&1 || true; sudo rm -rf /tmp/txboard-stale-volume-ci' EXIT
+
+          set +e
+          output="$(sudo -E bash install.sh --yes 2>&1)"
+          status=$?
+          set -e
+
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -q 'existing managed MySQL volume txboard_database-data detected'
+          test ! -e /tmp/txboard-stale-volume-ci/.env
+
+      - name: Check public image manifest
+        run: docker manifest inspect ghcr.io/paimoncai/txboard:latest >/dev/null
+
+  smoke-install:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      TXBOARD_DEPLOY_RAW_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run unattended full installation
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-smoke
+          TXBOARD_ADMIN_EMAIL: smoke@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18081
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_BACKUP_RETENTION: 1
+        run: cat install.sh | sudo -E bash -s -- --yes
+
+      - name: Verify installed state
+        run: |
+          cd /tmp/txboard-deploy-smoke
+          sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
+          curl -fsS http://127.0.0.1:18081/api/health | grep -q '"status":"ok"'
+          sudo test -x /tmp/txboard-deploy-smoke/txboard.sh
+          sudo test -x /tmp/txboard-deploy-smoke/update.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/common.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/backup.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
+          sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo txboard status >/dev/null
+          sudo txboard config-show >/dev/null
+          sudo txboard backups >/dev/null
+          sudo txboard help | grep -q 'Quick commands'
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
+          cat /tmp/txboard-deploy-smoke/update.sh | sudo -E bash -s -- --dir /tmp/txboard-deploy-smoke --yes --skip-backup
+          sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -f /tmp/txboard-deploy-smoke/compose.yaml ]; then
+            cd /tmp/txboard-deploy-smoke
+            sudo docker compose down -v --remove-orphans || true
+          fi
+          sudo rm -rf /tmp/txboard-deploy-smoke
+ .env
+          sudo grep -q '^TXBOARD_DB_LINK_NETWORK=txboard-db-link        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-stale-volume-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18083
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_DB_MODE: local
+        run: |
+          sudo docker volume create txboard_database-data >/dev/null
+          trap 'sudo docker volume rm txboard_database-data >/dev/null 2>&1 || true; sudo rm -rf /tmp/txboard-stale-volume-ci' EXIT
+
+          set +e
+          output="$(sudo -E bash install.sh --yes 2>&1)"
+          status=$?
+          set -e
+
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -q 'existing managed MySQL volume txboard_database-data detected'
+          test ! -e /tmp/txboard-stale-volume-ci/.env
+
+      - name: Check public image manifest
+        run: docker manifest inspect ghcr.io/paimoncai/txboard:latest >/dev/null
+
+  smoke-install:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      TXBOARD_DEPLOY_RAW_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run unattended full installation
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-smoke
+          TXBOARD_ADMIN_EMAIL: smoke@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18081
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_BACKUP_RETENTION: 1
+        run: cat install.sh | sudo -E bash -s -- --yes
+
+      - name: Verify installed state
+        run: |
+          cd /tmp/txboard-deploy-smoke
+          sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
+          curl -fsS http://127.0.0.1:18081/api/health | grep -q '"status":"ok"'
+          sudo test -x /tmp/txboard-deploy-smoke/txboard.sh
+          sudo test -x /tmp/txboard-deploy-smoke/update.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/common.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/backup.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
+          sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo txboard status >/dev/null
+          sudo txboard config-show >/dev/null
+          sudo txboard backups >/dev/null
+          sudo txboard help | grep -q 'Quick commands'
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
+          cat /tmp/txboard-deploy-smoke/update.sh | sudo -E bash -s -- --dir /tmp/txboard-deploy-smoke --yes --skip-backup
+          sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -f /tmp/txboard-deploy-smoke/compose.yaml ]; then
+            cd /tmp/txboard-deploy-smoke
+            sudo docker compose down -v --remove-orphans || true
+          fi
+          sudo rm -rf /tmp/txboard-deploy-smoke
+ .env
+          sudo grep -q 'name: txboard-db-link' compose.yaml
+          sudo docker inspect -f '{{json .NetworkSettings.Networks}}' txboard-host-mysql-ci | grep -q 'txboard-db-link'
 
       - name: Reject stale managed MySQL volume
         env:
