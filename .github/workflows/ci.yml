@@ -20,7 +20,7 @@ jobs:
 
       - name: Check installer and manager regressions
         run: |
-          grep -Fq 'docker compose run -T --rm --no-deps --entrypoint sh backup -lc' install.sh
+          grep -Fq 'docker compose run -T --rm --no-deps --entrypoint sh backup -lc' lib/install-database.sh
           grep -Fq 'Switch to automatic host-MySQL mode instead?' lib/install-database.sh
           grep -Fq 'MySQL on this server (auto-detect system / 1Panel / Docker)' lib/install-database.sh
           grep -Fq 'explicitly enable test deployment mode with --test-mode' install.sh
