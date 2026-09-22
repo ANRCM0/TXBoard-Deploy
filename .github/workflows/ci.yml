@@ -18,6 +18,14 @@ jobs:
           bash -n txboard.sh
           for f in lib/*.sh; do bash -n "$f"; done
 
+      - name: Check installer and manager regressions
+        run: |
+          grep -Fq 'docker compose run -T --rm --no-deps --entrypoint sh backup -lc' install.sh
+          grep -Fq 'compose run -T --rm -e BACKUP_INTERVAL=0 backup' lib/backup.sh
+          bash txboard.sh help | grep -q 'logs \[service\]'
+          bash txboard.sh help | grep -q 'config-show'
+          bash txboard.sh help | grep -q 'backups'
+
       - name: Render deployment
         env:
           TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-ci
@@ -125,6 +133,9 @@ jobs:
           sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
           sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
           sudo txboard status >/dev/null
+          sudo txboard config-show >/dev/null
+          sudo txboard backups >/dev/null
+          sudo txboard help | grep -q 'Quick commands'
           sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
           sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
           cat /tmp/txboard-deploy-smoke/update.sh | sudo -E bash -s -- --dir /tmp/txboard-deploy-smoke --yes --skip-backup
