@@ -45,6 +45,17 @@ mysql_container_exec_root() {
   ' <<<"$sql"
 }
 
+wait_mysql_container_admin() {
+  local container="$1" root_password="$2" i
+  for i in $(seq 1 30); do
+    if mysql_container_exec_root "$container" "$root_password" "SELECT 1;" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
 mysql_system_client() {
   command -v mysql >/dev/null 2>&1 && { command -v mysql; return; }
   command -v mariadb >/dev/null 2>&1 && { command -v mariadb; return; }
@@ -129,12 +140,12 @@ EOF
   fi
   sql="$(host_database_sql)"
 
-  if ! mysql_container_exec_root "$container_id" "$root_password" "SELECT 1;" >/dev/null 2>&1; then
+  if ! wait_mysql_container_admin "$container_id" "$root_password"; then
     if [[ "$ASSUME_YES" -eq 1 ]]; then
-      die "cannot administer MySQL container $container_name; set TXBOARD_DB_ADMIN_PASSWORD"
+      die "cannot administer MySQL container $container_name after waiting for it to become ready; set TXBOARD_DB_ADMIN_PASSWORD if its root password is not exposed in the container environment"
     fi
     root_password="$(prompt_secret "MySQL root/admin password for $container_name" "")"
-    mysql_container_exec_root "$container_id" "$root_password" "SELECT 1;" >/dev/null 2>&1 ||
+    wait_mysql_container_admin "$container_id" "$root_password" ||
       die "cannot authenticate as root in MySQL container $container_name"
   fi
 
