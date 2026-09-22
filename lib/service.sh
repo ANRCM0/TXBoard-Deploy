@@ -45,16 +45,38 @@ service_menu() {
   done
 }
 
+logs_follow() {
+  docker_ok; need_install
+  local service="${1:-all}"
+
+  case "$service" in
+    ""|all)
+      compose logs -f --tail=200
+      ;;
+    txboard|backup)
+      compose logs -f --tail=200 "$service"
+      ;;
+    database|mysql)
+      [[ "$(database_mode)" == "local" ]] ||
+        die "database logs are unavailable in external database mode"
+      compose logs -f --tail=200 database
+      ;;
+    *)
+      die "unknown log service: $service (use all, txboard, database/mysql, or backup)"
+      ;;
+  esac
+}
+
 logs_menu() {
   docker_ok; need_install
-  local choice service=""
+  local choice service="all"
 
   if [[ "$(database_mode)" == "external" ]]; then
     choice="$(choose "1 TXBoard  2 Backup  3 All  0 back" "1" "3")"
     case "$choice" in
       1) service=txboard ;;
       2) service=backup ;;
-      3) service="" ;;
+      3) service=all ;;
       0) return 0 ;;
     esac
   else
@@ -63,14 +85,10 @@ logs_menu() {
       1) service=txboard ;;
       2) service=database ;;
       3) service=backup ;;
-      4) service="" ;;
+      4) service=all ;;
       0) return 0 ;;
     esac
   fi
 
-  if [[ -n "$service" ]]; then
-    compose logs -f --tail=200 "$service"
-  else
-    compose logs -f --tail=200
-  fi
+  logs_follow "$service"
 }
