@@ -25,6 +25,7 @@ config_show() {
   cat <<EOF
 Install dir:       $TXBOARD_INSTALL_DIR
 Mode:              $(detect_mode)
+Test mode:         $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_TEST_MODE)
 Image:             $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_IMAGE)
 APP_URL:           $(env_get "$TXBOARD_INSTALL_DIR/api.env" APP_URL)
 Database mode:     $(database_mode)

@@ -44,6 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/insta
 - TXBoard 镜像标签，例如 `latest`
 - 管理员邮箱
 - 安装目录
+- 是否启用测试部署模式
 - 公网访问模式
 - 域名或 IP
 - HTTP / HTTPS 端口
@@ -92,7 +93,7 @@ sudo bash -s -- --yes --reset-local-db \
 
 外部数据库需要提前创建目标数据库，并给 TXBoard 用户授予该数据库的建表、修改表、索引及数据读写权限。数据库地址必须能从 Docker 容器访问。注意：即使使用 `host.docker.internal`，如果宿主机 MySQL 只监听 `127.0.0.1`，Docker bridge 容器仍无法连接；需要让 MySQL 或其容器对宿主机可达地址监听/发布端口。
 
-HTTP 模式下的 “Public host / IP” 是写入 `APP_URL` 的访问地址，不能填写 `0.0.0.0`；Compose 端口仍会自动监听 `0.0.0.0`。
+HTTP 模式下的 “Public host / IP” 会写入 `APP_URL`。标准部署模式不允许填写 `0.0.0.0` / `::`；如果只是临时测试，可以在安装向导中启用 **test deployment mode**，此时允许使用通配地址，Compose 端口仍正常监听 `0.0.0.0`。测试模式会持久化为 `TXBOARD_TEST_MODE=true`，并在部署摘要与 `txboard config-show` 中显示。
 
 > 外部数据库可以正常创建 TXBoard 备份，但管理器暂不自动执行整库恢复。恢复外部数据库时应使用数据库提供商/管理员工具导入 `backups/<时间>/db.sql.gz`，避免部署脚本在权限和托管策略未知的数据库上执行破坏性重建。
 
@@ -309,6 +310,7 @@ CI 或自动化环境可以使用环境变量 + `--yes`：
 curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/install.sh |
 sudo env \
   TXBOARD_MODE=auto-https \
+  TXBOARD_TEST_MODE=false \
   TXBOARD_DOMAIN=panel.example.com \
   TXBOARD_ADMIN_EMAIL=admin@example.com \
   TXBOARD_IMAGE_TAG=latest \
@@ -333,6 +335,7 @@ TXBOARD_PUBLIC_HOST
 TXBOARD_HTTP_PORT
 TXBOARD_HTTPS_PORT
 TXBOARD_BACKUP_RETENTION
+TXBOARD_TEST_MODE
 TXBOARD_DB_MODE
 TXBOARD_DB_HOST
 TXBOARD_DB_PORT
@@ -348,6 +351,18 @@ TXBOARD_DB_ROOT_PASSWORD
 auto-https
 external-https
 http
+```
+
+测试部署可以设置 `TXBOARD_TEST_MODE=true` 或使用 `--test-mode`。例如允许 `0.0.0.0` 作为测试用 Public host：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/install.sh |
+sudo env \
+  TXBOARD_ADMIN_EMAIL=admin@example.com \
+  TXBOARD_MODE=http \
+  TXBOARD_PUBLIC_HOST=0.0.0.0 \
+  TXBOARD_HTTP_PORT=8852 \
+  bash -s -- --yes --test-mode
 ```
 
 `TXBOARD_DB_MODE`：

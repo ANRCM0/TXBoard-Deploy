@@ -11,6 +11,7 @@ PUBLIC_HOST="${TXBOARD_PUBLIC_HOST:-}"
 HTTP_PORT="${TXBOARD_HTTP_PORT:-}"
 HTTPS_PORT="${TXBOARD_HTTPS_PORT:-}"
 BACKUP_RETENTION="${TXBOARD_BACKUP_RETENTION:-7}"
+TEST_MODE="${TXBOARD_TEST_MODE:-false}"
 DB_MODE="${TXBOARD_DB_MODE:-}"
 DB_HOST="${TXBOARD_DB_HOST:-}"
 DB_PORT="${TXBOARD_DB_PORT:-3306}"
@@ -47,6 +48,7 @@ Options:
   --https-port PORT   Host HTTPS port (auto-https only)
   --backup-retention N
                       Number of backup archives to retain (default: 7)
+  --test-mode         Enable test deployment mode; permits wildcard public hosts
   --db-mode MODE      local | external (default: local)
   --db-host HOST      External MySQL host
   --db-port PORT      External MySQL port (default: 3306)
@@ -70,6 +72,7 @@ Environment variables:
   TXBOARD_HTTP_PORT
   TXBOARD_HTTPS_PORT
   TXBOARD_BACKUP_RETENTION
+  TXBOARD_TEST_MODE
   TXBOARD_DB_MODE
   TXBOARD_DB_HOST
   TXBOARD_DB_PORT
@@ -91,6 +94,7 @@ while [[ $# -gt 0 ]]; do
     --http-port) HTTP_PORT="${2:?missing value for --http-port}"; shift 2 ;;
     --https-port) HTTPS_PORT="${2:?missing value for --https-port}"; shift 2 ;;
     --backup-retention) BACKUP_RETENTION="${2:?missing value for --backup-retention}"; shift 2 ;;
+    --test-mode) TEST_MODE=true; shift ;;
     --db-mode) DB_MODE="${2:?missing value for --db-mode}"; shift 2 ;;
     --db-host) DB_HOST="${2:?missing value for --db-host}"; shift 2 ;;
     --db-port) DB_PORT="${2:?missing value for --db-port}"; shift 2 ;;
@@ -288,6 +292,22 @@ valid_email "$ADMIN_EMAIL" || die "invalid administrator email: $ADMIN_EMAIL"
 INSTALL_DIR="$(prompt "Installation directory" "$INSTALL_DIR")"
 [[ -n "$INSTALL_DIR" && "$INSTALL_DIR" == /* ]] || die "installation directory must be an absolute path"
 
+case "${TEST_MODE,,}" in
+  1|true|yes|y|on) TEST_MODE=true ;;
+  0|false|no|n|off|"") TEST_MODE=false ;;
+  *) die "invalid TXBOARD_TEST_MODE value: $TEST_MODE (use true/false)" ;;
+esac
+
+if [[ "$ASSUME_YES" -eq 0 ]]; then
+  test_default="N"
+  [[ "$TEST_MODE" == "true" ]] && test_default="Y"
+  if confirm "Enable test deployment mode? (allows 0.0.0.0/:: as Public host)" "$test_default"; then
+    TEST_MODE=true
+  else
+    TEST_MODE=false
+  fi
+fi
+
 if [[ "${EUID:-$(id -u)}" -ne 0 && "$INSTALL_DIR" == /opt/* ]]; then
   die "installation under /opt requires root. Re-run with sudo or choose another --dir."
 fi
@@ -424,8 +444,13 @@ case "$MODE" in
   http)
     PUBLIC_HOST="$(prompt "Public host / IP" "${PUBLIC_HOST:-$(detect_host)}")"
     [[ -n "$PUBLIC_HOST" && ! "$PUBLIC_HOST" =~ [[:space:]] ]] || die "invalid public host"
-    [[ "$PUBLIC_HOST" != "0.0.0.0" && "$PUBLIC_HOST" != "::" ]] ||
-      die "public host cannot be $PUBLIC_HOST; use the server IP/hostname here. The listener still binds to 0.0.0.0 automatically."
+    if [[ "$PUBLIC_HOST" == "0.0.0.0" || "$PUBLIC_HOST" == "::" ]]; then
+      if [[ "$TEST_MODE" == "true" ]]; then
+        warn "test deployment mode: accepting wildcard Public host $PUBLIC_HOST; APP_URL is intended for testing only"
+      else
+        die "public host cannot be $PUBLIC_HOST in standard deployment mode. Use the server IP/hostname, or explicitly enable test deployment mode with --test-mode."
+      fi
+    fi
     HTTP_PORT="$(prompt "Host HTTP port" "${HTTP_PORT:-80}")"
     valid_port "$HTTP_PORT" || die "invalid HTTP port: $HTTP_PORT"
     if [[ "$HTTP_PORT" == "80" ]]; then
@@ -450,6 +475,7 @@ Mode:           $MODE
 Public URL:     $APP_URL
 Admin email:    $ADMIN_EMAIL
 Install dir:    $INSTALL_DIR
+Test mode:      $TEST_MODE
 HTTP mapping:   $HTTP_BIND:$HTTP_PORT -> container:80
 Backup retain:  $BACKUP_RETENTION
 Database mode:   $DB_MODE
@@ -474,6 +500,7 @@ mkdir -p data/storage/app data/plugins backups
 cat > .env <<EOF
 TXBOARD_IMAGE=$IMAGE
 TXBOARD_ADMIN_EMAIL=$ADMIN_EMAIL
+TXBOARD_TEST_MODE=$TEST_MODE
 TXBOARD_MODE=$MODE
 TXBOARD_DOMAIN=$DOMAIN
 TXBOARD_PUBLIC_HOST=$PUBLIC_HOST

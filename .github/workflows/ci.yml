@@ -22,7 +22,8 @@ jobs:
         run: |
           grep -Fq 'docker compose run -T --rm --no-deps --entrypoint sh backup -lc' install.sh
           grep -Fq "external database host '\$DB_HOST' resolves inside the TXBoard container" install.sh
-          grep -Fq 'public host cannot be $PUBLIC_HOST' install.sh
+          grep -Fq 'explicitly enable test deployment mode with --test-mode' install.sh
+          grep -Fq 'TXBOARD_TEST_MODE=$TEST_MODE' install.sh
           grep -Fq 'cannot connect to external MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE' install.sh
           grep -Fq 'docker compose run -T --rm -e BACKUP_INTERVAL=0 backup' update.sh
           grep -Fq 'compose run -T --rm -e BACKUP_INTERVAL=0 backup' lib/backup.sh
@@ -46,6 +47,39 @@ jobs:
           test -f /tmp/txboard-deploy-ci/api.env
           sudo docker compose -f /tmp/txboard-deploy-ci/compose.yaml \
             --env-file /tmp/txboard-deploy-ci/.env config >/dev/null
+
+      - name: Reject wildcard public host outside test mode
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-standard-wildcard-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 0.0.0.0
+          TXBOARD_HTTP_PORT: 18084
+          TXBOARD_IMAGE_TAG: latest
+        run: |
+          set +e
+          output="$(sudo -E bash install.sh --yes --render-only 2>&1)"
+          status=$?
+          set -e
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -q 'public host cannot be 0.0.0.0 in standard deployment mode'
+          sudo rm -rf /tmp/txboard-standard-wildcard-ci
+
+      - name: Render test deployment with wildcard public host
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-test-mode-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_TEST_MODE: "true"
+          TXBOARD_PUBLIC_HOST: 0.0.0.0
+          TXBOARD_HTTP_PORT: 18085
+          TXBOARD_IMAGE_TAG: latest
+        run: |
+          sudo -E bash install.sh --yes --render-only
+          sudo grep -q '^TXBOARD_TEST_MODE=true$' /tmp/txboard-test-mode-ci/.env
+          sudo grep -q '^TXBOARD_PUBLIC_HOST=0.0.0.0$' /tmp/txboard-test-mode-ci/.env
+          sudo grep -q '^APP_URL=http://0.0.0.0:18085$' /tmp/txboard-test-mode-ci/api.env
+          sudo rm -rf /tmp/txboard-test-mode-ci
 
       - name: Require image-only Compose
         run: |
