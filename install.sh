@@ -207,7 +207,8 @@ confirm() {
 
 
 install_dir_has_content() {
-  [[ -d "$INSTALL_DIR" ]] || return 1
+  [[ -e "$INSTALL_DIR" ]] || return 1
+  [[ ! -d "$INSTALL_DIR" ]] && return 0
   [[ -n "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]
 }
 
@@ -228,7 +229,11 @@ clean_existing_install_dir() {
   warn "existing files detected in installation directory: $INSTALL_DIR"
   if [[ "$ASSUME_YES" -eq 0 ]]; then
     printf '\nExisting path contents (up to 12 entries):\n' > /dev/tty
-    find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -printf '  - %f\n' 2>/dev/null | head -n 12 > /dev/tty || true
+    if [[ -d "$INSTALL_DIR" ]]; then
+      find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -printf '  - %f\n' 2>/dev/null | head -n 12 > /dev/tty || true
+    else
+      printf '  - %s (non-directory path)\n' "$(basename "$INSTALL_DIR")" > /dev/tty
+    fi
     printf '\n' > /dev/tty
     confirm "Delete ALL files in $INSTALL_DIR and continue? Docker volumes will be preserved." "N" ||
       die "installation stopped to preserve existing files in $INSTALL_DIR"
