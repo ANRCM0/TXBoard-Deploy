@@ -845,7 +845,7 @@ docker compose pull
 if [[ "$MCP_ENABLED" == "true" ]]; then
   log "verifying TXBoard image includes the embedded MCP Gateway..."
   if ! docker compose run -T --rm --no-deps --entrypoint sh txboard -lc \
-      'test -f /opt/txboard-mcp/dist/index.js' >/dev/null; then
+      'test -f /opt/txboard-mcp/dist/index.js' </dev/null >/dev/null; then
     die "selected TXBoard image does not include the embedded MCP Gateway; use a newer image tag or disable MCP"
   fi
 fi

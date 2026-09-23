@@ -340,6 +340,7 @@ jobs:
           TXBOARD_HTTP_PORT: 18081
           TXBOARD_IMAGE_TAG: latest
           TXBOARD_BACKUP_RETENTION: 1
+          TXBOARD_ENABLE_MCP: "true"
         run: cat install.sh | sudo -E bash -s -- --yes
 
       - name: Verify installed state
@@ -347,6 +348,8 @@ jobs:
           cd /tmp/txboard-deploy-smoke
           sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
           curl -fsS http://127.0.0.1:18081/api/health | grep -q '"status":"ok"'
+          sudo grep -q '^TXBOARD_ENABLE_MCP=true$' .env
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18081/mcp)" = "401"
           sudo test -x /tmp/txboard-deploy-smoke/txboard.sh
           sudo test -x /tmp/txboard-deploy-smoke/update.sh
           sudo test -x /tmp/txboard-deploy-smoke/lib/common.sh
