@@ -25,6 +25,8 @@ jobs:
           grep -Fq 'MySQL on this server (auto-detect system / 1Panel / Docker)' lib/install-database.sh
           grep -Fq 'Detected MySQL/MariaDB instances on this server:' lib/install-database.sh
           grep -Fq '/www/server/mysql/bin/mysql' lib/install-database.sh
+          grep -Fq 'mysql_system_socket_candidates()' lib/install-database.sh
+          grep -Fq 'TXBOARD_DB_SYSTEM_SOCKET' install.sh
           grep -Fq 'explicitly enable test deployment mode with --test-mode' install.sh
           grep -Fq 'TXBOARD_TEST_MODE=$TEST_MODE' install.sh
           grep -Fq 'cannot connect to $DB_MODE MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE' lib/install-database.sh
@@ -45,6 +47,56 @@ jobs:
           mkdir -p /tmp/txboard-empty-path
           detected="$(PATH=/tmp/txboard-empty-path /bin/bash -c 'source lib/install-database.sh; mysql_system_client')"
           test "$detected" = "/www/server/mysql/bin/mysql"
+
+      - name: Check system MySQL socket discovery
+        run: |
+          socket=/tmp/txboard-mysql-ci.sock
+          client=/tmp/txboard-mysql-client-ci
+          python3 - "$socket" <<'PY' &
+          import os
+          import socket
+          import sys
+          import time
+          path = sys.argv[1]
+          try:
+              os.unlink(path)
+          except FileNotFoundError:
+              pass
+          sock = socket.socket(socket.AF_UNIX)
+          sock.bind(path)
+          sock.listen(1)
+          time.sleep(30)
+          PY
+          socket_pid=$!
+          trap 'kill "$socket_pid" >/dev/null 2>&1 || true; rm -f "$socket" "$client"' EXIT
+          for i in $(seq 1 20); do
+            [ -S "$socket" ] && break
+            sleep 0.1
+          done
+          [ -S "$socket" ]
+
+          cat > "$client" <<'SH'
+          #!/bin/sh
+          target="${TXBOARD_TEST_SOCKET:?}"
+          if [ "${1:-}" = "--print-defaults" ]; then
+            printf '%s\n' "--socket=$target"
+            exit 0
+          fi
+          found=0
+          for arg in "$@"; do
+            [ "$arg" = "--socket=$target" ] && found=1
+          done
+          [ "$found" -eq 1 ] || exit 1
+          exit 0
+          SH
+          chmod 755 "$client"
+
+          TXBOARD_TEST_SOCKET="$socket" /bin/bash -c '
+            source lib/install-database.sh
+            DB_SYSTEM_SOCKET=""
+            resolved="$(mysql_system_resolve_socket /tmp/txboard-mysql-client-ci secret)"
+            test "$resolved" = "$TXBOARD_TEST_SOCKET"
+          '
 
       - name: Render deployment
         env:
