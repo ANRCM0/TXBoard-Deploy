@@ -56,7 +56,7 @@ curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/insta
 
 ### 旧安装目录残留
 
-安装器会在数据库配置前检查目标安装目录。只要目录非空，就视为可能存在旧项目或安装残留：
+安装器会在数据库配置前立即检查目标安装路径。只要目标是已有文件，或目录非空，就视为可能存在旧项目或安装残留：
 
 - 交互安装会展示最多 12 个顶层文件/目录，并询问是否清理；默认选择 **N**。
 - 确认清理后，如果存在 `compose.yaml`，安装器会先执行 `docker compose down --remove-orphans`，但**不会带 `-v`**，因此不会在这一步删除 Docker volumes。
