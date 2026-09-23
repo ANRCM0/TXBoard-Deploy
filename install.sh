@@ -34,6 +34,7 @@ DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/Pa
 ASSUME_YES=0
 RENDER_ONLY=0
 RESET_LOCAL_DB=0
+CLEAN_INSTALL_DIR="${TXBOARD_CLEAN_INSTALL_DIR:-false}"
 COMPOSE_PROJECT_NAME="txboard"
 LOCAL_DB_VOLUME="${COMPOSE_PROJECT_NAME}_database-data"
 
@@ -73,6 +74,8 @@ Options:
   --yes               Non-interactive; use CLI/environment/default values
   --reset-local-db    Delete an existing managed MySQL volume before a fresh install
                       (DESTRUCTIVE: all data in that volume will be lost)
+  --clean-install-dir  Remove existing files from the target install directory first
+                      (Docker volumes are preserved; managed DB reset is separate)
   --render-only       Generate and validate files, do not pull/start containers
   -h, --help          Show this help
 
@@ -102,6 +105,7 @@ Environment variables:
   TXBOARD_DB_CONTAINER
   TXBOARD_DB_LINK_NETWORK
   TXBOARD_DB_PROXY_PORT
+  TXBOARD_CLEAN_INSTALL_DIR
 EOF
 }
 
@@ -129,6 +133,7 @@ while [[ $# -gt 0 ]]; do
     --db-password) DB_PASSWORD="${2:?missing value for --db-password}"; shift 2 ;;
     --yes) ASSUME_YES=1; shift ;;
     --reset-local-db) RESET_LOCAL_DB=1; shift ;;
+    --clean-install-dir) CLEAN_INSTALL_DIR=true; shift ;;
     --render-only) RENDER_ONLY=1; ASSUME_YES=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
@@ -198,6 +203,59 @@ confirm() {
   fi
   value="$(prompt "$label" "$default")"
   [[ "$value" =~ ^[Yy]([Ee][Ss])?$ ]]
+}
+
+
+install_dir_has_content() {
+  [[ -e "$INSTALL_DIR" ]] || return 1
+  [[ ! -d "$INSTALL_DIR" ]] && return 0
+  [[ -n "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]
+}
+
+validate_install_cleanup_target() {
+  [[ "$INSTALL_DIR" == /* ]] || die "installation directory must be an absolute path"
+  [[ ! -L "$INSTALL_DIR" ]] || die "refusing to clean a symlink installation directory: $INSTALL_DIR"
+
+  case "$INSTALL_DIR" in
+    /|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/media|/mnt|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/var)
+      die "refusing to clean dangerous installation directory: $INSTALL_DIR"
+      ;;
+  esac
+}
+
+clean_existing_install_dir() {
+  validate_install_cleanup_target
+
+  warn "existing files detected in installation directory: $INSTALL_DIR"
+  if [[ "$ASSUME_YES" -eq 0 ]]; then
+    printf '\nExisting path contents (up to 12 entries):\n' > /dev/tty
+    if [[ -d "$INSTALL_DIR" ]]; then
+      find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -printf '  - %f\n' 2>/dev/null | head -n 12 > /dev/tty || true
+    else
+      printf '  - %s (non-directory path)\n' "$(basename "$INSTALL_DIR")" > /dev/tty
+    fi
+    printf '\n' > /dev/tty
+    confirm "Delete ALL files in $INSTALL_DIR and continue? Docker volumes will be preserved." "N" ||
+      die "installation stopped to preserve existing files in $INSTALL_DIR"
+  else
+    case "${CLEAN_INSTALL_DIR,,}" in
+      1|true|yes|y|on) ;;
+      *)
+        die "existing files found in $INSTALL_DIR. Re-run interactively to confirm cleanup, or use --clean-install-dir / TXBOARD_CLEAN_INSTALL_DIR=true."
+        ;;
+    esac
+  fi
+
+  if [[ -f "$INSTALL_DIR/compose.yaml" ]] && command -v docker >/dev/null 2>&1; then
+    log "stopping old TXBoard Compose services while preserving Docker volumes..."
+    (
+      cd "$INSTALL_DIR"
+      docker compose down --remove-orphans </dev/null
+    ) || warn "could not fully stop the old Compose deployment; continuing with filesystem cleanup"
+  fi
+
+  log "removing old TXBoard files from $INSTALL_DIR..."
+  rm -rf -- "$INSTALL_DIR"
 }
 
 ensure_docker() {
@@ -371,6 +429,29 @@ valid_email "$ADMIN_EMAIL" || die "invalid administrator email: $ADMIN_EMAIL"
 
 INSTALL_DIR="$(prompt "Installation directory" "$INSTALL_DIR")"
 [[ -n "$INSTALL_DIR" && "$INSTALL_DIR" == /* ]] || die "installation directory must be an absolute path"
+[[ ! -L "$INSTALL_DIR" ]] || die "refusing to use a symlink installation directory: $INSTALL_DIR"
+if command -v realpath >/dev/null 2>&1; then
+  INSTALL_DIR="$(realpath -m -- "$INSTALL_DIR")"
+elif command -v readlink >/dev/null 2>&1; then
+  INSTALL_DIR="$(readlink -m -- "$INSTALL_DIR")"
+else
+  [[ "$INSTALL_DIR" != *"/../"* && "$INSTALL_DIR" != */.. && "$INSTALL_DIR" != *"/./"* && "$INSTALL_DIR" != */. ]] ||
+    die "installation directory contains unresolved path traversal components"
+fi
+
+if [[ "${EUID:-$(id -u)}" -ne 0 && "$INSTALL_DIR" == /opt/* ]]; then
+  die "installation under /opt requires root. Re-run with sudo or choose another --dir."
+fi
+
+case "${CLEAN_INSTALL_DIR,,}" in
+  1|true|yes|y|on) CLEAN_INSTALL_DIR=true ;;
+  0|false|no|n|off|"") CLEAN_INSTALL_DIR=false ;;
+  *) die "invalid TXBOARD_CLEAN_INSTALL_DIR value: $CLEAN_INSTALL_DIR (use true/false)" ;;
+esac
+
+if install_dir_has_content; then
+  clean_existing_install_dir
+fi
 
 case "${TEST_MODE,,}" in
   1|true|yes|y|on) TEST_MODE=true ;;
@@ -400,14 +481,6 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
   else
     MCP_ENABLED=false
   fi
-fi
-
-if [[ "${EUID:-$(id -u)}" -ne 0 && "$INSTALL_DIR" == /opt/* ]]; then
-  die "installation under /opt requires root. Re-run with sudo or choose another --dir."
-fi
-
-if [[ -e "$INSTALL_DIR/compose.yaml" || -e "$INSTALL_DIR/.env" || -e "$INSTALL_DIR/api.env" ]]; then
-  die "an existing TXBoard deployment was found in $INSTALL_DIR. Use update.sh instead of reinstalling."
 fi
 
 configure_database
