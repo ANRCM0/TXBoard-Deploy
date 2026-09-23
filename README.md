@@ -84,15 +84,16 @@ sudo bash -s -- --yes --reset-local-db \
 
 适用于这台服务器上已经存在 MySQL / MariaDB，尤其是 1Panel、Docker 或系统服务安装的数据库。
 
-安装器会优先检测本机运行中的 MySQL / MariaDB Docker 容器：
+安装器会同时检测本机运行中的 MySQL / MariaDB Docker 容器与系统本地数据库：
 
-- 检测到 1Panel / Docker 数据库容器后，可在多个容器中交互选择。
+- 交互安装同时存在 Docker 数据库和系统/宝塔本地数据库时，会把两类实例放在同一个菜单中供用户选择，不再由 Docker 数据库优先抢占。
+- 检测到多个 Docker 数据库容器时，会逐个列出容器名称与镜像。
+- 系统数据库优先查找 PATH 中的 `mysql` / `mariadb`，并兼容宝塔常见的 `/www/server/mysql/bin/` 与常见 `/usr/local/mysql`、`/usr/local/mariadb` 安装路径。
 - 自动创建或更新 TXBoard 数据库用户与数据库，并生成随机应用密码。
-- 自动创建专用 `txboard-db-link` Docker 网络。
-- 把数据库容器接入该网络，TXBoard 与 backup 容器直接通过 Docker 私网访问数据库，不需要开放 3306 到公网。
-- 无人值守模式存在多个数据库容器时，可用 `TXBOARD_DB_CONTAINER` 或 `--db-container` 明确指定。
+- Docker 数据库会自动接入专用 `txboard-db-link` 网络，TXBoard 与 backup 容器直接通过 Docker 私网访问，不需要开放 3306 到公网。
+- 无人值守模式继续保持原有兼容行为；需要指定 Docker 数据库时可用 `TXBOARD_DB_CONTAINER` 或 `--db-container`。
 
-如果没有检测到数据库容器，安装器会尝试系统 MySQL / MariaDB：
+选择系统 MySQL / MariaDB 后：
 
 - 自动通过本机 socket 管理数据库并创建 TXBoard 数据库与用户。
 - 先从临时 Docker 容器验证 `host.docker.internal` 是否能直连。

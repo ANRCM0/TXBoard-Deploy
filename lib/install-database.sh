@@ -57,8 +57,21 @@ wait_mysql_container_admin() {
 }
 
 mysql_system_client() {
+  local candidate
+
   command -v mysql >/dev/null 2>&1 && { command -v mysql; return; }
   command -v mariadb >/dev/null 2>&1 && { command -v mariadb; return; }
+
+  for candidate in \
+    /www/server/mysql/bin/mysql \
+    /www/server/mysql/bin/mariadb \
+    /usr/local/mysql/bin/mysql \
+    /usr/local/mysql/bin/mariadb \
+    /usr/local/mariadb/bin/mariadb \
+    /usr/local/mariadb/bin/mysql; do
+    [[ -x "$candidate" ]] && { printf '%s\n' "$candidate"; return; }
+  done
+
   return 1
 }
 
@@ -233,6 +246,49 @@ setup_host_system_mysql() {
 }
 
 setup_host_database() {
+  local -a container_candidates=()
+  local system_client="" line pick max_choice container_name container_image
+
+  # Explicit Docker selection remains authoritative for unattended installs and
+  # callers that already know which container should be used.
+  if [[ -n "$DB_CONTAINER" ]]; then
+    setup_host_mysql_container
+    return
+  fi
+
+  mapfile -t container_candidates < <(list_mysql_containers)
+  system_client="$(mysql_system_client 2>/dev/null || true)"
+
+  # Interactive host mode should present all locally manageable database
+  # runtimes together. Previously any Docker MySQL short-circuited discovery,
+  # which made a simultaneously installed system/BT-Panel MySQL invisible.
+  if [[ "$ASSUME_YES" -eq 0 && -n "$system_client" && "${#container_candidates[@]}" -gt 0 ]]; then
+    cat > /dev/tty <<'EOF'
+
+Detected MySQL/MariaDB instances on this server:
+EOF
+    local i=1
+    for line in "${container_candidates[@]}"; do
+      IFS=$'\t' read -r _ container_name container_image <<< "$line"
+      printf '  %d) Docker: %s (%s)\n' "$i" "$container_name" "$container_image" > /dev/tty
+      ((i++))
+    done
+    printf '  %d) System/local: %s\n' "$i" "$system_client" > /dev/tty
+
+    max_choice="$i"
+    pick="$(choose "Host database" "1" "$max_choice")"
+    if (( pick <= ${#container_candidates[@]} )); then
+      IFS=$'\t' read -r _ container_name _ <<< "${container_candidates[$((pick-1))]}"
+      DB_CONTAINER="$container_name"
+      setup_host_mysql_container
+    else
+      setup_host_system_mysql
+    fi
+    return
+  fi
+
+  # Preserve the existing unattended/default behavior when only one runtime
+  # family is available: Docker first, then system/local MySQL.
   if setup_host_mysql_container; then return 0; fi
   if setup_host_system_mysql; then return 0; fi
   die "no manageable host MySQL/MariaDB found. Use external mode if the database is remote or managed separately."
