@@ -95,7 +95,10 @@ sudo bash -s -- --yes --reset-local-db \
 
 选择系统 MySQL / MariaDB 后：
 
-- 自动通过本机 socket 管理数据库并创建 TXBoard 数据库与用户。
+- 先尝试 MySQL/MariaDB 客户端自己的默认 socket。
+- 默认 socket 不可用时，会继续检查客户端 `--print-defaults`、当前活跃的 MySQL/MariaDB Unix socket，以及 `/tmp/mysql.sock`、`/run/mysqld/mysqld.sock`、`/var/run/mysqld/mysqld.sock`、宝塔常见目录等候选路径，并通过实际 `SELECT 1` 验证后再使用。
+- 非标准环境仍可用 `--db-socket /path/to/mysql.sock` 或 `TXBOARD_DB_SYSTEM_SOCKET` 显式指定；指定值必须是当前存在的 Unix socket。
+- 通过选定 socket 管理数据库并创建 TXBoard 数据库与用户。
 - 先从临时 Docker 容器验证 `host.docker.internal` 是否能直连。
 - 如果系统 MySQL 只监听 `127.0.0.1`，不会直接把 3306 改成公网监听；安装器会自动启用 `db-proxy` sidecar。
 - `db-proxy` 只监听 Docker bridge 的宿主机网关地址，并转发到宿主机 `127.0.0.1:MySQL端口`，解决 Docker 无法访问 loopback-only MySQL 的问题，同时避免把数据库端口暴露到公网。
@@ -414,6 +417,7 @@ TXBOARD_DB_USERNAME
 TXBOARD_DB_PASSWORD
 TXBOARD_DB_ROOT_PASSWORD
 TXBOARD_DB_ADMIN_PASSWORD
+TXBOARD_DB_SYSTEM_SOCKET
 TXBOARD_DB_CONTAINER
 TXBOARD_DB_LINK_NETWORK
 TXBOARD_DB_PROXY_PORT
@@ -447,7 +451,7 @@ host
 external
 ```
 
-宿主机数据库无人值守安装时，如果机器上只有一个可管理的 MySQL / MariaDB 容器会自动选择；存在多个时应设置 `TXBOARD_DB_CONTAINER`。如果数据库管理员密码无法从容器环境或系统 socket 自动获得，可设置 `TXBOARD_DB_ADMIN_PASSWORD`。
+宿主机数据库无人值守安装时，如果机器上只有一个可管理的 MySQL / MariaDB 容器会自动选择；存在多个时应设置 `TXBOARD_DB_CONTAINER`。如果数据库管理员密码无法从容器环境或系统 socket 自动获得，可设置 `TXBOARD_DB_ADMIN_PASSWORD`。 系统数据库使用非标准 Unix socket 且无法自动识别时，可设置 `TXBOARD_DB_SYSTEM_SOCKET`。
 
 外部数据库无人值守安装至少需要设置 `TXBOARD_DB_HOST`、`TXBOARD_DB_USERNAME` 和 `TXBOARD_DB_PASSWORD`；端口默认 `3306`，库名默认 `txboard`。
 
