@@ -145,13 +145,30 @@ jobs:
           sudo test -f "$TXBOARD_INSTALL_DIR/.env"
           sudo test -f "$TXBOARD_INSTALL_DIR/api.env"
 
-      - name: Refuse cleanup of dangerous system directory
+      - name: Replace a residual file target when explicitly allowed
         env:
-          TXBOARD_INSTALL_DIR: /tmp
+          TXBOARD_INSTALL_DIR: /tmp/txboard-residue-file-ci
           TXBOARD_ADMIN_EMAIL: ci@example.com
           TXBOARD_MODE: http
           TXBOARD_PUBLIC_HOST: 127.0.0.1
           TXBOARD_HTTP_PORT: 18089
+          TXBOARD_IMAGE_TAG: latest
+        run: |
+          printf 'legacy-file\n' | sudo tee "$TXBOARD_INSTALL_DIR" >/dev/null
+          trap 'sudo rm -rf "$TXBOARD_INSTALL_DIR"' EXIT
+
+          sudo -E bash install.sh --yes --clean-install-dir --render-only
+
+          sudo test -d "$TXBOARD_INSTALL_DIR"
+          sudo test -f "$TXBOARD_INSTALL_DIR/compose.yaml"
+
+      - name: Refuse cleanup after dangerous path normalization
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-residue-danger/..
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18090
           TXBOARD_IMAGE_TAG: latest
         run: |
           set +e
