@@ -230,7 +230,7 @@ clean_existing_install_dir() {
     printf '\nExisting path contents (up to 12 entries):\n' > /dev/tty
     find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -printf '  - %f\n' 2>/dev/null | head -n 12 > /dev/tty || true
     printf '\n' > /dev/tty
-    confirm "Remove the old TXBoard files in $INSTALL_DIR and continue? Docker volumes will be preserved." "N" ||
+    confirm "Delete ALL files in $INSTALL_DIR and continue? Docker volumes will be preserved." "N" ||
       die "installation stopped to preserve existing files in $INSTALL_DIR"
   else
     case "${CLEAN_INSTALL_DIR,,}" in
@@ -424,6 +424,29 @@ valid_email "$ADMIN_EMAIL" || die "invalid administrator email: $ADMIN_EMAIL"
 
 INSTALL_DIR="$(prompt "Installation directory" "$INSTALL_DIR")"
 [[ -n "$INSTALL_DIR" && "$INSTALL_DIR" == /* ]] || die "installation directory must be an absolute path"
+[[ ! -L "$INSTALL_DIR" ]] || die "refusing to use a symlink installation directory: $INSTALL_DIR"
+if command -v realpath >/dev/null 2>&1; then
+  INSTALL_DIR="$(realpath -m -- "$INSTALL_DIR")"
+elif command -v readlink >/dev/null 2>&1; then
+  INSTALL_DIR="$(readlink -m -- "$INSTALL_DIR")"
+else
+  [[ "$INSTALL_DIR" != *"/../"* && "$INSTALL_DIR" != */.. && "$INSTALL_DIR" != *"/./"* && "$INSTALL_DIR" != */. ]] ||
+    die "installation directory contains unresolved path traversal components"
+fi
+
+if [[ "${EUID:-$(id -u)}" -ne 0 && "$INSTALL_DIR" == /opt/* ]]; then
+  die "installation under /opt requires root. Re-run with sudo or choose another --dir."
+fi
+
+case "${CLEAN_INSTALL_DIR,,}" in
+  1|true|yes|y|on) CLEAN_INSTALL_DIR=true ;;
+  0|false|no|n|off|"") CLEAN_INSTALL_DIR=false ;;
+  *) die "invalid TXBOARD_CLEAN_INSTALL_DIR value: $CLEAN_INSTALL_DIR (use true/false)" ;;
+esac
+
+if install_dir_has_content; then
+  clean_existing_install_dir
+fi
 
 case "${TEST_MODE,,}" in
   1|true|yes|y|on) TEST_MODE=true ;;
@@ -453,20 +476,6 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
   else
     MCP_ENABLED=false
   fi
-fi
-
-if [[ "${EUID:-$(id -u)}" -ne 0 && "$INSTALL_DIR" == /opt/* ]]; then
-  die "installation under /opt requires root. Re-run with sudo or choose another --dir."
-fi
-
-case "${CLEAN_INSTALL_DIR,,}" in
-  1|true|yes|y|on) CLEAN_INSTALL_DIR=true ;;
-  0|false|no|n|off|"") CLEAN_INSTALL_DIR=false ;;
-  *) die "invalid TXBOARD_CLEAN_INSTALL_DIR value: $CLEAN_INSTALL_DIR (use true/false)" ;;
-esac
-
-if install_dir_has_content; then
-  clean_existing_install_dir
 fi
 
 configure_database
