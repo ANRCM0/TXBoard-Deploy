@@ -28,6 +28,9 @@ jobs:
           grep -Fq 'mysql_system_socket_candidates()' lib/install-database.sh
           grep -Fq 'TXBOARD_DB_SYSTEM_SOCKET' install.sh
           grep -Fq 'TXBOARD_CLEAN_INSTALL_DIR' install.sh
+          grep -Fq 'bootstrap_piped_installer()' install.sh
+          grep -Fq 'cat >/dev/null &' install.sh
+          grep -Fq 'bash "$tmp" "$@" </dev/null' install.sh
           grep -Fq 'Docker volumes will be preserved' install.sh
           grep -Fq 'refusing to clean dangerous installation directory' install.sh
           grep -Fq 'explicitly enable test deployment mode with --test-mode' install.sh
@@ -341,7 +344,9 @@ jobs:
           TXBOARD_IMAGE_TAG: latest
           TXBOARD_BACKUP_RETENTION: 1
           TXBOARD_ENABLE_MCP: "true"
-        run: cat install.sh | sudo -E bash -s -- --yes
+        run: |
+          python3 -c 'import sys,time; data=open("install.sh","rb").read(); [(sys.stdout.buffer.write(data[i:i+64]), sys.stdout.buffer.flush(), time.sleep(0.002)) for i in range(0,len(data),64)]' |
+            sudo -E bash -s -- --yes
 
       - name: Verify installed state
         run: |
