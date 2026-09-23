@@ -79,11 +79,6 @@ mysql_system_client() {
 mysql_system_socket_candidates() {
   local client="$1" defaults candidate
 
-  if [[ -n "$DB_SYSTEM_SOCKET" ]]; then
-    [[ "$DB_SYSTEM_SOCKET" == /* ]] || die "system MySQL socket override must be an absolute path"
-    [[ -S "$DB_SYSTEM_SOCKET" ]] || die "system MySQL socket override is not an active Unix socket: $DB_SYSTEM_SOCKET"
-  fi
-
   {
     [[ -n "$DB_SYSTEM_SOCKET" ]] && printf '%s\n' "$DB_SYSTEM_SOCKET"
 
@@ -124,7 +119,10 @@ mysql_system_exec_root() {
 mysql_system_resolve_socket() {
   local client="$1" root_password="$2" socket
 
-  if mysql_system_exec_root "$client" "$root_password" "SELECT 1;" "" >/dev/null 2>&1; then
+  if [[ -n "$DB_SYSTEM_SOCKET" ]]; then
+    [[ "$DB_SYSTEM_SOCKET" == /* ]] || die "system MySQL socket override must be an absolute path"
+    [[ -S "$DB_SYSTEM_SOCKET" ]] || die "system MySQL socket override is not an active Unix socket: $DB_SYSTEM_SOCKET"
+  elif mysql_system_exec_root "$client" "$root_password" "SELECT 1;" "" >/dev/null 2>&1; then
     printf '%s' ""
     return 0
   fi
