@@ -43,6 +43,7 @@ curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/insta
 - TXBoard 镜像标签，例如 `latest`
 - 管理员邮箱
 - 安装目录
+- 如果目标安装目录已经存在旧文件或旧 TXBoard 部署，是否清理后继续
 - 是否启用测试部署模式
 - 是否启用内置 MCP Gateway（Hermes / OpenClaw 等 AI Agent）
 - 公网访问模式
@@ -52,6 +53,30 @@ curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/insta
 - 宿主机模式自动检测系统 MySQL、1Panel / Docker MySQL / MariaDB
 - 外部数据库的主机、端口、库名、用户名和密码
 - 备份保留数量
+
+### 旧安装目录残留
+
+安装器会在数据库配置前检查目标安装目录。只要目录非空，就视为可能存在旧项目或安装残留：
+
+- 交互安装会展示最多 12 个顶层文件/目录，并询问是否清理；默认选择 **N**。
+- 确认清理后，如果存在 `compose.yaml`，安装器会先执行 `docker compose down --remove-orphans`，但**不会带 `-v`**，因此不会在这一步删除 Docker volumes。
+- 随后清空目标安装目录，再继续正常安装流程。
+- 内置 MySQL 的 `txboard_database-data` 仍由独立的数据保护逻辑管理；即使清除了安装目录，检测到旧数据库卷时仍会再次询问是否删除。
+- `--yes` 无人值守安装发现非空目录时仍会安全退出；只有显式传入 `--clean-install-dir` 或设置 `TXBOARD_CLEAN_INSTALL_DIR=true` 才允许清理。
+- 为避免误操作，安装器拒绝自动清理 `/`、`/opt`、`/var`、`/home`、`/tmp` 等系统级目录，也拒绝清理符号链接形式的安装目录。
+
+例如无人值守清理旧文件后重新渲染：
+
+```bash
+sudo env \
+  TXBOARD_INSTALL_DIR=/opt/txboard \
+  TXBOARD_ADMIN_EMAIL=admin@example.com \
+  TXBOARD_MODE=http \
+  TXBOARD_PUBLIC_HOST=127.0.0.1 \
+  bash install.sh --yes --clean-install-dir --render-only
+```
+
+> `--clean-install-dir` 只授权清理安装目录，不等于授权删除数据库卷。若还需要删除旧 managed MySQL 数据，必须另外显式使用 `--reset-local-db`。
 
 ## 数据库模式
 
@@ -421,6 +446,7 @@ TXBOARD_DB_SYSTEM_SOCKET
 TXBOARD_DB_CONTAINER
 TXBOARD_DB_LINK_NETWORK
 TXBOARD_DB_PROXY_PORT
+TXBOARD_CLEAN_INSTALL_DIR
 ```
 
 `TXBOARD_MODE`：
