@@ -11,6 +11,7 @@ DB_PROXY_PORT="${DB_PROXY_PORT:-${TXBOARD_DB_PROXY_PORT:-13306}}"
 DB_SOURCE_PORT="${DB_SOURCE_PORT:-}"
 DB_CONTAINER="${DB_CONTAINER:-${TXBOARD_DB_CONTAINER:-}}"
 DB_ADMIN_PASSWORD="${DB_ADMIN_PASSWORD:-${TXBOARD_DB_ADMIN_PASSWORD:-}}"
+DB_SYSTEM_SOCKET="${DB_SYSTEM_SOCKET:-${TXBOARD_DB_SYSTEM_SOCKET:-}}"
 
 list_mysql_containers() {
   docker ps --format '{{.ID}}\t{{.Names}}\t{{.Image}}' |
@@ -75,9 +76,67 @@ mysql_system_client() {
   return 1
 }
 
+mysql_system_socket_candidates() {
+  local client="$1" defaults candidate
+
+  if [[ -n "$DB_SYSTEM_SOCKET" ]]; then
+    [[ "$DB_SYSTEM_SOCKET" == /* ]] || die "system MySQL socket override must be an absolute path"
+    [[ -S "$DB_SYSTEM_SOCKET" ]] || die "system MySQL socket override is not an active Unix socket: $DB_SYSTEM_SOCKET"
+  fi
+
+  {
+    [[ -n "$DB_SYSTEM_SOCKET" ]] && printf '%s\n' "$DB_SYSTEM_SOCKET"
+
+    defaults="$("$client" --print-defaults 2>/dev/null || true)"
+    printf '%s\n' "$defaults" | tr ' ' '\n' | sed -n 's/^--socket=//p'
+
+    if command -v ss >/dev/null 2>&1; then
+      ss -xlH 2>/dev/null | awk 'BEGIN{IGNORECASE=1} {
+        for (i=1; i<=NF; i++) {
+          if ($i ~ /^\// && $i ~ /(mysql|mysqld|maria).*\.sock$/) print $i
+        }
+      }'
+    fi
+
+    printf '%s\n' \
+      /tmp/mysql.sock \
+      /run/mysqld/mysqld.sock \
+      /var/run/mysqld/mysqld.sock \
+      /var/lib/mysql/mysql.sock \
+      /www/server/mysql/mysql.sock \
+      /www/server/data/mysql.sock
+  } | awk 'NF && !seen[$0]++' | while IFS= read -r candidate; do
+    candidate="${candidate#\"}"
+    candidate="${candidate%\"}"
+    candidate="${candidate#\'}"
+    candidate="${candidate%\'}"
+    [[ "$candidate" == /* && -S "$candidate" ]] && printf '%s\n' "$candidate"
+  done
+}
+
 mysql_system_exec_root() {
-  local client="$1" root_password="$2" sql="$3"
-  MYSQL_PWD="$root_password" "$client" --user=root --protocol=socket --execute="$sql"
+  local client="$1" root_password="$2" sql="$3" socket="${4:-}"
+  local -a args=(--user=root --protocol=socket)
+  [[ -n "$socket" ]] && args+=(--socket="$socket")
+  MYSQL_PWD="$root_password" "$client" "${args[@]}" --batch --skip-column-names --execute="$sql"
+}
+
+mysql_system_resolve_socket() {
+  local client="$1" root_password="$2" socket
+
+  if mysql_system_exec_root "$client" "$root_password" "SELECT 1;" "" >/dev/null 2>&1; then
+    printf '%s' ""
+    return 0
+  fi
+
+  while IFS= read -r socket; do
+    if mysql_system_exec_root "$client" "$root_password" "SELECT 1;" "$socket" >/dev/null 2>&1; then
+      printf '%s' "$socket"
+      return 0
+    fi
+  done < <(mysql_system_socket_candidates "$client")
+
+  return 1
 }
 
 host_database_sql() {
@@ -183,18 +242,25 @@ EOF
 }
 
 setup_host_system_mysql() {
-  local client root_password="" sql source_port gateway probe_name
+  local client root_password="" sql source_port gateway probe_name system_socket=""
   client="$(mysql_system_client)" || return 1
 
-  if ! "$client" --user=root --protocol=socket --execute="SELECT 1" >/dev/null 2>&1; then
+  if ! system_socket="$(mysql_system_resolve_socket "$client" "")"; then
     root_password="$DB_ADMIN_PASSWORD"
     if [[ -z "$root_password" && "$ASSUME_YES" -eq 0 ]]; then
       root_password="$(prompt_secret "System MySQL root/admin password" "")"
     fi
     [[ -n "$root_password" ]] ||
       die "system MySQL requires admin credentials; set TXBOARD_DB_ADMIN_PASSWORD"
-    mysql_system_exec_root "$client" "$root_password" "SELECT 1;" >/dev/null 2>&1 ||
-      die "cannot authenticate to system MySQL as root"
+    if ! system_socket="$(mysql_system_resolve_socket "$client" "$root_password")"; then
+      die "cannot authenticate to system MySQL through the default or detected local sockets; check the admin password or use --db-socket / TXBOARD_DB_SYSTEM_SOCKET"
+    fi
+  fi
+
+  if [[ -n "$system_socket" ]]; then
+    log "using system MySQL socket: $system_socket"
+  else
+    log "using system MySQL client default socket"
   fi
 
   DB_DATABASE="$(prompt "Database name" "${DB_DATABASE:-txboard}")"
@@ -203,9 +269,9 @@ setup_host_system_mysql() {
   [[ "$DB_USERNAME" =~ ^[A-Za-z0-9_]+$ ]] || die "host database username must contain only letters, digits, and underscore"
   DB_PASSWORD="${DB_PASSWORD:-$(random_hex)}"
   sql="$(host_database_sql)"
-  mysql_system_exec_root "$client" "$root_password" "$sql" >/dev/null
+  mysql_system_exec_root "$client" "$root_password" "$sql" "$system_socket" >/dev/null
 
-  source_port="$(MYSQL_PWD="$root_password" "$client" --user=root --protocol=socket --batch --skip-column-names --execute='SELECT @@port;' 2>/dev/null | tail -n1)"
+  source_port="$(mysql_system_exec_root "$client" "$root_password" 'SELECT @@port;' "$system_socket" 2>/dev/null | tail -n1)"
   valid_port "$source_port" || source_port=3306
   DB_SOURCE_PORT="$source_port"
 
