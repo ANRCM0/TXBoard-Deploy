@@ -203,30 +203,7 @@ jobs:
           cd /tmp/txboard-deploy-smoke
           sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
           curl -fsS http://127.0.0.1:18081/api/health | grep -q '"status":"ok"'
-          sudo grep -q '^TXBOARD_ENABLE_MCP=true
-          sudo test -x /tmp/txboard-deploy-smoke/update.sh
-          sudo test -x /tmp/txboard-deploy-smoke/lib/common.sh
-          sudo test -x /tmp/txboard-deploy-smoke/lib/backup.sh
-          sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
-          sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
-          sudo txboard status >/dev/null
-          sudo txboard config-show >/dev/null
-          sudo txboard backups >/dev/null
-          sudo txboard help | grep -q 'Quick commands'
-          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
-          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
-          cat /tmp/txboard-deploy-smoke/update.sh | sudo -E bash -s -- --dir /tmp/txboard-deploy-smoke --yes --skip-backup
-          sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
-
-      - name: Cleanup
-        if: always()
-        run: |
-          if [ -f /tmp/txboard-deploy-smoke/compose.yaml ]; then
-            cd /tmp/txboard-deploy-smoke
-            sudo docker compose down -v --remove-orphans || true
-          fi
-          sudo rm -rf /tmp/txboard-deploy-smoke
- .env
+          sudo grep -q '^TXBOARD_ENABLE_MCP=true$' .env
           test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18081/mcp)" = "401"
           sudo test -x /tmp/txboard-deploy-smoke/txboard.sh
           sudo test -x /tmp/txboard-deploy-smoke/update.sh
