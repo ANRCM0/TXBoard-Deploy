@@ -27,6 +27,9 @@ jobs:
           grep -Fq '/www/server/mysql/bin/mysql' lib/install-database.sh
           grep -Fq 'mysql_system_socket_candidates()' lib/install-database.sh
           grep -Fq 'TXBOARD_DB_SYSTEM_SOCKET' install.sh
+          grep -Fq 'TXBOARD_CLEAN_INSTALL_DIR' install.sh
+          grep -Fq 'Docker volumes will be preserved' install.sh
+          grep -Fq 'refusing to clean dangerous installation directory' install.sh
           grep -Fq 'explicitly enable test deployment mode with --test-mode' install.sh
           grep -Fq 'TXBOARD_TEST_MODE=$TEST_MODE' install.sh
           grep -Fq 'cannot connect to $DB_MODE MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE' lib/install-database.sh
@@ -97,6 +100,67 @@ jobs:
             resolved="$(mysql_system_resolve_socket /tmp/txboard-mysql-client-ci secret)"
             test "$resolved" = "$TXBOARD_TEST_SOCKET"
           '
+
+      - name: Reject unattended install into non-empty directory by default
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-residue-refuse-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18087
+          TXBOARD_IMAGE_TAG: latest
+        run: |
+          sudo mkdir -p "$TXBOARD_INSTALL_DIR"
+          printf 'legacy\n' | sudo tee "$TXBOARD_INSTALL_DIR/legacy.txt" >/dev/null
+          trap 'sudo rm -rf "$TXBOARD_INSTALL_DIR"' EXIT
+
+          set +e
+          output="$(sudo -E bash install.sh --yes --render-only 2>&1)"
+          status=$?
+          set -e
+
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -q 'existing files found in /tmp/txboard-residue-refuse-ci'
+          sudo test -f "$TXBOARD_INSTALL_DIR/legacy.txt"
+
+      - name: Clean old install path only when explicitly allowed
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-residue-clean-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18088
+          TXBOARD_IMAGE_TAG: latest
+        run: |
+          sudo mkdir -p "$TXBOARD_INSTALL_DIR/old-data"
+          printf 'legacy\n' | sudo tee "$TXBOARD_INSTALL_DIR/legacy.txt" >/dev/null
+          printf 'legacy-data\n' | sudo tee "$TXBOARD_INSTALL_DIR/old-data/file.txt" >/dev/null
+          trap 'sudo rm -rf "$TXBOARD_INSTALL_DIR"' EXIT
+
+          sudo -E bash install.sh --yes --clean-install-dir --render-only
+
+          sudo test ! -e "$TXBOARD_INSTALL_DIR/legacy.txt"
+          sudo test ! -e "$TXBOARD_INSTALL_DIR/old-data"
+          sudo test -f "$TXBOARD_INSTALL_DIR/compose.yaml"
+          sudo test -f "$TXBOARD_INSTALL_DIR/.env"
+          sudo test -f "$TXBOARD_INSTALL_DIR/api.env"
+
+      - name: Refuse cleanup of dangerous system directory
+        env:
+          TXBOARD_INSTALL_DIR: /tmp
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18089
+          TXBOARD_IMAGE_TAG: latest
+        run: |
+          set +e
+          output="$(sudo -E bash install.sh --yes --clean-install-dir --render-only 2>&1)"
+          status=$?
+          set -e
+
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -q 'refusing to clean dangerous installation directory: /tmp'
 
       - name: Render deployment
         env:
