@@ -23,6 +23,8 @@ jobs:
           grep -Fq 'docker compose run -T --rm --no-deps --entrypoint sh backup -lc' lib/install-database.sh
           grep -Fq 'Switch to automatic host-MySQL mode instead?' lib/install-database.sh
           grep -Fq 'MySQL on this server (auto-detect system / 1Panel / Docker)' lib/install-database.sh
+          grep -Fq 'Detected MySQL/MariaDB instances on this server:' lib/install-database.sh
+          grep -Fq '/www/server/mysql/bin/mysql' lib/install-database.sh
           grep -Fq 'explicitly enable test deployment mode with --test-mode' install.sh
           grep -Fq 'TXBOARD_TEST_MODE=$TEST_MODE' install.sh
           grep -Fq 'cannot connect to $DB_MODE MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE' lib/install-database.sh
@@ -33,6 +35,16 @@ jobs:
           bash txboard.sh help | grep -q 'logs \[service\]'
           bash txboard.sh help | grep -q 'config-show'
           bash txboard.sh help | grep -q 'backups'
+
+      - name: Check BT-Panel local MySQL client discovery
+        run: |
+          sudo mkdir -p /www/server/mysql/bin
+          printf '#!/bin/sh\nexit 0\n' | sudo tee /www/server/mysql/bin/mysql >/dev/null
+          sudo chmod 755 /www/server/mysql/bin/mysql
+          trap 'sudo rm -f /www/server/mysql/bin/mysql; sudo rmdir /www/server/mysql/bin 2>/dev/null || true; sudo rmdir /www/server/mysql 2>/dev/null || true; sudo rmdir /www/server 2>/dev/null || true; sudo rmdir /www 2>/dev/null || true' EXIT
+          mkdir -p /tmp/txboard-empty-path
+          detected="$(PATH=/tmp/txboard-empty-path /bin/bash -c 'source lib/install-database.sh; mysql_system_client')"
+          test "$detected" = "/www/server/mysql/bin/mysql"
 
       - name: Render deployment
         env:
