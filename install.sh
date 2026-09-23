@@ -22,6 +22,7 @@ DB_USERNAME="${TXBOARD_DB_USERNAME:-txboard}"
 DB_PASSWORD="${TXBOARD_DB_PASSWORD:-}"
 DB_ROOT_PASSWORD="${TXBOARD_DB_ROOT_PASSWORD:-}"
 DB_ADMIN_PASSWORD="${TXBOARD_DB_ADMIN_PASSWORD:-}"
+DB_SYSTEM_SOCKET="${TXBOARD_DB_SYSTEM_SOCKET:-}"
 DB_CONTAINER="${TXBOARD_DB_CONTAINER:-}"
 DB_HOST_KIND=""
 DB_LINK_NETWORK="${TXBOARD_DB_LINK_NETWORK:-txboard-db-link}"
@@ -64,6 +65,7 @@ Options:
   --db-mode MODE      local | host | external (default: local)
   --db-host HOST      External MySQL host
   --db-container NAME  Host MySQL/MariaDB Docker container (host mode)
+  --db-socket PATH     System/local MySQL socket override (host mode)
   --db-port PORT      External MySQL port (default: 3306)
   --db-name NAME      Database name (default: txboard)
   --db-user USER      Database username (default: txboard)
@@ -96,6 +98,7 @@ Environment variables:
   TXBOARD_DB_PASSWORD
   TXBOARD_DB_ROOT_PASSWORD
   TXBOARD_DB_ADMIN_PASSWORD
+  TXBOARD_DB_SYSTEM_SOCKET
   TXBOARD_DB_CONTAINER
   TXBOARD_DB_LINK_NETWORK
   TXBOARD_DB_PROXY_PORT
@@ -119,6 +122,7 @@ while [[ $# -gt 0 ]]; do
     --db-mode) DB_MODE="${2:?missing value for --db-mode}"; shift 2 ;;
     --db-host) DB_HOST="${2:?missing value for --db-host}"; shift 2 ;;
     --db-container) DB_CONTAINER="${2:?missing value for --db-container}"; shift 2 ;;
+    --db-socket) DB_SYSTEM_SOCKET="${2:?missing value for --db-socket}"; shift 2 ;;
     --db-port) DB_PORT="${2:?missing value for --db-port}"; shift 2 ;;
     --db-name) DB_DATABASE="${2:?missing value for --db-name}"; shift 2 ;;
     --db-user) DB_USERNAME="${2:?missing value for --db-user}"; shift 2 ;;
