@@ -1,6 +1,51 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+bootstrap_piped_installer() {
+  # When Bash executes the installer directly from stdin (for example
+  # curl ... | sudo bash), the script source and child-process stdin share the
+  # same pipe. Slow network producers can expose races where Docker/Compose or
+  # another child consumes bytes that Bash has not parsed yet. Re-run the
+  # installer from a real file so runtime commands never share the source fd.
+  [[ -z "${BASH_SOURCE[0]:-}" ]] || return 0
+
+  local raw_base="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main}"
+  local tmp drain_pid status=0
+  tmp="$(mktemp /tmp/txboard-install.XXXXXX.sh)" ||
+    { printf '[TXBoard Deploy] ERROR: cannot create temporary installer file\n' >&2; exit 1; }
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$raw_base/install.sh" -o "$tmp" ||
+      { rm -f "$tmp"; printf '[TXBoard Deploy] ERROR: failed to materialize installer from %s/install.sh\n' "$raw_base" >&2; exit 1; }
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$tmp" "$raw_base/install.sh" ||
+      { rm -f "$tmp"; printf '[TXBoard Deploy] ERROR: failed to materialize installer from %s/install.sh\n' "$raw_base" >&2; exit 1; }
+  else
+    rm -f "$tmp"
+    printf '[TXBoard Deploy] ERROR: curl or wget is required to materialize a piped installer\n' >&2
+    exit 1
+  fi
+  chmod 700 "$tmp"
+
+  # Drain the original producer so curl/wget can finish cleanly, while the real
+  # installer runs with stdin detached from the source-code pipe. Interactive
+  # prompts continue to use /dev/tty.
+  cat >/dev/null &
+  drain_pid=$!
+
+  if bash "$tmp" "$@" </dev/null; then
+    status=0
+  else
+    status=$?
+  fi
+
+  wait "$drain_pid" 2>/dev/null || true
+  rm -f "$tmp"
+  exit "$status"
+}
+
+bootstrap_piped_installer "$@"
+
 IMAGE_REPO="${TXBOARD_IMAGE_REPO:-ghcr.io/paimoncai/txboard}"
 IMAGE_TAG="${TXBOARD_IMAGE_TAG:-latest}"
 INSTALL_DIR="${TXBOARD_INSTALL_DIR:-/opt/txboard}"
