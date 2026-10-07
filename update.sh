@@ -5,7 +5,7 @@ INSTALL_DIR="${TXBOARD_INSTALL_DIR:-/opt/txboard}"
 IMAGE_TAG=""
 SKIP_BACKUP=0
 ASSUME_YES=0
-DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main}"
+DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main}"
 
 log() { printf '[TXBoard Deploy] %s\n' "$*"; }
 warn() { printf '[TXBoard Deploy] WARNING: %s\n' "$*" >&2; }

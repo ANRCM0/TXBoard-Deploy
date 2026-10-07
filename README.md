@@ -33,7 +33,7 @@ user server
 运行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/install.sh | sudo bash
 ```
 
 即使脚本通过 pipe 执行，交互输入仍从 `/dev/tty` 读取。安装器检测到 `curl | bash` / stdin 执行时，会先从同一 `TXBOARD_DEPLOY_RAW_BASE` 将完整安装器物化到临时文件，再从文件执行；原始 pipe 仅被排空，不再与 Docker、MySQL、MCP 等子进程共享“脚本源码 stdin”。这避免网络慢速流下子进程意外截断尚未被 Bash 解析的后续安装步骤。
@@ -96,7 +96,7 @@ sudo env \
 例如完全重装测试环境：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/install.sh |
+curl -fsSL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/install.sh |
 sudo bash -s -- --yes --reset-local-db \
   --email admin@example.com \
   --mode http \
@@ -269,7 +269,7 @@ sudo txboard
 已有旧部署不需要重装。执行一次新版更新脚本即可在更新成功后自动安装/刷新管理命令：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/update.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/update.sh | sudo bash
 ```
 
 直接运行 `sudo txboard` 会进入交互菜单。未发现部署时只显示安装入口；已安装时主菜单提供常用运维操作：
@@ -368,13 +368,13 @@ bash install.sh --disable-mcp ...
 默认更新当前使用的 image tag：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/update.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/update.sh | sudo bash
 ```
 
 切换到指定 tag：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/update.sh |
+curl -fsSL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/update.sh |
 sudo bash -s -- --tag latest
 ```
 
@@ -403,7 +403,7 @@ sudo bash update.sh --skip-backup
 CI 或自动化环境可以使用环境变量 + `--yes`：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/install.sh |
+curl -fsSL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/install.sh |
 sudo env \
   TXBOARD_MODE=auto-https \
   TXBOARD_TEST_MODE=false \
@@ -460,7 +460,7 @@ http
 测试部署可以设置 `TXBOARD_TEST_MODE=true` 或使用 `--test-mode`。例如允许 `0.0.0.0` 作为测试用 Public host：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main/install.sh |
+curl -fsSL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/install.sh |
 sudo env \
   TXBOARD_ADMIN_EMAIL=admin@example.com \
   TXBOARD_MODE=http \

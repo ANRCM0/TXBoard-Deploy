@@ -9,7 +9,7 @@ bootstrap_piped_installer() {
   # installer from a real file so runtime commands never share the source fd.
   [[ -z "${BASH_SOURCE[0]:-}" ]] || return 0
 
-  local raw_base="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main}"
+  local raw_base="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main}"
   local tmp drain_pid status=0
   tmp="$(mktemp /tmp/txboard-install.XXXXXX.sh)" ||
     { printf '[TXBoard Deploy] ERROR: cannot create temporary installer file\n' >&2; exit 1; }
@@ -75,7 +75,7 @@ DB_PROXY_REQUIRED=0
 DB_PROXY_BIND=""
 DB_PROXY_PORT="${TXBOARD_DB_PROXY_PORT:-13306}"
 DB_SOURCE_PORT=""
-DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main}"
+DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main}"
 ASSUME_YES=0
 RENDER_ONLY=0
 RESET_LOCAL_DB=0

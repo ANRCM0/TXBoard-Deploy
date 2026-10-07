@@ -7,7 +7,7 @@ elif [[ -n "${SCRIPT_DIR:-}" && -f "$SCRIPT_DIR/compose.yaml" ]]; then
 else
   TXBOARD_INSTALL_DIR="/opt/txboard"
 fi
-TXBOARD_DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/PaiMonCai/TXBoard-Deploy/main}"
+TXBOARD_DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main}"
 
 log() { printf '[TXBoard] %s\n' "$*"; }
 warn() { printf '[TXBoard] WARNING: %s\n' "$*" >&2; }
