@@ -10,7 +10,7 @@ TXBoard source repository
         │
         │ build / CI
         ▼
-ghcr.io/paimoncai/txboard
+ghcr.io/ANRCM0/txboard
         │
         │ docker pull
         ▼
@@ -232,7 +232,7 @@ TXBoard
 默认：
 
 ```text
-ghcr.io/paimoncai/txboard:latest
+ghcr.io/ANRCM0/txboard:latest
 ```
 
 安装时可以输入其他 tag。
@@ -241,7 +241,7 @@ ghcr.io/paimoncai/txboard:latest
 
 ```yaml
 txboard:
-  image: ghcr.io/paimoncai/txboard:latest
+  image: ghcr.io/ANRCM0/txboard:latest
 ```
 
 因此用户服务器不需要 TXBoard 源码。
@@ -524,7 +524,7 @@ docker compose down -v
 
 > **源码仓库 Private，不代表 Public Docker image 内的文件不可提取。**
 
-如果 `ghcr.io/paimoncai/txboard` 是 Public，那么能够拉取镜像的人仍可以查看镜像文件系统中实际包含的 PHP 文件。TXBoard Deploy 解决的是“源码仓库和部署分发解耦”，不是 Docker 镜像代码加密。
+如果 `ghcr.io/ANRCM0/txboard` 是 Public，那么能够拉取镜像的人仍可以查看镜像文件系统中实际包含的 PHP 文件。TXBoard Deploy 解决的是“源码仓库和部署分发解耦”，不是 Docker 镜像代码加密。
 
 ## 与 TXBoard 的边界
 

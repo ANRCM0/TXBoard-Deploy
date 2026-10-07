@@ -46,7 +46,7 @@ bootstrap_piped_installer() {
 
 bootstrap_piped_installer "$@"
 
-IMAGE_REPO="${TXBOARD_IMAGE_REPO:-ghcr.io/paimoncai/txboard}"
+IMAGE_REPO="${TXBOARD_IMAGE_REPO:-ghcr.io/ANRCM0/txboard}"
 IMAGE_TAG="${TXBOARD_IMAGE_TAG:-latest}"
 INSTALL_DIR="${TXBOARD_INSTALL_DIR:-/opt/txboard}"
 ADMIN_EMAIL="${TXBOARD_ADMIN_EMAIL:-}"

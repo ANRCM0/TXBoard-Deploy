@@ -234,7 +234,7 @@ jobs:
       - name: Require image-only Compose
         run: |
           ! sudo grep -Eq '^[[:space:]]*build:' /tmp/txboard-deploy-ci/compose.yaml
-          sudo grep -q 'ghcr.io/paimoncai/txboard:latest' /tmp/txboard-deploy-ci/.env
+          sudo grep -q 'ghcr.io/ANRCM0/txboard:latest' /tmp/txboard-deploy-ci/.env
           sudo grep -q '^TXBOARD_MODE=http$' /tmp/txboard-deploy-ci/.env
           test "$(sudo stat -c '%a' /tmp/txboard-deploy-ci/.env)" = "600"
           test "$(sudo stat -c '%a' /tmp/txboard-deploy-ci/api.env)" = "600"
@@ -324,7 +324,7 @@ jobs:
           test ! -e /tmp/txboard-stale-volume-ci/.env
 
       - name: Check public image manifest
-        run: docker manifest inspect ghcr.io/paimoncai/txboard:latest >/dev/null
+        run: docker manifest inspect ghcr.io/ANRCM0/txboard:latest >/dev/null
 
   smoke-install:
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'

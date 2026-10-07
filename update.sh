@@ -20,7 +20,7 @@ Usage:
 
 Options:
   --dir PATH       Install directory (default: /opt/txboard)
-  --tag TAG        Switch ghcr.io/paimoncai/txboard to a different tag
+  --tag TAG        Switch ghcr.io/ANRCM0/txboard to a different tag
   --skip-backup    Do not create a one-shot backup before update
   --yes            Do not ask for confirmation
   -h, --help       Show this help
