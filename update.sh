@@ -20,7 +20,7 @@ Usage:
 
 Options:
   --dir PATH       Install directory (default: /opt/txboard)
-  --tag TAG        Switch ghcr.io/ANRCM0/txboard to a different tag
+  --tag TAG        Switch ghcr.io/anrcm0/txboard to a different tag
   --skip-backup    Do not create a one-shot backup before update
   --yes            Do not ask for confirmation
   -h, --help       Show this help
@@ -110,12 +110,17 @@ set_image() {
 current_image="$(get_env TXBOARD_IMAGE)"
 [[ -n "$current_image" ]] || die "TXBOARD_IMAGE is missing from $INSTALL_DIR/.env"
 
+# Accept existing deployments whose saved image repository contains uppercase
+# owner letters. Preserve the tag (Docker tags may contain uppercase letters).
+image_repo="${current_image%:*}"
+image_repo="${image_repo,,}"
+normalized_current_image="$image_repo:${current_image##*:}"
+
 if [[ -n "$IMAGE_TAG" ]]; then
   [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "invalid image tag: $IMAGE_TAG"
-  image_repo="${current_image%:*}"
   new_image="$image_repo:$IMAGE_TAG"
 else
-  new_image="$current_image"
+  new_image="$normalized_current_image"
 fi
 
 container_id="$(docker compose ps -q txboard 2>/dev/null || true)"
@@ -124,7 +129,7 @@ if [[ -n "$container_id" ]]; then
   old_image_id="$(docker inspect "$container_id" --format '{{.Image}}' 2>/dev/null || true)"
 fi
 if [[ -z "$old_image_id" ]]; then
-  old_image_id="$(docker image inspect "$current_image" --format '{{.Id}}' 2>/dev/null || true)"
+  old_image_id="$(docker image inspect "$normalized_current_image" --format '{{.Id}}' 2>/dev/null || true)"
 fi
 
 if [[ "$ASSUME_YES" -eq 0 ]]; then
@@ -148,11 +153,11 @@ if [[ "$new_image" != "$current_image" ]]; then
 fi
 
 rollback() {
-  warn "update validation failed; attempting automatic rollback to $current_image"
-  set_image "$current_image"
+  warn "update validation failed; attempting automatic rollback to $normalized_current_image"
+  set_image "$normalized_current_image"
 
   if [[ -n "$old_image_id" ]] && docker image inspect "$old_image_id" >/dev/null 2>&1; then
-    if docker tag "$old_image_id" "$current_image"; then
+    if docker tag "$old_image_id" "$normalized_current_image"; then
       log "restored previous image tag from $old_image_id"
     else
       warn "could not re-tag the previous image; rollback will use the currently available tag"
