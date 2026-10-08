@@ -234,7 +234,7 @@ jobs:
       - name: Require image-only Compose
         run: |
           ! sudo grep -Eq '^[[:space:]]*build:' /tmp/txboard-deploy-ci/compose.yaml
-          sudo grep -q 'ghcr.io/ANRCM0/txboard:latest' /tmp/txboard-deploy-ci/.env
+          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest$' /tmp/txboard-deploy-ci/.env
           sudo grep -q '^TXBOARD_MODE=http$' /tmp/txboard-deploy-ci/.env
           test "$(sudo stat -c '%a' /tmp/txboard-deploy-ci/.env)" = "600"
           test "$(sudo stat -c '%a' /tmp/txboard-deploy-ci/api.env)" = "600"
@@ -323,8 +323,24 @@ jobs:
           printf '%s\n' "$output" | grep -q 'existing managed MySQL volume txboard_database-data detected'
           test ! -e /tmp/txboard-stale-volume-ci/.env
 
+      - name: Check mixed-case override is normalized
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-mixed-case-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18091
+          TXBOARD_IMAGE_REPO: ghcr.io/ANRCM0/TXBoard
+        run: |
+          sudo -E bash install.sh --yes --render-only
+          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest$' "$TXBOARD_INSTALL_DIR/.env"
+          sudo rm -rf "$TXBOARD_INSTALL_DIR"
+
       - name: Check public image manifest
-        run: docker manifest inspect ghcr.io/ANRCM0/txboard:latest >/dev/null
+        run: |
+          image="$(sudo sed -n 's/^TXBOARD_IMAGE=//p' /tmp/txboard-deploy-ci/.env | tail -1)"
+          test "$image" = 'ghcr.io/anrcm0/txboard:latest'
+          docker manifest inspect "$image" >/dev/null
 
   smoke-install:
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -367,7 +383,11 @@ jobs:
           sudo txboard help | grep -q 'Quick commands'
           sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
           sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
+          # Simulate an existing install saved before GHCR path normalization.
+          sudo sed -i 's|^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest$|TXBOARD_IMAGE=ghcr.io/ANRCM0/txboard:latest|' .env
+          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/ANRCM0/txboard:latest$' .env
           cat /tmp/txboard-deploy-smoke/update.sh | sudo -E bash -s -- --dir /tmp/txboard-deploy-smoke --yes --skip-backup
+          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest$' .env
           sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
 
       - name: Cleanup
