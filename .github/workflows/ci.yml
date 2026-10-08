@@ -198,6 +198,9 @@ jobs:
           sudo docker compose -f /tmp/txboard-deploy-ci/compose.yaml \
             --env-file /tmp/txboard-deploy-ci/.env config >/dev/null
 
+      - name: Verify installed backup script rejects partial database dumps
+        run: sudo bash scripts/test-backup.sh /tmp/txboard-deploy-ci/backup.sh
+
       - name: Reject wildcard public host outside test mode
         env:
           TXBOARD_INSTALL_DIR: /tmp/txboard-standard-wildcard-ci
