@@ -235,7 +235,25 @@ TXBoard
 ghcr.io/anrcm0/txboard:latest
 ```
 
-安装时可以输入其他 tag。
+TXBoard 的 GitHub Actions 已将镜像发布分成三个独立通道。**正式版不会再随每次 main 提交自动更新**：
+
+| 发布通道 | 镜像标签 | 更新触发 |
+| --- | --- | --- |
+| 正式版 Stable | `latest`、`v1.2.3`（示例） | 推送 Git 标签 `v1.2.3` |
+| 预览版 Preview | `preview`、`v1.2.3-rc.1`（示例） | 推送 `v1.2.3-rc.1` / `-beta.N` / `-preview.N` 标签 |
+| 开发版 Dev | `dev`、`dev-sha-<commit>` | 每次推送 `main` |
+
+首次安装时可选择 `latest`、`preview`、`dev` 或固定版本标签。正式服务器推荐使用通过测试的具体版本（例如 `v1.2.3`），预发布环境使用具体预览版本或 `preview`，开发测试使用 `dev`。固定版本避免浮动通道更新导致部署目标不明确。
+
+已安装实例切换通道或锁定版本：
+
+```bash
+sudo txboard update dev
+sudo txboard update preview
+sudo txboard update v1.2.3
+```
+
+这三个示例分别使用对应通道/版本；必须在 GHCR 已成功发布相应镜像后执行。应用的 `latest` 只会在推送正式发布 Git 标签后更新；未发布过新正式版时，`latest` 仍可能是旧版。
 
 生成的 Compose **只有 image，没有 build**：
 
