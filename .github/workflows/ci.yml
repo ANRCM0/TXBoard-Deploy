@@ -383,7 +383,11 @@ jobs:
           sudo txboard help | grep -q 'Quick commands'
           sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
           sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
+          # Simulate an existing install saved before GHCR path normalization.
+          sudo sed -i 's|^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest$|TXBOARD_IMAGE=ghcr.io/ANRCM0/txboard:latest|' .env
+          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/ANRCM0/txboard:latest$' .env
           cat /tmp/txboard-deploy-smoke/update.sh | sudo -E bash -s -- --dir /tmp/txboard-deploy-smoke --yes --skip-backup
+          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest$' .env
           sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
 
       - name: Cleanup
