@@ -15,6 +15,8 @@ jobs:
         run: |
           bash -n install.sh
           bash -n update.sh
+          sh -n backup.sh
+          bash -n scripts/test-upgrade.sh
           bash -n txboard.sh
           for f in lib/*.sh; do bash -n "$f"; done
 
@@ -37,12 +39,18 @@ jobs:
           grep -Fq 'TXBOARD_TEST_MODE=$TEST_MODE' install.sh
           grep -Fq 'cannot connect to $DB_MODE MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE' lib/install-database.sh
           grep -Fq 'Docker + Compose v2 not found. Install Docker automatically?' install.sh
-          grep -Fq 'docker compose run -T --rm -e BACKUP_INTERVAL=0 backup' update.sh
+          grep -Fq 'docker compose run -T --rm -e BACKUP_INTERVAL=0 -e BACKUP_RETENTION=0 backup' update.sh
+          grep -Fq 'schema_preflight' update.sh
+          grep -Fq 'target_artisan migrate --force' update.sh
+          grep -Fq 'attempted_migrate == 0' update.sh
           grep -Fq 'compose run -T --rm -e BACKUP_INTERVAL=0 backup' lib/backup.sh
           grep -Fq 'compose run -T --rm --no-deps --entrypoint sh backup -lc' lib/diagnose.sh
           bash txboard.sh help | grep -q 'logs \[service\]'
           bash txboard.sh help | grep -q 'config-show'
           bash txboard.sh help | grep -q 'backups'
+
+      - name: Exercise database-aware updater fail-closed state machine
+        run: bash scripts/test-upgrade.sh
 
       - name: Check BT-Panel local MySQL client discovery
         run: |
