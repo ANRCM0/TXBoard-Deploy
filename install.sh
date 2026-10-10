@@ -302,9 +302,13 @@ clean_existing_install_dir() {
   fi
 
   # Avoid a race between the initial install preflight and the cleanup prompt.
-  [[ "$RENDER_ONLY" -eq 1 ]] ||
+  if [[ "$RENDER_ONLY" -eq 0 ]]; then
     txboard_guard_install "$INSTALL_DIR" ||
-    die "TXBoard appeared during cleanup confirmation; refusing deletion"
+      die "TXBoard appeared during cleanup confirmation; refusing deletion"
+  else
+    [[ ! -f "$INSTALL_DIR/compose.yaml" && ! -f "$INSTALL_DIR/.env" && ! -f "$INSTALL_DIR/api.env" ]] ||
+      die "render-only cannot clear deployment configuration"
+  fi
   log "removing old TXBoard files from $INSTALL_DIR..."
   rm -rf -- "$INSTALL_DIR"
 }
@@ -531,6 +535,8 @@ esac
 if [[ "$RENDER_ONLY" -eq 0 ]]; then
   txboard_guard_install "$INSTALL_DIR" ||
     die "existing/ambiguous TXBoard detected; installation did not modify this deployment"
+elif [[ -f "$INSTALL_DIR/compose.yaml" || -f "$INSTALL_DIR/api.env" || -f "$INSTALL_DIR/.env" ]]; then
+  die "render-only cannot replace an existing TXBoard deployment configuration; use a clean staging directory"
 fi
 
 if install_dir_has_content; then
