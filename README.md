@@ -416,6 +416,16 @@ txboard:install-status
 
 `sudo txboard update <tag>` / `update.sh --tag <tag>` 现在对**已安装、正在运行且仍使用 `v2_*` 表**的数据库执行受控升级。**不会自动把 `v2_*` 改名为 `tx_*`**。
 
+**首次升级历史安装器时请注意：**旧安装器的 `txboard update` 可能仍执行安装目录中缓存的旧 `update.sh`。为保证首次升级也使用数据库安全检查，先在宿主机下载并检查新版更新脚本，再执行一次：
+
+```bash
+curl -fL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/update.sh -o /tmp/txboard-safe-update.sh
+bash -n /tmp/txboard-safe-update.sh
+sudo bash /tmp/txboard-safe-update.sh --dir /opt/txboard --tag latest
+```
+
+如果安装目录不是 `/opt/txboard`，请替换实际路径。首次升级成功后管理器会更新，后续使用 `sudo txboard update latest` 即可；新版管理器在升级前会主动获取并验证最新的更新器，避免再次运行过时的本地脚本。建议在预发环境恢复旧库并演练迁移后再执行上述命令。
+
 升级顺序：MySQL 只读预检 → 拉取目标镜像 → 停止 TXBoard（包括同容器的队列、WebSocket、计划任务写入）→ 再次预检 → 记录用户/订单/余额基准 → 旧数据库/APP_KEY/上传/插件/主题完整备份及 SHA-256 检验 → 用**目标镜像的独立 Artisan 容器**执行 `migrate --force` → 检查待执行迁移、表结构与关键财务汇总 → 重建 TXBoard 并检查健康和安装状态。
 
 - 普通旧库（`v2_user`、`v2_settings`、`v2_order` 和 `migrations` 记录完整）：自动更新到最新常规结构，同时保持 `TX_NATIVE_TABLES=false`。
