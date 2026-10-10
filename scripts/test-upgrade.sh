@@ -16,9 +16,11 @@ case "$line" in
   *" image inspect "*|*" tag "*|*" pull "*) ;;
   *" compose run "*"--entrypoint sh backup "*)
     if [[ "$MOCK_SCHEMA" == mixed ]]; then
-      printf '25\t2\t1\t1\t1\t1\n'
+      printf '25\t2\t1\t1\t1\t1\t1\t1\t1\n'
+    elif [[ "$MOCK_SCHEMA" == native && "$line" == *information_schema* ]]; then
+      printf '0\t25\t0\t0\t0\t1\t1\t1\t1\n'
     elif [[ "$line" == *information_schema* ]]; then
-      printf '25\t0\t1\t1\t1\t1\n'
+      printf '25\t0\t1\t1\t1\t0\t0\t0\t1\n'
     else
       printf '5\t1000\t250\t4\t5000\n'
     fi ;;
@@ -79,6 +81,19 @@ archive="$(find "$MOCK_DIR/backups" -mindepth 1 -maxdepth 1 -type d -print -quit
 (cd "$archive" && sha256sum -c CHECKSUMS.sha256 >/dev/null && gzip -t plugins.tar.gz && gzip -t storage-theme.tar.gz)
 test -f "$archive/deploy.env"
 test -f "$archive/compose.yaml"
+
+setup native
+export MOCK_SCHEMA=native
+sed -i 's/^TX_NATIVE_TABLES=false$/TX_NATIVE_TABLES=true/' "$MOCK_DIR/api.env"
+update
+grep -Fq migration-attempted "$MOCK_EVENTS"
+grep -qx 'TX_NATIVE_TABLES=true' "$MOCK_DIR/api.env"
+! grep -Fq 'txboard:database-cutover' "$MOCK_EVENTS"
+
+setup native-bad-flag
+export MOCK_SCHEMA=native
+if update >"$tmp/native-flag" 2>&1; then echo "native DB with legacy config accepted" >&2; exit 1; fi
+! grep -Fq 'compose stop txboard' "$MOCK_EVENTS"
 
 setup mixed
 MOCK_SCHEMA=mixed
