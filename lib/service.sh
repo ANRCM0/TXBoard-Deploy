@@ -37,7 +37,7 @@ service_stats() {
 service_menu() {
   local choice
   while true; do
-    choice="$(choose "1 status  2 start  3 stop  4 restart  5 resources  0 back" "1" "5")"
+    choice="$(choose "1 状态  2 启动  3 停止  4 重启  5 资源占用  0 返回" "1" "5")"
     case "$choice" in
       1) service_status; pause ;;
       2) service_start; pause ;;
@@ -76,7 +76,7 @@ logs_menu() {
   local choice service="all"
 
   if [[ "$(database_mode)" != "local" ]]; then
-    choice="$(choose "1 TXBoard  2 Backup  3 All  0 back" "1" "3")"
+    choice="$(choose "1 TXBoard  2 备份  3 全部  0 返回" "1" "3")"
     case "$choice" in
       1) service=txboard ;;
       2) service=backup ;;
@@ -84,7 +84,7 @@ logs_menu() {
       0) return 0 ;;
     esac
   else
-    choice="$(choose "1 TXBoard  2 MySQL  3 Backup  4 All  0 back" "1" "4")"
+    choice="$(choose "1 TXBoard  2 MySQL  3 备份  4 全部  0 返回" "1" "4")"
     case "$choice" in
       1) service=txboard ;;
       2) service=database ;;
