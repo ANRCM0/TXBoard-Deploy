@@ -5,6 +5,9 @@ INSTALL_DIR="${TXBOARD_INSTALL_DIR:-/opt/txboard}"
 IMAGE_TAG=""
 SKIP_BACKUP=0
 ASSUME_YES=0
+CUTOVER_PLAN=""
+SCHEMA_KIND=""
+UPGRADE_MODE=""
 DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main}"
 
 log() { printf '[TXBoard Deploy] %s\n' "$*"; }
@@ -22,7 +25,8 @@ Options:
   --dir PATH       Install directory (default: /opt/txboard)
   --tag TAG        Switch ghcr.io/anrcm0/txboard to a different tag
   --skip-backup    Not permitted during schema-safe updates
-  --yes            Do not ask for confirmation
+  --yes            Unattended: keep legacy v2_* names; native tx_* upgrades automatically
+  --cutover-plan PATH  Host path to an independently reviewed/approved rename plan
   -h, --help       Show this help
 EOF
 }
@@ -33,6 +37,7 @@ while [[ $# -gt 0 ]]; do
     --tag) IMAGE_TAG="${2:?missing value for --tag}"; shift 2 ;;
     --skip-backup) SKIP_BACKUP=1; shift ;;
     --yes) ASSUME_YES=1; shift ;;
+    --cutover-plan) CUTOVER_PLAN="${2:?missing value for --cutover-plan}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
@@ -138,21 +143,48 @@ db_sql() {
   docker compose run -T --rm --no-deps --entrypoint sh backup -ec \
     'MYSQL_PWD="$DB_PASSWORD" exec mysql --batch --skip-column-names --connect-timeout=10 --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="$1"' sh "$1" </dev/null
 }
-schema_preflight() {
-  local inventory v2 tx u settings orders history mode
-  inventory="$(db_sql "SELECT SUM(LEFT(TABLE_NAME,3)='v2_'), SUM(LEFT(TABLE_NAME,3)='tx_'), SUM(TABLE_NAME='v2_user'), SUM(TABLE_NAME='v2_settings'), SUM(TABLE_NAME='v2_order'), SUM(TABLE_NAME='migrations') FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_TYPE='BASE TABLE'")" ||
-    die "failed to inventory MySQL tables"
-  read -r v2 tx u settings orders history <<< "$inventory"
-  [[ "$v2" =~ ^[0-9]+$ && "$tx" =~ ^[0-9]+$ ]] || die "unknown or empty DB schema"
-  (( tx == 0 )) || die "native/mixed tx_* schema detected; manual cutover runbook required"
-  (( v2 > 0 && u == 1 && settings == 1 && orders == 1 && history == 1 )) ||
-    die "unsupported V2 schema: core tables or migration history missing"
-  mode="$(sed -n 's/^TX_NATIVE_TABLES=//p' api.env | tail -1 | tr -d "'\" ")"
-  case "$mode" in ''|false|FALSE|0) ;; *) die "TX_NATIVE_TABLES is not false; automatic legacy upgrade denied" ;; esac
-  log "legacy database preflight passed ($v2 v2_* tables; no tx_* tables)"
+# Read database shape before any mutation. Mixed/empty/unknown databases never
+# enter the automatic update path.
+detect_schema() {
+  local inventory v2 tx v2user v2settings v2order txuser txsettings txorder history flag
+  inventory="$(db_sql "SELECT
+    SUM(LEFT(TABLE_NAME,3)='v2_'), SUM(LEFT(TABLE_NAME,3)='tx_'),
+    SUM(TABLE_NAME='v2_user'), SUM(TABLE_NAME='v2_settings'), SUM(TABLE_NAME='v2_order'),
+    SUM(TABLE_NAME='tx_user'), SUM(TABLE_NAME='tx_settings'), SUM(TABLE_NAME='tx_order'),
+    SUM(TABLE_NAME='migrations')
+    FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_TYPE='BASE TABLE'")" ||
+    die "failed to inventory live MySQL schema"
+  read -r v2 tx v2user v2settings v2order txuser txsettings txorder history <<< "$inventory"
+  [[ "$v2" =~ ^[0-9]+$ && "$tx" =~ ^[0-9]+$ && "$history" == 1 ]] ||
+    die "empty/unknown database or missing Laravel migration history"
+  if (( v2 > 0 && tx == 0 && v2user == 1 && v2settings == 1 && v2order == 1 )); then
+    SCHEMA_KIND=legacy
+  elif (( tx > 0 && v2 == 0 && txuser == 1 && txsettings == 1 && txorder == 1 )); then
+    SCHEMA_KIND=native
+  else
+    die "mixed/incomplete database detected (v2=$v2, tx=$tx): refusing automatic upgrade"
+  fi
+  flag="$(sed -n 's/^TX_NATIVE_TABLES=//p' api.env | tail -1 | tr -d "'\" ")"
+  case "$SCHEMA_KIND:$flag" in
+    legacy:''|legacy:false|legacy:FALSE|legacy:0) ;;
+    native:true|native:TRUE|native:1) ;;
+    *) die "schema is $SCHEMA_KIND but TX_NATIVE_TABLES in api.env is '$flag': resolve config before upgrade" ;;
+  esac
+  log "detected $SCHEMA_KIND database (v2=$v2, tx=$tx); configuration matches"
 }
+require_schema() {
+  local want="$1"
+  detect_schema
+  [[ "$SCHEMA_KIND" == "$want" ]] ||
+    die "schema changed unexpectedly: expected $want, found $SCHEMA_KIND"
+}
+# A consistent snapshot captures critical financial invariants; no user data
+# is printed to logs. Counts/aggregates must remain equal across the update.
+
 critical_snapshot() {
-  db_sql "SELECT (SELECT COUNT(*) FROM v2_user), (SELECT COALESCE(SUM(balance),0) FROM v2_user), (SELECT COALESCE(SUM(commission_balance),0) FROM v2_user), (SELECT COUNT(*) FROM v2_order), (SELECT COALESCE(SUM(total_amount),0) FROM v2_order)"
+  local prefix=v2
+  [[ "$SCHEMA_KIND" == native ]] && prefix=tx
+  db_sql "SELECT (SELECT COUNT(*) FROM ${prefix}_user), (SELECT COALESCE(SUM(balance),0) FROM ${prefix}_user), (SELECT COALESCE(SUM(commission_balance),0) FROM ${prefix}_user), (SELECT COUNT(*) FROM ${prefix}_order), (SELECT COALESCE(SUM(total_amount),0) FROM ${prefix}_order)"
 }
 target_artisan() {
   docker compose run -T --rm --no-deps \
@@ -164,7 +196,7 @@ container_id="$(docker compose ps -q txboard 2>/dev/null || true)"
 [[ -n "$container_id" ]] || die "TXBoard must be running before database-aware update"
 old_image_id="$(docker inspect "$container_id" --format '{{.Image}}' 2>/dev/null || true)"
 [[ "$old_image_id" == sha256:* ]] || die "could not pin old running image"
-schema_preflight
+detect_schema
 # Older TXBoard-Deploy installations had a backup.sh without CHECKSUMS and
 # without a strict failure contract. Upgrade that script before any downtime.
 if ! grep -Fq 'CHECKSUMS.sha256' "$INSTALL_DIR/backup.sh" 2>/dev/null; then
