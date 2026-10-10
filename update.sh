@@ -21,7 +21,7 @@ Usage:
 Options:
   --dir PATH       Install directory (default: /opt/txboard)
   --tag TAG        Switch ghcr.io/anrcm0/txboard to a different tag
-  --skip-backup    Do not create a one-shot backup before update
+  --skip-backup    Not permitted during schema-safe updates
   --yes            Do not ask for confirmation
   -h, --help       Show this help
 EOF
@@ -123,70 +123,124 @@ else
   new_image="$normalized_current_image"
 fi
 
-container_id="$(docker compose ps -q txboard 2>/dev/null || true)"
-old_image_id=""
-if [[ -n "$container_id" ]]; then
-  old_image_id="$(docker inspect "$container_id" --format '{{.Image}}' 2>/dev/null || true)"
-fi
-if [[ -z "$old_image_id" ]]; then
-  old_image_id="$(docker image inspect "$normalized_current_image" --format '{{.Id}}' 2>/dev/null || true)"
-fi
 
-if [[ "$ASSUME_YES" -eq 0 ]]; then
-  [[ -r /dev/tty ]] || die "confirmation requires a TTY; use --yes for unattended update"
-  printf 'Current image: %s\nTarget image:  %s\nContinue? [Y/n]: ' "$current_image" "$new_image" > /dev/tty
-  IFS= read -r answer < /dev/tty || true
-  answer="${answer:-Y}"
-  [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]] || { log "cancelled"; exit 0; }
-fi
+# Only existing and COMPLETE legacy v2_* installations are auto-migrated.
+# Native tx_* table cutover is NOT a routine Docker image upgrade.
+[[ "$SKIP_BACKUP" -eq 0 ]] || die "--skip-backup is disabled: a full backup is required"
+umask 077
+command -v flock >/dev/null 2>&1 || die "flock is required for upgrade locking"
+exec 9>"$INSTALL_DIR/.upgrade.lock"
+flock -n 9 || die "another TXBoard upgrade is running"
 
-if [[ "$SKIP_BACKUP" -eq 0 ]]; then
-  log "creating one-shot backup before update..."
-  docker compose run -T --rm -e BACKUP_INTERVAL=0 backup </dev/null
-fi
-
-log "pulling $new_image ..."
-docker pull "$new_image"
-
-if [[ "$new_image" != "$current_image" ]]; then
-  set_image "$new_image"
-fi
-
-rollback() {
-  warn "update validation failed; attempting automatic rollback to $normalized_current_image"
-  set_image "$normalized_current_image"
-
-  if [[ -n "$old_image_id" ]] && docker image inspect "$old_image_id" >/dev/null 2>&1; then
-    if docker tag "$old_image_id" "$normalized_current_image"; then
-      log "restored previous image tag from $old_image_id"
-    else
-      warn "could not re-tag the previous image; rollback will use the currently available tag"
-    fi
-  else
-    warn "previous image id is unavailable; tag-level rollback only"
-  fi
-
-  if docker compose up -d --force-recreate --remove-orphans --wait txboard &&
-     docker compose exec -T txboard php artisan txboard:install-status --no-interaction </dev/null >/dev/null; then
-    log "rollback completed successfully"
-    return 0
-  fi
-
-  warn "automatic rollback failed; inspect: cd $INSTALL_DIR && docker compose logs txboard"
-  return 1
+# The existing backup service supplies a MySQL client on the exact same network.
+# No application credentials or row data are printed.
+db_sql() {
+  docker compose run -T --rm --no-deps --entrypoint sh backup -ec \
+    'MYSQL_PWD="$DB_PASSWORD" exec mysql --batch --skip-column-names --connect-timeout=10 --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="$1"' sh "$1"
+}
+schema_preflight() {
+  local inventory v2 tx u settings orders history mode
+  inventory="$(db_sql "SELECT SUM(LEFT(TABLE_NAME,3)='v2_'), SUM(LEFT(TABLE_NAME,3)='tx_'), SUM(TABLE_NAME='v2_user'), SUM(TABLE_NAME='v2_settings'), SUM(TABLE_NAME='v2_order'), SUM(TABLE_NAME='migrations') FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_TYPE='BASE TABLE'")" ||
+    die "failed to inventory MySQL tables"
+  read -r v2 tx u settings orders history <<< "$inventory"
+  [[ "$v2" =~ ^[0-9]+$ && "$tx" =~ ^[0-9]+$ ]] || die "unknown or empty DB schema"
+  (( tx == 0 )) || die "native/mixed tx_* schema detected; manual cutover runbook required"
+  (( v2 > 0 && u == 1 && settings == 1 && orders == 1 && history == 1 )) ||
+    die "unsupported V2 schema: core tables or migration history missing"
+  mode="$(sed -n 's/^TX_NATIVE_TABLES=//p' api.env | tail -1 | tr -d "'\" ")"
+  case "$mode" in ''|false|FALSE|0) ;; *) die "TX_NATIVE_TABLES is not false; automatic legacy upgrade denied" ;; esac
+  log "legacy database preflight passed ($v2 v2_* tables; no tx_* tables)"
+}
+critical_snapshot() {
+  db_sql "SELECT (SELECT COUNT(*) FROM v2_user), (SELECT COALESCE(SUM(balance),0) FROM v2_user), (SELECT COALESCE(SUM(commission_balance),0) FROM v2_user), (SELECT COUNT(*) FROM v2_order), (SELECT COALESCE(SUM(total_amount),0) FROM v2_order)"
+}
+target_artisan() {
+  docker compose run -T --rm --no-deps \
+    -e CACHE_DRIVER=array -e SETTING_CACHE_STORE=array -e QUEUE_CONNECTION=sync -e SESSION_DRIVER=array \
+    --entrypoint php txboard /www/artisan "$@" --no-interaction
 }
 
-log "recreating TXBoard..."
-if ! docker compose up -d --force-recreate --remove-orphans --wait txboard; then
-  rollback || true
-  die "update failed while starting the new container"
+container_id="$(docker compose ps -q txboard 2>/dev/null || true)"
+[[ -n "$container_id" ]] || die "TXBoard must be running before database-aware update"
+old_image_id="$(docker inspect "$container_id" --format '{{.Image}}' 2>/dev/null || true)"
+[[ "$old_image_id" == sha256:* ]] || die "could not pin old running image"
+schema_preflight
+if [[ "$ASSUME_YES" -eq 0 ]]; then
+  [[ -r /dev/tty ]] || die "confirmation requires TTY (or --yes)"
+  printf 'Old: %s\nNew: %s\nLegacy DB: backup, downtime and migrations required. Continue? [Y/n]: ' "$current_image" "$new_image" > /dev/tty
+  IFS= read -r answer < /dev/tty || true
+  [[ -n "$answer" ]] || answer=Y
+  [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]] || { log cancelled; exit 0; }
 fi
 
-if ! docker compose exec -T txboard php artisan txboard:install-status --no-interaction </dev/null >/dev/null; then
-  rollback || true
-  die "updated container failed installation-state validation"
-fi
+log "pulling target image BEFORE stopping writers..."
+docker pull "$new_image" || die "pull failed; current deployment unchanged"
+phase=before_stop
+attempted_migrate=0
+backup_path=""
+restore_image_without_db_change() {
+  warn "restarting the old image; no schema migration has been attempted"
+  set_image "$normalized_current_image"
+  docker image inspect "$old_image_id" >/dev/null 2>&1 || return 1
+  docker tag "$old_image_id" "$normalized_current_image" || return 1
+  docker compose up -d --no-deps --force-recreate --wait txboard &&
+    docker compose exec -T txboard php artisan txboard:install-status --no-interaction </dev/null
+}
+upgrade_on_exit() {
+  local code="$1"
+  trap - EXIT
+  if (( code == 0 )); then return 0; fi
+  if [[ "$phase" == before_stop || "$phase" == complete ]]; then return "$code"; fi
+  if (( attempted_migrate == 0 )); then
+    restore_image_without_db_change || warn "old container restart failed; manual recovery required"
+  else
+    warn "Schema migration may have modified the database. NEVER boot an old image against it."
+    warn "TXBoard remains stopped; inspect the database and restore a verified compatible backup before downgrading."
+    warn "Backup archive: $backup_path"
+  fi
+  return "$code"
+}
+trap 'upgrade_on_exit $?' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-log "update completed: $new_image"
+log "stopping TXBoard, embedded queue workers, WebSocket and scheduled writers..."
+docker compose stop txboard || die "could not stop TXBoard"
+phase=frozen
+schema_preflight
+before="$(critical_snapshot)" || die "critical snapshot query failed"
+[[ -n "$before" ]] || die "empty critical snapshot"
+
+# A separate one-shot dump with retention disabled, not the rolling backup.
+old_backup="$(find "$INSTALL_DIR/backups" -mindepth 1 -maxdepth 1 -type d -name '????????T??????Z' -printf '%f\n' 2>/dev/null | sort | tail -1 || true)"
+log "creating mandatory full backup (database, APP_KEY, persistent files)"
+docker compose run -T --rm -e BACKUP_INTERVAL=0 -e BACKUP_RETENTION=0 backup </dev/null ||
+  die "pre-migration backup failed"
+new_backup="$(find "$INSTALL_DIR/backups" -mindepth 1 -maxdepth 1 -type d -name '????????T??????Z' -printf '%f\n' 2>/dev/null | sort | tail -1 || true)"
+[[ -n "$new_backup" && "$new_backup" != "$old_backup" ]] || die "backup did not create a new archive"
+backup_path="$INSTALL_DIR/backups/$new_backup"
+(cd "$backup_path" && test -s env && test -s db.sql.gz && test -s MANIFEST && test -s CHECKSUMS.sha256 && sha256sum -c CHECKSUMS.sha256 && gzip -t db.sql.gz) ||
+  die "backup archive checksum or gzip validation failed"
+log "backup archive verified: $backup_path (separate restoration rehearsal is still needed)"
+
+set_image "$new_image"
+phase=migrate
+attempted_migrate=1
+log "running normal Laravel schema migrations using the TARGET image..."
+target_artisan migrate --force || die "Laravel migrations failed; manual database recovery required"
+migration_status="$(target_artisan migrate:status)" || die "cannot inspect migration status"
+if grep -Eiq '(^|[[:space:]])Pending([[:space:]]|$)' <<< "$migration_status"; then
+  die "migrations remain pending"
+fi
+after="$(critical_snapshot)" || die "post-migration snapshot failed"
+[[ "$after" == "$before" ]] || die "critical user/order/balance aggregates changed during schema upgrade"
+phase=post_migrate
+log "schema and financial invariants checked; recreating TXBoard..."
+docker compose up -d --no-deps --force-recreate --wait txboard ||
+  die "new image health check failed after migration"
+docker compose exec -T txboard php artisan txboard:install-status --no-interaction </dev/null ||
+  die "new image install-state check failed"
+phase=complete
+log "upgrade passed: $new_image; retained v2_* schema; archive=$backup_path"
 refresh_tools
 docker compose ps txboard
