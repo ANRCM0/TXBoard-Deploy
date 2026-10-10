@@ -5,9 +5,7 @@ INSTALL_DIR="${TXBOARD_INSTALL_DIR:-/opt/txboard}"
 IMAGE_TAG=""
 SKIP_BACKUP=0
 ASSUME_YES=0
-CUTOVER_PLAN=""
 SCHEMA_KIND=""
-UPGRADE_MODE=""
 DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main}"
 
 log() { printf '[TXBoard Deploy] %s\n' "$*"; }
@@ -25,8 +23,8 @@ Options:
   --dir PATH       Install directory (default: /opt/txboard)
   --tag TAG        Switch ghcr.io/anrcm0/txboard to a different tag
   --skip-backup    Not permitted during schema-safe updates
-  --yes            Unattended: keep legacy v2_* names; native tx_* upgrades automatically
-  --cutover-plan PATH  Host path to an independently reviewed/approved rename plan
+  --yes            Unattended native TXBoard upgrade (rejects legacy v2_* schemas)
+  --cutover-plan PATH  Retired (use the isolated XBoard import workflow)
   -h, --help       Show this help
 EOF
 }
@@ -37,7 +35,7 @@ while [[ $# -gt 0 ]]; do
     --tag) IMAGE_TAG="${2:?missing value for --tag}"; shift 2 ;;
     --skip-backup) SKIP_BACKUP=1; shift ;;
     --yes) ASSUME_YES=1; shift ;;
-    --cutover-plan) CUTOVER_PLAN="${2:?missing value for --cutover-plan}"; shift 2 ;;
+    --cutover-plan) die "legacy in-place cutover is retired; import into a separate empty TXBoard database instead" ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
@@ -183,20 +181,15 @@ detect_schema() {
   read -r v2 tx v2user v2settings v2order txuser txsettings txorder history <<< "$inventory"
   [[ "$v2" =~ ^[0-9]+$ && "$tx" =~ ^[0-9]+$ && "$history" == 1 ]] ||
     die "empty/unknown database or missing Laravel migration history"
-  if (( v2 > 0 && tx == 0 && v2user == 1 && v2settings == 1 && v2order == 1 )); then
-    SCHEMA_KIND=legacy
-  elif (( tx > 0 && v2 == 0 && txuser == 1 && txsettings == 1 && txorder == 1 )); then
-    SCHEMA_KIND=native
-  else
-    die "mixed/incomplete database detected (v2=$v2, tx=$tx): refusing automatic upgrade"
+  if (( v2 > 0 )); then
+    die "legacy v2_* schema detected; do NOT upgrade in place with a native-only TXBoard image. Use the isolated XBoard import workflow."
   fi
-  flag="$(sed -n 's/^TX_NATIVE_TABLES=//p' api.env | tail -1 | tr -d "'\" ")"
-  case "$SCHEMA_KIND:$flag" in
-    legacy:''|legacy:false|legacy:FALSE|legacy:0) ;;
-    native:true|native:TRUE|native:1) ;;
-    *) die "schema is $SCHEMA_KIND but TX_NATIVE_TABLES in api.env is '$flag': resolve config before upgrade" ;;
-  esac
-  log "数据库检查通过：模式=$SCHEMA_KIND；旧表=$v2，新表=$tx，配置匹配"
+  if (( tx == 0 || txuser != 1 || txsettings != 1 || txorder != 1 )); then
+    die "incomplete or unknown native database (v2=$v2, tx=$tx); refusing upgrade"
+  fi
+  SCHEMA_KIND=native
+  log "Native tx_* schema verified (tables=$tx); starting guarded upgrade"
+
 }
 require_schema() {
   local want="$1"
@@ -208,40 +201,12 @@ require_schema() {
 # is printed to logs. Counts/aggregates must remain equal across the update.
 
 critical_snapshot() {
-  local prefix=v2
-  [[ "$SCHEMA_KIND" == native ]] && prefix=tx
-  db_sql "SELECT (SELECT COUNT(*) FROM ${prefix}_user), (SELECT COALESCE(SUM(balance),0) FROM ${prefix}_user), (SELECT COALESCE(SUM(commission_balance),0) FROM ${prefix}_user), (SELECT COUNT(*) FROM ${prefix}_order), (SELECT COALESCE(SUM(total_amount),0) FROM ${prefix}_order)"
+  db_sql "SELECT (SELECT COUNT(*) FROM tx_user), (SELECT COALESCE(SUM(balance),0) FROM tx_user), (SELECT COALESCE(SUM(commission_balance),0) FROM tx_user), (SELECT COUNT(*) FROM tx_order), (SELECT COALESCE(SUM(total_amount),0) FROM tx_order)"
 }
 target_artisan() {
   docker compose run -T --rm --no-deps \
     -e CACHE_DRIVER=array -e SETTING_CACHE_STORE=array -e QUEUE_CONNECTION=sync -e SESSION_DRIVER=array \
     --entrypoint php txboard /www/artisan "$@" --no-interaction </dev/null
-}
-
-cutover_artisan() {
-  local mode="$1"; shift
-  local -a approval=()
-  if [[ "$mode" == execute ]]; then
-    approval=(-e TXBOARD_CUTOVER_APPROVED=1 -e TXBOARD_BACKUP_VERIFIED=1)
-  fi
-  docker compose run -T --rm --no-deps \
-    -v "$CUTOVER_PLAN:/tmp/txboard-reviewed-cutover.json:ro" \
-    -e CACHE_DRIVER=array -e SETTING_CACHE_STORE=array -e QUEUE_CONNECTION=sync -e SESSION_DRIVER=array \
-    "${approval[@]}" --entrypoint php txboard /www/artisan txboard:database-cutover \
-    --plan=/tmp/txboard-reviewed-cutover.json --direction=up "$@" --no-interaction </dev/null
-}
-
-set_native_flag() {
-  local tmp
-  tmp="$(mktemp "$INSTALL_DIR/.api-env.XXXXXXXX")"
-  awk '
-    BEGIN { found=0 }
-    /^TX_NATIVE_TABLES=/ { print "TX_NATIVE_TABLES=true"; found=1; next }
-    { print }
-    END { if (!found) print "TX_NATIVE_TABLES=true" }
-  ' api.env > "$tmp" || { rm -f "$tmp"; return 1; }
-  chmod --reference=api.env "$tmp" 2>/dev/null || chmod 600 "$tmp"
-  mv "$tmp" api.env
 }
 
 # Do not infer ownership from Compose ps alone: another directory/project may
@@ -252,75 +217,6 @@ container_id="$TXBOARD_DETECT_TARGET_ID"
 old_image_id="$TXBOARD_DETECT_TARGET_IMAGE"
 [[ "$old_image_id" == sha256:* ]] || die "could not pin old running image"
 detect_schema
-# Database migration mode is selected once from the detected LIVE schema.
-# Native tx_* databases skip all legacy questions; legacy mode defaults to keeping v2_*.
-load_cutover_review_module() {
-  local src_dir tmp
-  src_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
-  if [[ -n "$src_dir" && -f "$src_dir/lib/cutover-plan.sh" ]]; then
-    source "$src_dir/lib/cutover-plan.sh"
-    return
-  fi
-  tmp="$(mktemp)" || die "无法建立临时文件"
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$DEPLOY_RAW_BASE/lib/cutover-plan.sh" -o "$tmp" ||
-      { rm -f "$tmp"; die "无法下载数据库审核模块"; }
-  elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$tmp" "$DEPLOY_RAW_BASE/lib/cutover-plan.sh" ||
-      { rm -f "$tmp"; die "无法下载数据库审核模块"; }
-  else
-    rm -f "$tmp"
-    die "缺少 curl/wget，无法下载数据库审核模块"
-  fi
-  bash -n "$tmp" || { rm -f "$tmp"; die "数据库审核模块格式不合法"; }
-  source "$tmp"
-  rm -f "$tmp"
-}
-UPGRADE_MODE="$SCHEMA_KIND"
-if [[ "$SCHEMA_KIND" == legacy ]]; then
-  if (( ASSUME_YES == 0 )); then
-    [[ -r /dev/tty ]] || die "旧数据库需要交互选择；无人值守模式请使用 --yes 保留原表名"
-    while :; do
-      printf '\n======= TXBoard 数据库升级 =======\n检测到旧版数据库 v2_*。\n\n  1) 安全升级，保留 v2_* 表名（推荐）\n  2) 自动生成、检查全量 tx_* 重命名计划\n  0) 退出，不修改数据\n\n请选择 [1]：' > /dev/tty
-      IFS= read -r choice < /dev/tty || true
-      case "${choice:-1}" in
-        1) UPGRADE_MODE=legacy; break ;;
-        2)
-          if [[ -n "$CUTOVER_PLAN" ]]; then
-            UPGRADE_MODE=cutover
-            break
-          fi
-          load_cutover_review_module
-          txboard_generate_cutover_review ||
-            die "自动审核失败；未停止服务，也未修改数据库"
-          printf '\n注意：当前 TXBoard 仍有原生 SQL、插件、后台任务等兼容性审核要求。\n尚未满足自动切换条件，因此不会跳过安全保护执行重命名。\n\n  1) 保留旧表名，正常升级\n  0) 退出（默认）\n\n请选择 [0]：' > /dev/tty
-          IFS= read -r fallback < /dev/tty || true
-          case "${fallback:-0}" in
-            1) UPGRADE_MODE=legacy; break ;;
-            0) log "已退出；仅创建只读审核报告，TXBoard 没有停机"; exit 0 ;;
-            *) die "选择无效，未修改数据库" ;;
-          esac ;;
-        0) log "已退出；未修改数据库"; exit 0 ;;
-        *) warn "无效选项，请选择 0、1 或 2" ;;
-      esac
-    done
-  fi
-  if [[ "$UPGRADE_MODE" == cutover ]]; then
-    [[ "$CUTOVER_PLAN" == /* && -f "$CUTOVER_PLAN" && -s "$CUTOVER_PLAN" && -r "$CUTOVER_PLAN" && ! -L "$CUTOVER_PLAN" ]] ||
-      die "生产切换必须提供已经独立审核过的有效计划文件"
-    CUTOVER_PLAN="$(realpath "$CUTOVER_PLAN")"
-    printf '\n正式切换必须确认：完整映射、原生代码与插件兼容、独立环境备份恢复演练。\n确认已完成独立审核请输入 REVIEWED：' > /dev/tty
-    IFS= read -r typed < /dev/tty || true
-    [[ "$typed" == REVIEWED ]] || die "未确认独立审核，操作取消"
-  elif [[ -n "$CUTOVER_PLAN" ]]; then
-    die "指定了计划文件却未选择正式切换，操作取消"
-  fi
-elif [[ -n "$CUTOVER_PLAN" ]]; then
-  die "当前已是 tx_* 数据库，不需要旧库转换计划"
-else
-  log "已检测到 tx_* 原生数据库，跳过旧库询问，进入常规升级"
-fi
-
 # Older TXBoard-Deploy installations had a backup.sh without CHECKSUMS and
 # without a strict failure contract. Upgrade that script before any downtime.
 if ! grep -Fq 'CHECKSUMS.sha256' "$INSTALL_DIR/backup.sh" 2>/dev/null; then
@@ -422,14 +318,6 @@ done
   cat CHECKSUMS.additional >> CHECKSUMS.sha256
   rm -f CHECKSUMS.additional
 ) || die "cannot checksum complete persistent files"
-if [[ "$UPGRADE_MODE" == cutover ]]; then
-  # Freeze the exact reviewed plan inside the immutable upgrade archive; never
-  # trust a mutable host file again after the stop/backup point.
-  cp -- "$CUTOVER_PLAN" "$backup_path/reviewed-plan.json" || die "could not snapshot reviewed rename plan"
-  chmod 600 "$backup_path/reviewed-plan.json"
-  (cd "$backup_path" && sha256sum reviewed-plan.json >> CHECKSUMS.sha256) || die "could not checksum reviewed plan"
-  CUTOVER_PLAN="$backup_path/reviewed-plan.json"
-fi
 (cd "$backup_path" && test -s env && test -s db.sql.gz && test -s MANIFEST && test -s CHECKSUMS.sha256 && sha256sum -c CHECKSUMS.sha256 && gzip -t db.sql.gz) ||
   die "backup archive checksum or gzip validation failed"
 log "backup archive verified: $backup_path (separate restoration rehearsal is still needed)"
@@ -440,29 +328,12 @@ attempted_migrate=1
 log "正在使用新镜像执行 Laravel 数据库结构迁移……"
 target_artisan migrate --force || die "Laravel migrations failed; manual database recovery required"
 require_schema "$SCHEMA_KIND"
-if [[ "$UPGRADE_MODE" == cutover ]]; then
-  log "checking exact, reviewed ALL-table mapping against post-migration v2_* schema..."
-  cutover_artisan dryrun || die "reviewed cutover plan rejected; no rename attempted"
-  printf "\nConfirmed full backup: %s\nProduction backup must have been RESTORED and checked on an isolated clone.\nType RESTORED to attest the recovery test succeeded: " "$backup_path" > /dev/tty
-  IFS= read -r recovery < /dev/tty || true
-  [[ "$recovery" == RESTORED ]] || die "restore verification not confirmed; no rename attempted"
-  log "enabling Laravel maintenance mode while all writers remain frozen..."
-  target_artisan down || die "could not enter Laravel maintenance mode; rename cancelled"
-  log "executing ONE atomic MySQL multi-table rename with approved plan..."
-  cutover_artisan execute --execute || die "native cutover command failed; inspect schema and backup before recovery"
-  set_native_flag || die "cutover succeeded but api.env could not switch to TX_NATIVE_TABLES=true; keep writers stopped"
-  require_schema native
-  target_artisan config:clear || die "cannot clear Laravel config cache after native cutover"
-fi
 migration_status="$(target_artisan migrate:status)" || die "cannot inspect migration status"
 if grep -Eiq '(^|[[:space:]])Pending([[:space:]]|$)' <<< "$migration_status"; then
   die "migrations remain pending"
 fi
 after="$(critical_snapshot)" || die "post-migration snapshot failed"
 [[ "$after" == "$before" ]] || die "critical user/order/balance aggregates changed during schema upgrade"
-if [[ "$UPGRADE_MODE" == cutover ]]; then
-  target_artisan up || die "cannot exit Laravel maintenance mode after confirmed native cutover"
-fi
 phase=post_migrate
 log "数据库结构和核心余额校验通过，正在启动新版 TXBoard……"
 docker compose up -d --no-deps --force-recreate --wait txboard ||
@@ -470,6 +341,6 @@ docker compose up -d --no-deps --force-recreate --wait txboard ||
 docker compose exec -T txboard php artisan txboard:install-status --no-interaction </dev/null ||
   die "new image install-state check failed"
 phase=complete
-log "升级完成：镜像=$new_image，数据库=$SCHEMA_KIND，备份=$backup_path"
+log "升级完成：镜像=$new_image，数据库=native，备份=$backup_path"
 refresh_tools
 docker compose ps txboard
