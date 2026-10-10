@@ -11,10 +11,10 @@ echo "$*" >> "$MOCK_EVENTS"
 case " $* " in
   *" compose version "*) exit 0 ;;
   *" ps -a --no-trunc --format "*) echo fake-container ;;
-  *" inspect -f "*" fake-container "*) printf 'fake-container|/txboard-txboard-1|running|healthy|txboard|txboard|%s|%s/compose.yaml|ghcr.io/anrcm0/txboard:latest|sha256:oldimage\n' "$MOCK_DIR" "$MOCK_DIR" ;;
+  *inspect*--type*container*fake-container*) printf 'fake-container|/txboard-txboard-1|running|healthy|txboard|txboard|%s|%s/compose.yaml|ghcr.io/anrcm0/txboard:latest|sha256:oldimage\n' "$MOCK_DIR" "$MOCK_DIR" ;;
   *" compose ps -a -q txboard "*) echo fake-container ;;
   *" compose ps -q txboard "*) echo fake-container ;;
-  *" inspect fake-container "*) echo sha256:oldimage ;;
+  *inspect*fake-container*) echo sha256:oldimage ;;
   *" compose run "*"--entrypoint sh backup "*)
     if [[ "$*" == *information_schema* ]]; then
       case "$MOCK_SCHEMA" in
