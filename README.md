@@ -410,11 +410,40 @@ txboard:install-status
 
 更新器会记录更新前正在运行容器的 image ID。即使使用的是会移动的 `latest` 标签，更新失败时也会尝试把旧 image ID 重新标记回原标签后启动，因此不是只做字符串级的 tag 回退。
 
-不希望更新前自动备份：
+数据库感知升级**不允许**跳过完整备份：`--skip-backup` 会被明确拒绝，避免在不可逆迁移之后无法恢复。
+
+## 旧版数据库安全升级（自动执行常规 Migration）
+
+`sudo txboard update <tag>` / `update.sh --tag <tag>` 现在对**已安装、正在运行且仍使用 `v2_*` 表**的数据库执行受控升级。**不会自动把 `v2_*` 改名为 `tx_*`**。
+
+**首次升级历史安装器时请注意：**旧安装器的 `txboard update` 可能仍执行安装目录中缓存的旧 `update.sh`。为保证首次升级也使用数据库安全检查，先在宿主机下载并检查新版更新脚本，再执行一次：
 
 ```bash
-sudo bash update.sh --skip-backup
+curl -fL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/update.sh -o /tmp/txboard-safe-update.sh
+bash -n /tmp/txboard-safe-update.sh
+sudo bash /tmp/txboard-safe-update.sh --dir /opt/txboard --tag latest
 ```
+
+如果安装目录不是 `/opt/txboard`，请替换实际路径。首次升级成功后管理器会更新，后续使用 `sudo txboard update latest` 即可；新版管理器在升级前会主动获取并验证最新的更新器，避免再次运行过时的本地脚本。建议在预发环境恢复旧库并演练迁移后再执行上述命令。
+
+升级顺序：MySQL 只读预检 → 拉取目标镜像 → 停止 TXBoard（包括同容器的队列、WebSocket、计划任务写入）→ 再次预检 → 记录用户/订单/余额基准 → 旧数据库/APP_KEY/上传/插件/主题完整备份及 SHA-256 检验 → 用**目标镜像的独立 Artisan 容器**执行 `migrate --force` → 检查待执行迁移、表结构与关键财务汇总 → 重建 TXBoard 并检查健康和安装状态。
+
+- 普通旧库（`v2_user`、`v2_settings`、`v2_order` 和 `migrations` 记录完整）：自动更新到最新常规结构，同时保持 `TX_NATIVE_TABLES=false`。
+- 已有 `tx_*` 表、混合表名、空库、缺少迁移记录或设置了 `TX_NATIVE_TABLES=true`：**拒绝自动更新**，必须依照 [原生表名切换 Runbook](https://github.com/ANRCM0/TXBoard/blob/main/docs/operations/native-mysql-table-cutover.md) 人工处理。
+- 不允许通过 `--skip-backup` 绕过强制备份；现有旧安装器生成的弱校验备份脚本会先升级为严格版本。升级备份不会被常规保留数量清理。
+- 备份校验包括压缩包、哈希、APP_KEY、Docker 部署配置及上传/主题/插件（存在时）。**完整恢复能力仍应在升级前于独立预发数据库演练**，哈希校验本身不能代替恢复测试。
+- 迁移尚未开始而失败，可以尝试恢复原容器镜像；**一旦开始执行迁移，不自动回滚旧镜像、不对生产 MySQL 做破坏性导入**。失败时 TXBoard 保持停止，报告备份位置，必须评估和恢复数据库后再使用匹配的旧镜像。外部/1Panel MySQL 需由数据库管理员恢复。
+- 不支持跨实例或外挂插件/队列写入自动冻结；如存在第三方写入方，升级前须人工停止并使用生产维护窗口。余额/订单汇总校验不是完整的生产级财务对账。
+
+```bash
+# 正式稳定版本更新；确保目标镜像确实发布了新代码
+sudo txboard update latest
+
+# 预发测试优先使用开发镜像（不要直接对生产库使用）
+sudo txboard update dev
+```
+
+备份保存于 `/opt/txboard/backups/<UTC时间戳>/`（如果使用自定义安装目录，以实际路径为准）。切勿因为 Docker healthcheck 成功就跳过迁移状态、支付与节点数据的验收。
 
 ## 无人值守安装
 

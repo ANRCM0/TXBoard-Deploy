@@ -44,11 +44,19 @@ run_install() {
 run_update() {
   local -a args=(--dir "$TXBOARD_INSTALL_DIR")
   [[ -n "${1:-}" ]] && args+=(--tag "$1")
-  if [[ -f "$SCRIPT_DIR/update.sh" ]]; then
-    bash "$SCRIPT_DIR/update.sh" "${args[@]}"
-  else
-    fetch "$TXBOARD_DEPLOY_RAW_BASE/update.sh" | bash -s -- "${args[@]}"
+  # Always fetch the current database-aware upgrader. A stale local updater
+  # could otherwise replace the image without checking schema or backups.
+  local tmp
+  tmp="$(mktemp "${TXBOARD_INSTALL_DIR}/.safe-update.XXXXXXXX")"
+  if ! fetch "$TXBOARD_DEPLOY_RAW_BASE/update.sh" > "$tmp" || ! bash -n "$tmp"; then
+    rm -f "$tmp"
+    die "cannot fetch/validate safe database-aware updater; refusing to run an older local updater"
   fi
+  chmod 700 "$tmp"
+  local status=0
+  bash "$tmp" "${args[@]}" || status=$?
+  rm -f "$tmp"
+  return "$status"
 }
 
 show_help() {
