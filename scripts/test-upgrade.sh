@@ -19,7 +19,11 @@ case "$line" in
   *" inspect fake-container "*) echo 'sha256:oldimage';;
   *" image inspect "*|*" tag "*|*" pull "*) ;;
   *" compose run "*"--entrypoint sh backup "*)
-    if [[ "$MOCK_SCHEMA" == mixed ]]; then
+    if [[ "$line" == *"SELECT TABLE_NAME FROM information_schema.TABLES"* ]]; then
+      printf 'v2_order\nv2_settings\nv2_user\n'
+    elif [[ "$line" == *"SELECT COUNT(*) FROM information_schema.TABLES"* ]]; then
+      printf '0\n'
+    elif [[ "$MOCK_SCHEMA" == mixed ]]; then
       printf '25\t2\t1\t1\t1\t1\t1\t1\t1\n'
     elif [[ ( "$MOCK_SCHEMA" == native || -f "$MOCK_DIR/native-converted" ) && "$line" == *information_schema* ]]; then
       printf '0\t25\t0\t0\t0\t1\t1\t1\t1\n'
@@ -100,6 +104,38 @@ update
 grep -Fq migration-attempted "$MOCK_EVENTS"
 grep -qx 'TX_NATIVE_TABLES=true' "$MOCK_DIR/api.env"
 ! grep -Fq 'txboard:database-cutover' "$MOCK_EVENTS"
+
+setup auto-review
+if command -v script >/dev/null 2>&1; then
+  printf "2\n0\n" | timeout 25s script -q -e -c "env TXBOARD_INSTALL_DIR=$MOCK_DIR bash $repo/update.sh --tag dev" /dev/null >"$tmp/auto-review.log" 2>&1 || {
+    tail -30 "$tmp/auto-review.log" >&2
+    echo "automatic read-only review failed" >&2; exit 1
+  }
+  draft="$(find "$MOCK_DIR/backups/cutover-plans" -name '*.json' -print -quit)"
+  test -s "$draft"
+  python3 - "$draft" <<'PY'
+import json,sys
+plan=json.load(open(sys.argv[1],encoding="utf-8"))
+assert not plan["executable"] and plan["requiresManualApproval"]
+assert not plan["blockers"] == []
+assert [x["from"] for x in plan["proposedRenames"]] == ["v2_order","v2_settings","v2_user"]
+PY
+  ! grep -Fq migration-attempted "$MOCK_EVENTS"
+  ! grep -Fq 'compose stop txboard' "$MOCK_EVENTS"
+  ! grep -Fq cutover-executed "$MOCK_EVENTS"
+  grep -Fq '未获得全量重命名生产授权' "$tmp/auto-review.log"
+fi
+
+setup auto-review-fallback
+if command -v script >/dev/null 2>&1; then
+  printf "2\n1\n" | timeout 40s script -q -e -c "env TXBOARD_INSTALL_DIR=$MOCK_DIR bash $repo/update.sh --tag dev" /dev/null >"$tmp/review-fallback" 2>&1 || {
+    tail -30 "$tmp/review-fallback" >&2
+    echo "safe fallback from review failed" >&2; exit 1
+  }
+  grep -Fq migration-attempted "$MOCK_EVENTS"
+  ! grep -Fq cutover-executed "$MOCK_EVENTS"
+  grep -qx 'TX_NATIVE_TABLES=false' "$MOCK_DIR/api.env"
+fi
 
 setup native-cutover
 plan="$MOCK_DIR/reviewed-plan.json"

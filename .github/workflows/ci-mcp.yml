@@ -27,9 +27,9 @@ jobs:
       - name: Check MCP deployment contract
         run: |
           grep -Fq 'TXBOARD_ENABLE_MCP=$MCP_ENABLED' install.sh
-          grep -Fq 'Enable MCP Gateway for AI Agents (Hermes / OpenClaw)?' install.sh
+          grep -Fq '启用 MCP 网关？' install.sh
           grep -Fq 'ENABLE_MCP: \${TXBOARD_ENABLE_MCP:-false}' install.sh
-          grep -Fq '5 MCP Gateway' lib/config.sh
+          grep -Fq '5 MCP 网关' lib/config.sh
           grep -Fq 'selected TXBoard image does not include the embedded MCP Gateway' install.sh
           grep -Fq "test -f /opt/txboard-mcp/dist/index.js' </dev/null >/dev/null" install.sh
 

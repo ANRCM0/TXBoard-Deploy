@@ -422,50 +422,29 @@ txboard:install-status
 
 数据库感知升级**不允许**跳过完整备份：`--skip-backup` 会被明确拒绝，避免在不可逆迁移之后无法恢复。
 
-## 镜像更新时的数据库自动识别与交互式切换
+## 中文交互式升级与数据库全量映射检查
 
-`sudo txboard update latest` 在更新镜像之前**只读检测当前实际 MySQL 表名**，按结果选择安全流程。数据库检测针对已有安装执行，不是每次应用容器重启时执行 DDL。
+升级和安装入口采用中文提示，优先检测当前运行中的 TXBoard 和数据库状态，再决定执行什么操作。仍可通过 `sudo txboard update latest` 更新镜像；如果旧版安装没有管理器，也可再次运行主安装命令，它会识别现有实例并提供“升级 / 退出”。
 
-| 检测结果 | 更新行为 |
-| --- | --- |
-| 完整 `tx_*`，`TX_NATIVE_TABLES=true` | 不再询问旧库转换，直接备份、执行当前镜像常规 Migration、校验并重启 |
-| 完整 `v2_*`，`TX_NATIVE_TABLES=false` | 交互显示 `1` 保留 `v2_*` 升级（默认）、`2` 审批后全量切换 `tx_*`、`0` 退出 |
-| 空库、混合/不完整表、配置和表名不一致 | 阻止自动升级，不做 DDL |
-
-旧库交互菜单：
+对于已切换为 `tx_*` 的数据库，跳过旧表名选项，正常检查备份和 Migration。对于 `v2_*` 数据库，交互选择：
 
 ```text
-1) Upgrade application; KEEP v2_* table names (recommended)
-2) Upgrade and rename ALL tables to tx_* (approved plan + verified restore required)
-0) Cancel
-Choice [1]:
+======= TXBoard 数据库升级 =======
+检测到旧版数据库 v2_*。
+
+1) 安全升级，保留 v2_* 表名（推荐）
+2) 自动生成、检查全量 tx_* 重命名计划
+0) 退出，不修改数据
 ```
 
-选择 **1**：常规 Migration，原表名保留；自动备份数据库、APP_KEY、上传、插件与主题，校验账务数据和服务健康。选择 **2**：首先升级完整旧库，再用**已独立审核**的计划检查所有现存表的 `v2_* → tx_*` 映射，完成备份、在隔离环境实际恢复验证、Laravel 维护模式和明确审批后，才执行一次原子重命名，再设置 `TX_NATIVE_TABLES=true`、核验表与财务汇总、启动新版容器。插件、原生查询、支付回调、流量结算与旧版本兼容必须在预发副本完成业务验收。
+**选择 2 不再要求输入 JSON 文件路径。** 脚本会用只读 SQL 列出当前全部 `v2_*` 基础表，自动构造 `tx_*` 映射，检查是否存在 `tx_*` 目标冲突，保存报告至安装目录下的 `backups/cutover-plans/review-*.json`，并在屏幕用中文报告当前是否能安全执行。
 
-一个已审核计划的路径可以在交互菜单中输入，也可将其作为**宿主机绝对路径**传给脚本：
+**当前 TXBoard 源码的原生 SQL、后台任务、外部插件及真实备份恢复没有完成全部生产审批，因此自动生成的计划是不可执行的审核草稿。** 这个状态不能因用户选择 2 而强制改成已批准。脚本会给用户选择“保留旧表名正常升级”或“退出”，两者都不会执行重命名。数据库备份、Laravel Migration、状态校验等常规升级步骤继续自动化。
 
-```bash
-sudo bash /opt/txboard/update.sh --tag latest --cutover-plan /secure/reviewed-plan.json
-```
+已经经过独立审核和恢复演练的特殊实例仍可使用 `--cutover-plan /absolute/reviewed.json` 进入原有正式切换流程，并通过额外明确审批；绝不通过自动生成草稿伪造 `executable=true`。全量切换的前提和回滚规范见 [TXBoard 原生表名切换手册](https://github.com/ANRCM0/TXBoard/blob/main/docs/operations/native-mysql-table-cutover.md)。
 
-计划必须符合 [TXBoard 数据库全命名切换规范](https://github.com/ANRCM0/TXBoard/blob/main/docs/operations/native-mysql-table-cutover.md) 的全部要求：`schemaVersion=1`、`kind=native-table-cutover-plan`、`executable=true`、`requiresManualApproval=false`、`blockers=[]`，并且完整涵盖迁移之后的全部现存旧表。**内置自动计划生成器只输出不可执行的审核草稿，绝不可为运行方便自行改写审批字段。**
+无人值守模式 `--yes` 永远为旧库保留 `v2_*`，不自动执行全库改名。备份失败、混合表名或数据异常则停止升级。
 
-**重要：目前 `TX_NATIVE_TABLES` 并不能自动修复第三方插件与全部硬编码 SQL。选择 2 不代表 TXBoard 已通过所有生产环境兼容性审查；尚未完成完整审核和真实恢复演练时请选 1。**
-
-`--yes` 无人值守对旧库只执行选项 1，不允许默许重命名；新 `tx_*` 库则无需提示。对 `tx_*` 执行新 Migration 之后，也会再次严格检查不能意外产生 `v2_*` 表，出现混合状态则停止服务并报告备份路径。
-
-升级期间会停止 TXBoard 同容器 Web/队列/WS 写入，保留校验过的非轮转备份、哈希、镜像回退 ID。只有在**尚未尝试修改数据库**的失败情形下，才自动恢复旧镜像；执行过迁移或重命名之后，失败时保持停机，绝不强制将旧镜像启动到新数据库上。外部支付回调、插件或独立写入程序仍需运维方提前停用，且数据库备份文件必须定期演练可恢复性。
-
-对于使用早期版本安装器的旧用户，首次执行本地 `txboard update` 可能仍会运行过时更新脚本。建议先下载新版 `update.sh`、做 `bash -n` 验证并从宿主机调用一次；新管理器之后会在升级前主动获取当前安全更新器：
-
-```bash
-curl -fL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/update.sh -o /tmp/txboard-update.sh
-bash -n /tmp/txboard-update.sh
-sudo bash /tmp/txboard-update.sh --dir /opt/txboard --tag latest
-```
-
-开发版本使用 `--tag dev`；它必须已由 GitHub Actions 成功发布。不应直接把未经预发验证的 dev 镜像和全量重命名应用到生产数据库。
 
 ## 无人值守安装
 

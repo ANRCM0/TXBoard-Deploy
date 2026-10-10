@@ -13,13 +13,13 @@ def at(needle):
     assert needle in s, 'missing installer step: '+needle
     return s.index(needle)
 # Always discover before new-install prompts, admin email or database setup.
-assert at('txboard_detect_scan "$INSTALL_DIR" || die "Docker service discovery failed"') < at('INSTALL_DIR="$(prompt "Installation directory" "$INSTALL_DIR")"')
-assert at('INSTALL_DIR="$(prompt "Installation directory" "$INSTALL_DIR")"') < at('if [[ -z "$MODE" ]]; then')
+assert at('txboard_detect_scan "$INSTALL_DIR" || die "Docker service discovery failed"') < at('INSTALL_DIR="$(prompt "安装目录" "$INSTALL_DIR")"')
+assert at('INSTALL_DIR="$(prompt "安装目录" "$INSTALL_DIR")"') < at('if [[ -z "$MODE" ]]; then')
 assert at('txboard_guard_install "$INSTALL_DIR"') < at('if [[ -z "$MODE" ]]; then')
-assert at('if [[ -z "$MODE" ]]; then') < at('ADMIN_EMAIL="$(prompt "Administrator email"')
-assert at('ADMIN_EMAIL="$(prompt "Administrator email"') < at('configure_database\n')
-assert at('confirm "Continue installation?"') < at('if install_dir_has_content; then\n  clean_existing_install_dir\nfi')
-assert at('confirm "Continue installation?"') < at('docker volume rm "$LOCAL_DB_VOLUME"')
+assert at('if [[ -z "$MODE" ]]; then') < at('ADMIN_EMAIL="$(prompt "管理员邮箱"')
+assert at('ADMIN_EMAIL="$(prompt "管理员邮箱"') < at('configure_database\n')
+assert at('confirm "确认以上配置并开始安装？"') < at('if install_dir_has_content; then\n  clean_existing_install_dir\nfi')
+assert at('confirm "确认以上配置并开始安装？"') < at('docker volume rm "$LOCAL_DB_VOLUME"')
 assert at('verify_database_connectivity\nverify_database_empty_for_install') < at('docker compose up -d --remove-orphans txboard')
 assert 'docker compose down --remove-orphans </dev/null' not in s
 print('installer ordering and deferred destructive actions: passed')

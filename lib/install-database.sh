@@ -190,7 +190,7 @@ EOF
         ((i++))
       done
       if (("${#candidates[@]}" > 1)); then
-        pick="$(choose "Database container" "1" "${#candidates[@]}")"
+        pick="$(choose "数据库容器" "1" "${#candidates[@]}")"
       fi
     elif (("${#candidates[@]}" > 1)); then
       die "multiple MySQL/MariaDB containers detected; set TXBOARD_DB_CONTAINER or --db-container"
@@ -198,8 +198,8 @@ EOF
     IFS=$'\t' read -r container_id container_name _ <<< "${candidates[$((pick-1))]}"
   fi
 
-  DB_DATABASE="$(prompt "Database name" "${DB_DATABASE:-txboard}")"
-  DB_USERNAME="$(prompt "Database username" "${DB_USERNAME:-txboard}")"
+  DB_DATABASE="$(prompt "数据库名称" "${DB_DATABASE:-txboard}")"
+  DB_USERNAME="$(prompt "数据库用户名" "${DB_USERNAME:-txboard}")"
   [[ "$DB_DATABASE" =~ ^[A-Za-z0-9_]+$ ]] || die "invalid database name: $DB_DATABASE"
   [[ "$DB_USERNAME" =~ ^[A-Za-z0-9_]+$ ]] || die "host database username must contain only letters, digits, and underscore"
   DB_PASSWORD="${DB_PASSWORD:-$(random_hex)}"
@@ -217,7 +217,7 @@ EOF
     if [[ "$ASSUME_YES" -eq 1 ]]; then
       die "cannot administer MySQL container $container_name after waiting for it to become ready; set TXBOARD_DB_ADMIN_PASSWORD if its root password is not exposed in the container environment"
     fi
-    root_password="$(prompt_secret "MySQL root/admin password for $container_name" "")"
+    root_password="$(prompt_secret "MySQL 管理员密码（容器） $container_name" "")"
     wait_mysql_container_admin "$container_id" "$root_password" ||
       die "cannot authenticate as root in MySQL container $container_name"
   fi
@@ -256,7 +256,7 @@ setup_host_system_mysql() {
   if ! system_socket="$(mysql_system_resolve_socket "$client" "")"; then
     root_password="$DB_ADMIN_PASSWORD"
     if [[ -z "$root_password" && "$ASSUME_YES" -eq 0 ]]; then
-      root_password="$(prompt_secret "System MySQL root/admin password" "")"
+      root_password="$(prompt_secret "本机 MySQL 管理员密码" "")"
     fi
     [[ -n "$root_password" ]] ||
       die "system MySQL requires admin credentials; set TXBOARD_DB_ADMIN_PASSWORD"
@@ -271,8 +271,8 @@ setup_host_system_mysql() {
     log "using system MySQL client default socket"
   fi
 
-  DB_DATABASE="$(prompt "Database name" "${DB_DATABASE:-txboard}")"
-  DB_USERNAME="$(prompt "Database username" "${DB_USERNAME:-txboard}")"
+  DB_DATABASE="$(prompt "数据库名称" "${DB_DATABASE:-txboard}")"
+  DB_USERNAME="$(prompt "数据库用户名" "${DB_USERNAME:-txboard}")"
   [[ "$DB_DATABASE" =~ ^[A-Za-z0-9_]+$ ]] || die "invalid database name: $DB_DATABASE"
   [[ "$DB_USERNAME" =~ ^[A-Za-z0-9_]+$ ]] || die "host database username must contain only letters, digits, and underscore"
   DB_PASSWORD="${DB_PASSWORD:-$(random_hex)}"
@@ -346,7 +346,7 @@ setup_host_database() {
   if [[ "$ASSUME_YES" -eq 0 && -n "$system_client" && "${#container_candidates[@]}" -gt 0 ]]; then
     cat > /dev/tty <<'EOF'
 
-Detected MySQL/MariaDB instances on this server:
+检测到本机可使用的 MySQL/MariaDB 实例：
 EOF
     local i=1
     for line in "${container_candidates[@]}"; do
@@ -357,7 +357,7 @@ EOF
     printf '  %d) System/local: %s\n' "$i" "$system_client" > /dev/tty
 
     max_choice="$i"
-    pick="$(choose "Host database" "1" "$max_choice")"
+    pick="$(choose "本机数据库" "1" "$max_choice")"
     if (( pick <= ${#container_candidates[@]} )); then
       IFS=$'\t' read -r _ container_name _ <<< "${container_candidates[$((pick-1))]}"
       DB_CONTAINER="$container_name"
@@ -382,14 +382,14 @@ configure_database() {
     else
       cat > /dev/tty <<'EOF'
 
-Choose database mode:
-  1) Managed MySQL 8.4 container
-  2) MySQL on this server (auto-detect system / 1Panel / Docker)
-  3) External MySQL server
+请选择数据库类型：
+  1) 自动创建 MySQL 8.4 容器（推荐新安装）
+  2) 使用本机已有 MySQL（系统 / 1Panel / Docker）
+  3) 使用远程 MySQL 数据库
 
 EOF
       local db_choice
-      db_choice="$(choose "Database" "1" "3")"
+      db_choice="$(choose "数据库" "1" "3")"
       case "$db_choice" in
         1) DB_MODE="local" ;;
         2) DB_MODE="host" ;;
@@ -415,7 +415,7 @@ EOF
         else
           cat > /dev/tty <<EOF
 
-Existing TXBoard managed MySQL volume detected:
+检测到已有 TXBoard MySQL 数据卷：
 
   $LOCAL_DB_VOLUME
 
@@ -424,7 +424,7 @@ Continuing with newly generated passwords would make the application fail
 authentication and can hide an existing database from the new deployment.
 
 EOF
-          if confirm "Delete this database volume and continue with a completely fresh install? ALL DATABASE DATA WILL BE LOST." "N"; then
+          if confirm "确认删除旧数据库卷并重新安装？这将永久删除其中全部数据！" "N"; then
             warn "managed MySQL volume reset approved; actual deletion is deferred until final install confirmation"
             LOCAL_DB_RESET_PENDING=1
           else
@@ -439,20 +439,20 @@ EOF
     host)
       if [[ "$ASSUME_YES" -eq 0 ]]; then
         warn "host MySQL setup may create a database, user and grants before the final deployment summary"
-        confirm "Proceed with host MySQL provisioning? (never replaces existing database tables)" "N" ||
+        confirm "确认初始化本机 MySQL 数据库及权限？（检测到已有表则禁止操作）" "N" ||
           die "host database provisioning cancelled without modifying MySQL"
       fi
       setup_host_database
       ;;
     external)
-      DB_HOST="$(prompt "External MySQL host" "$DB_HOST")"
-      DB_PORT="$(prompt "External MySQL port" "${DB_PORT:-3306}")"
-      DB_DATABASE="$(prompt "Database name" "${DB_DATABASE:-txboard}")"
-      DB_USERNAME="$(prompt "Database username" "$DB_USERNAME")"
+      DB_HOST="$(prompt "远程 MySQL 地址" "$DB_HOST")"
+      DB_PORT="$(prompt "远程 MySQL 端口" "${DB_PORT:-3306}")"
+      DB_DATABASE="$(prompt "数据库名称" "${DB_DATABASE:-txboard}")"
+      DB_USERNAME="$(prompt "数据库用户名" "$DB_USERNAME")"
       if [[ "$ASSUME_YES" -eq 1 && -z "$DB_PASSWORD" ]]; then
         die "external database mode requires TXBOARD_DB_PASSWORD or --db-password"
       fi
-      DB_PASSWORD="$(prompt_secret "Database password" "$DB_PASSWORD")"
+      DB_PASSWORD="$(prompt_secret "数据库密码" "$DB_PASSWORD")"
       [[ -n "$DB_HOST" && ! "$DB_HOST" =~ [[:space:]] ]] || die "invalid external database host"
       valid_port "$DB_PORT" || die "invalid external database port: $DB_PORT"
       [[ "$DB_DATABASE" =~ ^[A-Za-z0-9_]+$ ]] || die "invalid database name: $DB_DATABASE"
@@ -464,7 +464,7 @@ EOF
           die "external database host '$DB_HOST' resolves inside the TXBoard container, not to the Docker host. Use host mode for MySQL running on this server."
         fi
         warn "external DB host $DB_HOST points to the TXBoard container itself"
-        if confirm "Switch to automatic host-MySQL mode instead?" "Y"; then
+        if confirm "是否切换为自动识别本机 MySQL 模式？" "Y"; then
           DB_MODE="host"
           DB_HOST=""
           setup_host_database

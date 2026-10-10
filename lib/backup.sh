@@ -24,7 +24,7 @@ backup_pick() {
   for i in "${!items[@]}"; do
     printf '%d) %s\n' "$((i+1))" "${items[$i]}" > /dev/tty
   done
-  choice="$(choose "Backup" "1" "${#items[@]}")"
+  choice="$(choose "请选择备份" "1" "${#items[@]}")"
   ((choice > 0)) || return 1
   printf '%s' "${items[$((choice-1))]}"
 }
@@ -40,7 +40,7 @@ backup_restore() {
   path="$TXBOARD_INSTALL_DIR/backups/$name"
   gzip -t "$path/db.sql.gz" || die "corrupt database backup"
 
-  confirm "Restore $name? A safety backup will be created first." "N" || return 0
+  confirm "确认恢复 $name？系统将先创建安全备份。" "N" || return 0
   backup_safety
 
   db="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_DATABASE)"; db="${db:-txboard}"
@@ -83,17 +83,17 @@ backup_restore() {
 backup_menu() {
   local choice name value
   while true; do
-    choice="$(choose "1 create  2 list  3 restore  4 delete  5 retention  0 back" "1" "5")"
+    choice="$(choose "1 创建备份  2 查看列表  3 恢复  4 删除  5 保留数量  0 返回" "1" "5")"
     case "$choice" in
       1) backup_create; pause ;;
       2) backup_list; pause ;;
       3) backup_restore; pause ;;
       4)
         name="$(backup_pick)" || continue
-        confirm "Delete $name?" "N" && rm -rf "$TXBOARD_INSTALL_DIR/backups/$name"
+        confirm "确定删除备份 $name 吗？" "N" && rm -rf "$TXBOARD_INSTALL_DIR/backups/$name"
         ;;
       5)
-        value="$(prompt "Retention (0=keep all)" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION)")"
+        value="$(prompt "保留备份数量（0 为全部保留）" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION)")"
         [[ "$value" =~ ^[0-9]+$ ]] || { warn "invalid retention"; continue; }
         env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION "$value"
         docker_ok
