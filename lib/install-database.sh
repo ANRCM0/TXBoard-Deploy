@@ -576,7 +576,7 @@ verify_database_connectivity() {
 verify_database_empty_for_install() {
   local table_count
   table_count="$(docker compose run -T --rm --no-deps --entrypoint sh backup -ec \
-    'MYSQL_PWD="$DB_PASSWORD" exec mysql --batch --skip-column-names --connect-timeout=10 --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_TYPE='BASE TABLE'"' \
+    'MYSQL_PWD="$DB_PASSWORD" exec mysql --batch --skip-column-names --connect-timeout=10 --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() "' \
     </dev/null)" || die "failed to inspect database tables; refusing to initialize an unknown database"
   table_count="$(printf '%s' "$table_count" | tr -d '[:space:]')"
   [[ "$table_count" =~ ^[0-9]+$ ]] || die "database inventory is invalid; refusing unsafe fresh install"
