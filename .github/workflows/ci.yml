@@ -70,6 +70,9 @@ jobs:
       - name: Exercise database-aware updater fail-closed state machine
         run: bash scripts/test-upgrade.sh
 
+      - name: Check XBoard migration plan safety, legacy filenames and dump input
+        run: python3 scripts/test-xboard-plan.py
+
       - name: Check BT-Panel local MySQL client discovery
         run: |
           sudo mkdir -p /www/server/mysql/bin
@@ -386,7 +389,7 @@ jobs:
           TXBOARD_MODE: http
           TXBOARD_PUBLIC_HOST: 127.0.0.1
           TXBOARD_HTTP_PORT: 18081
-          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_IMAGE_TAG: dev-sha-1a10b92ac664
           TXBOARD_BACKUP_RETENTION: 1
           TXBOARD_ENABLE_MCP: "true"
         run: |
@@ -436,10 +439,10 @@ jobs:
           sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
           sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
           # Simulate an existing install saved before GHCR path normalization.
-          sudo sed -i 's|^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest$|TXBOARD_IMAGE=ghcr.io/ANRCM0/txboard:latest|' .env
-          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/ANRCM0/txboard:latest$' .env
+          sudo sed -i 's|^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:dev-sha-1a10b92ac664$|TXBOARD_IMAGE=ghcr.io/ANRCM0/txboard:dev-sha-1a10b92ac664|' .env
+          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/ANRCM0/txboard:dev-sha-1a10b92ac664$' .env
           cat /tmp/txboard-deploy-smoke/update.sh | sudo -E bash -s -- --dir /tmp/txboard-deploy-smoke --yes
-          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest$' .env
+          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:dev-sha-1a10b92ac664$' .env
           sudo find backups -mindepth 2 -maxdepth 2 -name CHECKSUMS.sha256 | grep -q .
           sudo test -f .upgrade.lock
           sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction

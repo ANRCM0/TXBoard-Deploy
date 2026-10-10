@@ -250,6 +250,61 @@ txboard:
 
 因此用户服务器不需要 TXBoard 源码。
 
+
+## 从 XBoard 数据库迁入 TXBoard（独立数据库导入）
+
+这不是镜像升级或原地数据库重命名。TXBoard 运行时只支持原生 tx_* 表。
+新安装器的「从 XBoard SQL 备份迁入」模式仅修改独立、**空的目标数据库**，不会
+连接或写入 XBoard 生产数据库。导入失败时旧系统不受影响，目标库应废弃后重新创建。
+
+**准备：** 在旧 XBoard 上冻结写入后，使用拥有该库只读权限的 MySQL 账户生成一致备份，
+保留原应用的 .env（必须包含 APP_KEY）。不要使用 mysqldump --databases 或 --all-databases；
+备份必须为仅含单库表结构及数据、不含 CREATE DATABASE / USE 语句的 .sql.gz。
+对于不停机的预演，可以先生成测试快照；正式切换需再次冻结支付回调、订单、队列、
+节点流量写入方和计划任务并重新生成最终备份。
+
+~~~bash
+# 旧 XBoard 数据库的示例：按实际主机、库名与用户修改；交互输入密码
+mysqldump --single-transaction --quick --set-gtid-purged=OFF \
+  --default-character-set=utf8mb4 --no-tablespaces \
+  -h 127.0.0.1 -u xboard_readonly -p xboard | gzip > /root/xboard.sql.gz
+# 将原 XBoard Laravel .env 安全复制到新服务器 /root/xboard.env
+chmod 600 /root/xboard.sql.gz /root/xboard.env
+~~~
+
+在全新服务器上使用安装器，选择 **2. 从 XBoard SQL 备份迁入**，指定源 SQL.gz、
+原 XBoard .env、全新 TXBoard 数据库与原生镜像。也支持无人值守参数：
+
+~~~bash
+sudo bash install.sh --yes \
+  --tag dev-sha-1a10b92ac664 \
+  --email admin@example.com --mode http --public-host 127.0.0.1 \
+  --install-type xboard-import \
+  --xboard-dump /root/xboard.sql.gz \
+  --xboard-env /root/xboard.env
+~~~
+
+说明：示例中的 dev-sha 是一次具体的原生代码构建，仅供预演。
+正式上线须选用已验证发布版本。import 模式会保留旧管理员、密码哈希、用户 ID、
+UUID、余额与订单；--email 不会创建新管理员。APP_KEY 从原环境复制到新 api.env，
+以便历史加密数据保持可读取。源 .env 的旧数据库连接和 APP_URL 不会复制。
+
+导入动作顺序：目标库空库检查 → SQL 备份离线安全检查 → 恢复到目标库
+→ 从所选 TXBoard 镜像取得当前 migrations 名单 → 校验所有 v2_* 表映射和 Laravel
+迁移历史 → 在目标库执行表名/迁移账本转换 → 新版 Laravel 剩余迁移
+→ 逐用户关键字段、逐订单关键字段哈希核验 + 订单用户关联 + 管理员存在性检查
+→ 才允许启动 TXBoard。导入报告位于 backups/xboard-import/，权限为私有。
+不允许未知历史迁移、混合 tx_* 数据、插件自建未知表静默略过。
+
+**当前支持边界：** 主流程以标准 XBoard 历史结构为基线，非标准 fork、
+自定义表/插件和不同版本可能被阻止。仅数据库迁入不等于完整业务迁移：
+用户上传文件、主题与插件文件、外部支付回调域名、TX-Node 节点配置、
+CDN/DNS/反代及密钥/接口仍需单独迁移或重新对接。导入前先在测试服务器演练，
+恢复验证完成后再考虑正式业务切换。绝不在原生产 XBoard 数据库上运行导入器。
+
+**旧版升级器：** update.sh 现在只接受完整原生 tx_* 表。原 v2_* 不能再使用
+txboard update 或旧的 --cutover-plan 原地迁移；应使用上述新环境独立导入。
+
 ## 管理菜单
 
 安装完成后，默认会保存管理脚本到：
