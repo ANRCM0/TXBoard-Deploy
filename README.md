@@ -54,29 +54,15 @@ curl -fsSL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/install.
 - 外部数据库的主机、端口、库名、用户名和密码
 - 备份保留数量
 
-### 旧安装目录残留
+### 安装入口预检与旧目录保护
 
-安装器会在数据库配置前立即检查目标安装路径。只要目标是已有文件，或目录非空，就视为可能存在旧项目或安装残留：
+安装器在**询问 HTTP/HTTPS 模式、管理员邮箱和数据库设置之前**先枚举 Docker 上运行中及已停止的 TXBoard，并确认安装目录。当前目录有唯一健康实例时直接询问「**升级现有 TXBoard / 安全退出**」，无需填写新安装参数。其他目录实例、多个实例、健康异常或残缺的部署配置均拒绝新安装；不会为了重新安装而执行 `docker compose down`。
 
-- 交互安装会展示最多 12 个顶层文件/目录，并询问是否清理；默认选择 **N**。
-- 确认清理后，如果存在 `compose.yaml`，安装器会先执行 `docker compose down --remove-orphans`，但**不会带 `-v`**，因此不会在这一步删除 Docker volumes。
-- 随后清空目标安装目录，再继续正常安装流程。
-- 内置 MySQL 的 `txboard_database-data` 仍由独立的数据保护逻辑管理；即使清除了安装目录，检测到旧数据库卷时仍会再次询问是否删除。
-- `--yes` 无人值守安装发现非空目录时仍会安全退出；只有显式传入 `--clean-install-dir` 或设置 `TXBOARD_CLEAN_INSTALL_DIR=true` 才允许清理。
-- 为避免误操作，安装器拒绝自动清理 `/`、`/opt`、`/var`、`/home`、`/tmp` 等系统级目录，也拒绝清理符号链接形式的安装目录。
+**真正的新安装**在最终部署摘要确认后才清理与 TXBoard 无关的目录残留；取消安装不会清空目录。对于 `--render-only`，只允许使用没有既有部署配置的路径；对 `--yes`，非空目录默认拒绝清理。仍有意清理纯文件残留时，需显式提供 `--clean-install-dir`；该选项不会绕过检测到的 TXBoard 服务与部署配置保护。
 
-例如无人值守清理旧文件后重新渲染：
+已有管理的 MySQL 数据卷同样不会在填写向导期间被删除。选择 `--reset-local-db` 或交互确认后只记录意图，**最终安装确认和服务重新核验之后**才会尝试删除旧卷；仍被容器使用的卷无法被强制移除。
 
-```bash
-sudo env \
-  TXBOARD_INSTALL_DIR=/opt/txboard \
-  TXBOARD_ADMIN_EMAIL=admin@example.com \
-  TXBOARD_MODE=http \
-  TXBOARD_PUBLIC_HOST=127.0.0.1 \
-  bash install.sh --yes --clean-install-dir --render-only
-```
-
-> `--clean-install-dir` 只授权清理安装目录，不等于授权删除数据库卷。若还需要删除旧 managed MySQL 数据，必须另外显式使用 `--reset-local-db`。
+对宿主机 MySQL，向导会在修改数据库用户/授权之前询问管理员确认，并检查目标数据库是否已有表；对外部/宿主机/内置 MySQL，启动 TXBoard 安装命令前会再次检查目标数据库**确实为空**。发现已有业务表或数据库状态未知时拒绝新安装，提示使用安全升级器。
 
 ## 数据库模式
 
