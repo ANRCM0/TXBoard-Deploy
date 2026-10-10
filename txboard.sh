@@ -53,8 +53,8 @@ run_update() {
     die "cannot fetch/validate safe database-aware updater; refusing to run an older local updater"
   fi
   chmod 700 "$tmp"
-  bash "$tmp" "${args[@]}"
-  local status=$?
+  local status=0
+  bash "$tmp" "${args[@]}" || status=$?
   rm -f "$tmp"
   return "$status"
 }
