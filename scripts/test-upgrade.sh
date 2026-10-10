@@ -17,7 +17,7 @@ case "$line" in
   *" compose run "*"--entrypoint sh backup "*)
     if [[ "$MOCK_SCHEMA" == mixed ]]; then
       printf '25\t2\t1\t1\t1\t1\t1\t1\t1\n'
-    elif [[ "$MOCK_SCHEMA" == native && "$line" == *information_schema* ]]; then
+    elif [[ ( "$MOCK_SCHEMA" == native || -f "$MOCK_DIR/native-converted" ) && "$line" == *information_schema* ]]; then
       printf '0\t25\t0\t0\t0\t1\t1\t1\t1\n'
     elif [[ "$line" == *information_schema* ]]; then
       printf '25\t0\t1\t1\t1\t0\t0\t0\t1\n'
@@ -34,6 +34,13 @@ case "$line" in
     printf 'database=mock\n' > MANIFEST
     sha256sum db.sql.gz env > CHECKSUMS.sha256 ;;
   *" compose run "*"--entrypoint php txboard "*)
+    if [[ "$line" == *" txboard:database-cutover "* ]]; then
+      echo cutover-request >> "$MOCK_EVENTS"
+      if [[ "$line" == *" --execute "* ]]; then
+        touch "$MOCK_DIR/native-converted"
+        echo cutover-executed >> "$MOCK_EVENTS"
+      fi
+    fi
     if [[ "$line" == *" migrate --force "* ]]; then
       echo 'migration-attempted' >> "$MOCK_EVENTS"
       [[ "$MOCK_MIGRATION_FAIL" != 1 ]] || exit 45
@@ -89,6 +96,26 @@ update
 grep -Fq migration-attempted "$MOCK_EVENTS"
 grep -qx 'TX_NATIVE_TABLES=true' "$MOCK_DIR/api.env"
 ! grep -Fq 'txboard:database-cutover' "$MOCK_EVENTS"
+
+setup native-cutover
+plan="$MOCK_DIR/reviewed-plan.json"
+printf '{"schemaVersion":1,"kind":"native-table-cutover-plan","executable":true,"requiresManualApproval":false,"blockers":[],"proposedRenames":[{"from":"v2_user","to":"tx_user"}]}\n' > "$plan"
+if command -v script >/dev/null 2>&1; then
+  printf "2\nREVIEWED\nRESTORED\n" | timeout 40s script -q -e -c "env TXBOARD_INSTALL_DIR=$MOCK_DIR bash $repo/update.sh --tag dev --cutover-plan $plan" /dev/null >"$tmp/cutover-success" 2>&1 || {
+    tail -35 "$tmp/cutover-success" >&2; echo "mocked interactive cutover failed" >&2; exit 1;
+  }
+  grep -Fq cutover-executed "$MOCK_EVENTS"
+  grep -qx "TX_NATIVE_TABLES=true" "$MOCK_DIR/api.env"
+  grep -Fq "cutover" "$tmp/cutover-success"
+fi
+
+setup missing-cutover-plan
+if command -v script >/dev/null 2>&1; then
+  if printf "2\n" | timeout 20s script -q -e -c "env TXBOARD_INSTALL_DIR=$MOCK_DIR bash $repo/update.sh --tag dev --cutover-plan /nonexistent/not-approved.json" /dev/null >"$tmp/cutover-missing" 2>&1; then
+    echo "missing reviewed plan was accepted" >&2; exit 1;
+  fi
+  ! grep -Fq "migration-attempted" "$MOCK_EVENTS"
+fi
 
 setup native-bad-flag
 export MOCK_SCHEMA=native
