@@ -35,7 +35,7 @@ txboard_detect_scan() {
 
   while IFS= read -r cid; do
     [[ -n "$cid" ]] || continue
-    raw="$(docker inspect --type container --format '{{.Id}}|{{.Name}}|{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{with .Config.Labels}}{{index . "com.docker.compose.service"}}{{end}}|{{with .Config.Labels}}{{index . "com.docker.compose.project"}}{{end}}|{{with .Config.Labels}}{{index . "com.docker.compose.project.working_dir"}}{{end}}|{{with .Config.Labels}}{{index . "com.docker.compose.project.config_files"}}{{end}}|{{.Config.Image}}|{{.Image}}' "$cid")" || {
+    raw="$(docker inspect --type container --format '{{.Id}}|{{.Name}}|{{.State.Status}}|{{with index .State "Health"}}{{.Status}}{{else}}none{{end}}|{{with .Config.Labels}}{{index . "com.docker.compose.service"}}{{end}}|{{with .Config.Labels}}{{index . "com.docker.compose.project"}}{{end}}|{{with .Config.Labels}}{{index . "com.docker.compose.project.working_dir"}}{{end}}|{{with .Config.Labels}}{{index . "com.docker.compose.project.config_files"}}{{end}}|{{.Config.Image}}|{{.Image}}' "$cid")" || {
       printf '[TXBoard Detect] ERROR: failed to inspect container %s; operation blocked\n' "$cid" >&2
       return 1
     }
