@@ -16,6 +16,10 @@ service_status() {
     "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_IMAGE)" \
     "$db_mode" "$db_target"
   compose ps
+  if declare -F txboard_detect_scan >/dev/null 2>&1; then
+    txboard_detect_scan "$TXBOARD_INSTALL_DIR" && txboard_detect_print ||
+      warn "service discovery failed; inspect Docker access"
+  fi
 }
 
 service_start() { docker_ok; need_install; compose up -d --remove-orphans; }
