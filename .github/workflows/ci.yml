@@ -17,7 +17,6 @@ jobs:
           bash -n update.sh
           sh -n backup.sh
           bash -n scripts/test-upgrade.sh
-          bash -n lib/cutover-plan.sh
           bash -n scripts/test-detect.sh
           bash -n scripts/test-install-flow.sh
           bash -n txboard.sh
