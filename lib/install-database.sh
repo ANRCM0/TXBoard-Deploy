@@ -464,7 +464,7 @@ EOF
           die "external database host '$DB_HOST' resolves inside the TXBoard container, not to the Docker host. Use host mode for MySQL running on this server."
         fi
         warn "external DB host $DB_HOST points to the TXBoard container itself"
-        if confirm "Switch to automatic host-MySQL mode instead?" "Y"; then
+        if confirm "是否切换为自动识别本机 MySQL 模式？" "Y"; then
           DB_MODE="host"
           DB_HOST=""
           setup_host_database
