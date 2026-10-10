@@ -62,7 +62,7 @@ confirm() {
 
 pause() {
   [[ -r /dev/tty ]] || return 0
-  printf '\nPress Enter to continue...' > /dev/tty
+  printf '\n按回车键继续……' > /dev/tty
   IFS= read -r _ < /dev/tty || true
 }
 
