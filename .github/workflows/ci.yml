@@ -17,6 +17,7 @@ jobs:
           bash -n update.sh
           sh -n backup.sh
           bash -n scripts/test-upgrade.sh
+          bash -n scripts/test-detect.sh
           bash -n txboard.sh
           for f in lib/*.sh; do bash -n "$f"; done
 
@@ -40,6 +41,10 @@ jobs:
           grep -Fq 'cannot connect to $DB_MODE MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE' lib/install-database.sh
           grep -Fq 'Docker + Compose v2 not found. Install Docker automatically?' install.sh
           grep -Fq 'docker compose run -T --rm -e BACKUP_INTERVAL=0 -e BACKUP_RETENTION=0 backup' update.sh
+          grep -Fq 'txboard_guard_install' install.sh
+          grep -Fq 'txboard_guard_update' update.sh
+          grep -Fq 'lib/detect.sh' install.sh
+          grep -Fq 'detect) docker_ok' txboard.sh
           grep -Fq 'detect_schema' update.sh
           grep -Fq 'require_schema native' update.sh
           grep -Fq 'cutover_artisan dryrun' update.sh
@@ -50,6 +55,9 @@ jobs:
           bash txboard.sh help | grep -q 'logs \[service\]'
           bash txboard.sh help | grep -q 'config-show'
           bash txboard.sh help | grep -q 'backups'
+
+      - name: Test Docker service discovery and ownership safeguards
+        run: bash scripts/test-detect.sh
 
       - name: Exercise database-aware updater fail-closed state machine
         run: bash scripts/test-upgrade.sh
@@ -388,6 +396,8 @@ jobs:
           sudo test -x /tmp/txboard-deploy-smoke/update.sh
           sudo test -x /tmp/txboard-deploy-smoke/lib/common.sh
           sudo test -x /tmp/txboard-deploy-smoke/lib/backup.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/detect.sh
+          sudo txboard detect | grep -q 'txboard-txboard-1'
           sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
           sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
           sudo txboard status >/dev/null
