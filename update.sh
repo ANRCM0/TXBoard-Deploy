@@ -352,6 +352,14 @@ done
   cat CHECKSUMS.additional >> CHECKSUMS.sha256
   rm -f CHECKSUMS.additional
 ) || die "cannot checksum complete persistent files"
+if [[ "$UPGRADE_MODE" == cutover ]]; then
+  # Freeze the exact reviewed plan inside the immutable upgrade archive; never
+  # trust a mutable host file again after the stop/backup point.
+  cp -- "$CUTOVER_PLAN" "$backup_path/reviewed-plan.json" || die "could not snapshot reviewed rename plan"
+  chmod 600 "$backup_path/reviewed-plan.json"
+  (cd "$backup_path" && sha256sum reviewed-plan.json >> CHECKSUMS.sha256) || die "could not checksum reviewed plan"
+  CUTOVER_PLAN="$backup_path/reviewed-plan.json"
+fi
 (cd "$backup_path" && test -s env && test -s db.sql.gz && test -s MANIFEST && test -s CHECKSUMS.sha256 && sha256sum -c CHECKSUMS.sha256 && gzip -t db.sql.gz) ||
   die "backup archive checksum or gzip validation failed"
 log "backup archive verified: $backup_path (separate restoration rehearsal is still needed)"
