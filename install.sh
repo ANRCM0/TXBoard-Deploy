@@ -81,6 +81,7 @@ DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/AN
 ASSUME_YES=0
 RENDER_ONLY=0
 RESET_LOCAL_DB=0
+LOCAL_DB_RESET_PENDING=0
 CLEAN_INSTALL_DIR="${TXBOARD_CLEAN_INSTALL_DIR:-false}"
 COMPOSE_PROJECT_NAME="txboard"
 LOCAL_DB_VOLUME="${COMPOSE_PROJECT_NAME}_database-data"
@@ -703,8 +704,27 @@ fi
 
 # Existing unrelated files must not be removed before the operator reviews the
 # complete installation summary; a cancelled wizard leaves everything intact.
+# Repeat the non-destructive ownership guard after the final confirmation.
+# Docker/container identity could have changed during the interactive wizard.
+if [[ "$RENDER_ONLY" -eq 0 ]]; then
+  txboard_guard_install "$INSTALL_DIR" ||
+    die "TXBoard appeared before installation; existing data is untouched"
+fi
+
 if install_dir_has_content; then
   clean_existing_install_dir
+fi
+
+# Even --reset-local-db never deletes the managed volume before the final
+# confirmation, and it refuses to remove volumes used by live containers.
+if (( LOCAL_DB_RESET_PENDING == 1 )); then
+  [[ "$RENDER_ONLY" -eq 0 && "$DB_MODE" == local ]] ||
+    die "unexpected managed database reset state; refusing destructive operation"
+  txboard_guard_install "$INSTALL_DIR" ||
+    die "another TXBoard appeared; managed MySQL volume will not be removed"
+  log "removing explicitly approved managed MySQL volume: $LOCAL_DB_VOLUME"
+  docker volume rm "$LOCAL_DB_VOLUME" >/dev/null ||
+    die "could not remove $LOCAL_DB_VOLUME (it may be attached); installation stopped"
 fi
 
 mkdir -p "$INSTALL_DIR"
@@ -1096,6 +1116,7 @@ if [[ "$MCP_ENABLED" == "true" ]]; then
 fi
 
 verify_database_connectivity
+verify_database_empty_for_install
 
 # Start the real application container before installation, but do not wait for
 # its health check yet. txboard:install relies on the normal container runtime.
