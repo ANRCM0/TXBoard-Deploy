@@ -33,7 +33,7 @@ case " $* " in
     fi
     if [[ "$*" == *" migrate:status "* ]]; then echo 'Migration ........ Ran'; fi
     ;;
-  *" compose run "*"BACKUP_INTERVAL=0"* " backup "*)
+  *BACKUP_INTERVAL=0*backup*)
     [[ "${MOCK_BACKUP_FAIL:-0}" != 1 ]] || exit 1
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
     mkdir -p "$MOCK_DIR/backups/$stamp"

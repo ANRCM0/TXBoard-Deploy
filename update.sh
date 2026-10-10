@@ -78,7 +78,7 @@ refresh_tools() {
     return 0
   fi
 
-  for module in common service backup config diagnose uninstall detect; do
+  for module in common service backup config diagnose uninstall detect xboard-import; do
     tmp="$INSTALL_DIR/lib/.$module.sh.tmp"
     if ! download_file "$DEPLOY_RAW_BASE/lib/$module.sh" "$tmp"; then
       rm -f "$manager_tmp" "$updater_tmp" "$INSTALL_DIR/lib/."*.tmp
@@ -153,8 +153,7 @@ else
 fi
 
 
-# Only existing and COMPLETE legacy v2_* installations are auto-migrated.
-# Native tx_* table cutover is NOT a routine Docker image upgrade.
+# Native-only upgrades. A populated v2_* source MUST use the isolated XBoard importer.
 [[ "$SKIP_BACKUP" -eq 0 ]] || die "--skip-backup is disabled: a full backup is required"
 umask 077
 command -v flock >/dev/null 2>&1 || die "flock is required for upgrade locking"
