@@ -16,7 +16,7 @@ die() { printf '[TXBoard Deploy] ERROR: %s\n' "$*" >&2; exit 1; }
 
 usage() {
   cat <<'EOF'
-TXBoard image updater
+TXBoard 镜像与数据库安全升级
 
 Usage:
   update.sh [options]
@@ -196,7 +196,7 @@ detect_schema() {
     native:true|native:TRUE|native:1) ;;
     *) die "schema is $SCHEMA_KIND but TX_NATIVE_TABLES in api.env is '$flag': resolve config before upgrade" ;;
   esac
-  log "detected $SCHEMA_KIND database (v2=$v2, tx=$tx); configuration matches"
+  log "数据库检查通过：模式=$SCHEMA_KIND；旧表=$v2，新表=$tx，配置匹配"
 }
 require_schema() {
   local want="$1"
@@ -324,7 +324,7 @@ fi
 # Older TXBoard-Deploy installations had a backup.sh without CHECKSUMS and
 # without a strict failure contract. Upgrade that script before any downtime.
 if ! grep -Fq 'CHECKSUMS.sha256' "$INSTALL_DIR/backup.sh" 2>/dev/null; then
-  log "upgrading legacy backup script before database migration..."
+  log "正在升级旧版备份组件以支持完整校验……"
   safe_backup="$(mktemp "$INSTALL_DIR/.safe-backup.XXXXXXXX")"
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL "$DEPLOY_RAW_BASE/backup.sh" -o "$safe_backup" ||
@@ -344,8 +344,8 @@ if ! grep -Fq 'CHECKSUMS.sha256' "$INSTALL_DIR/backup.sh" 2>/dev/null; then
   mv -f "$safe_backup" "$INSTALL_DIR/backup.sh"
 fi
 
-log "pulling target image BEFORE stopping writers..."
-docker pull "$new_image" || die "pull failed; current deployment unchanged"
+log "正在预先拉取新镜像（当前服务仍在运行）……"
+docker pull "$new_image" || die "拉取镜像失败，当前服务不受影响"
 phase=before_stop
 attempted_migrate=0
 backup_path=""
@@ -381,7 +381,7 @@ txboard_guard_update "$INSTALL_DIR" ||
   die "TXBoard service changed after preflight; refuse to stop or migrate"
 [[ "$TXBOARD_DETECT_TARGET_ID" == "$container_id" ]] ||
   die "TXBoard container changed during upgrade preflight; abort"
-log "stopping TXBoard, embedded queue workers, WebSocket and scheduled writers..."
+log "正在停止 TXBoard、队列和 WebSocket 写入……"
 docker compose stop txboard || die "could not stop TXBoard"
 phase=frozen
 require_schema "$SCHEMA_KIND"
@@ -390,7 +390,7 @@ before="$(critical_snapshot)" || die "critical snapshot query failed"
 
 # A separate one-shot dump with retention disabled, not the rolling backup.
 old_backup="$(find "$INSTALL_DIR/backups" -mindepth 1 -maxdepth 1 -type d -name '????????T??????Z' -printf '%f\n' 2>/dev/null | sort | tail -1 || true)"
-log "creating mandatory full backup (database, APP_KEY, persistent files)"
+log "正在完整备份数据库、APP_KEY 和持久化文件……"
 docker compose run -T --rm -e BACKUP_INTERVAL=0 -e BACKUP_RETENTION=0 backup </dev/null ||
   die "pre-migration backup failed"
 new_backup="$(find "$INSTALL_DIR/backups" -mindepth 1 -maxdepth 1 -type d -name '????????T??????Z' -printf '%f\n' 2>/dev/null | sort | tail -1 || true)"
@@ -437,7 +437,7 @@ log "backup archive verified: $backup_path (separate restoration rehearsal is st
 set_image "$new_image"
 phase=migrate
 attempted_migrate=1
-log "running normal Laravel schema migrations using the TARGET image..."
+log "正在使用新镜像执行 Laravel 数据库结构迁移……"
 target_artisan migrate --force || die "Laravel migrations failed; manual database recovery required"
 require_schema "$SCHEMA_KIND"
 if [[ "$UPGRADE_MODE" == cutover ]]; then
@@ -464,12 +464,12 @@ if [[ "$UPGRADE_MODE" == cutover ]]; then
   target_artisan up || die "cannot exit Laravel maintenance mode after confirmed native cutover"
 fi
 phase=post_migrate
-log "schema and financial invariants checked; recreating TXBoard..."
+log "数据库结构和核心余额校验通过，正在启动新版 TXBoard……"
 docker compose up -d --no-deps --force-recreate --wait txboard ||
   die "new image health check failed after migration"
 docker compose exec -T txboard php artisan txboard:install-status --no-interaction </dev/null ||
   die "new image install-state check failed"
 phase=complete
-log "upgrade passed: $new_image; $SCHEMA_KIND schema; archive=$backup_path"
+log "升级完成：镜像=$new_image，数据库=$SCHEMA_KIND，备份=$backup_path"
 refresh_tools
 docker compose ps txboard
