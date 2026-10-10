@@ -398,6 +398,22 @@ jobs:
           sudo test -x /tmp/txboard-deploy-smoke/lib/backup.sh
           sudo test -x /tmp/txboard-deploy-smoke/lib/detect.sh
           sudo txboard detect | grep -q 'txboard-txboard-1'
+          # A second installer must not overwrite this healthy installation,
+          # even if the user requested --clean-install-dir explicitly.
+          if sudo bash "$GITHUB_WORKSPACE/install.sh" --yes --clean-install-dir --dir /tmp/txboard-deploy-smoke --email ci@example.com --mode http --public-host 127.0.0.1 >/tmp/txboard-reinstall-test.log 2>&1; then
+            echo "ERROR: installer overwrote a running TXBoard" >&2
+            exit 1
+          fi
+          grep -q 'existing running/stopped TXBoard' /tmp/txboard-reinstall-test.log
+          sudo test -f /tmp/txboard-deploy-smoke/compose.yaml
+          # A different path cannot silently create another instance using the
+          # same hardcoded Compose project name or claim the live deployment.
+          if sudo bash "$GITHUB_WORKSPACE/install.sh" --yes --dir /tmp/txboard-second-ci --email ci@example.com --mode http --public-host 127.0.0.1 >/tmp/txboard-foreign-test.log 2>&1; then
+            echo "ERROR: installer attempted to create conflicting TXBoard" >&2
+            exit 1
+          fi
+          grep -q 'existing running/stopped TXBoard' /tmp/txboard-foreign-test.log
+          test ! -f /tmp/txboard-second-ci/compose.yaml
           sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
           sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
           sudo txboard status >/dev/null
