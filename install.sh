@@ -274,16 +274,16 @@ validate_install_cleanup_target() {
 clean_existing_install_dir() {
   validate_install_cleanup_target
 
-  warn "existing files detected in installation directory: $INSTALL_DIR"
+  warn "安装目录已有文件：$INSTALL_DIR"
   if [[ "$ASSUME_YES" -eq 0 ]]; then
-    printf '\nExisting path contents (up to 12 entries):\n' > /dev/tty
+    printf '\n安装目录已有文件（最多显示 12 项）：\n' > /dev/tty
     if [[ -d "$INSTALL_DIR" ]]; then
       find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -printf '  - %f\n' 2>/dev/null | head -n 12 > /dev/tty || true
     else
       printf '  - %s (non-directory path)\n' "$(basename "$INSTALL_DIR")" > /dev/tty
     fi
     printf '\n' > /dev/tty
-    confirm "Delete ALL files in $INSTALL_DIR and continue? Docker volumes will be preserved." "N" ||
+    confirm "确定清理 $INSTALL_DIR 内所有文件并继续吗？Docker 数据卷会保留。" "N" ||
       die "installation stopped to preserve existing files in $INSTALL_DIR"
   else
     case "${CLEAN_INSTALL_DIR,,}" in
@@ -320,7 +320,7 @@ ensure_docker() {
 
   local auto="${AUTO_INSTALL_DOCKER,,}"
   if [[ "$ASSUME_YES" -eq 0 ]]; then
-    confirm "Docker + Compose v2 not found. Install Docker automatically?" "Y" ||
+    confirm "未发现 Docker + Compose v2，是否自动安装？" "Y" ||
       die "Docker Engine + Compose v2 are required."
   elif [[ "$auto" != "1" && "$auto" != "true" && "$auto" != "yes" && "$auto" != "y" ]]; then
     die "Docker + Compose v2 are required. For unattended automatic installation set TXBOARD_AUTO_INSTALL_DOCKER=true."
@@ -699,11 +699,11 @@ EOF
 ------------------------------------------------------------
 
 EOF
-  confirm "确认以上配置并开始安装？" "Y" || { log "cancelled"; exit 0; }
+  confirm "确认以上配置并开始安装？" "Y" || { log "已取消"; exit 0; }
 fi
 
 # Existing unrelated files must not be removed before the operator reviews the
-# complete installation summary; a cancelled wizard leaves everything intact.
+# complete installation summary; a 已取消 wizard leaves everything intact.
 # Repeat the non-destructive ownership guard after the final confirmation.
 # Docker/container identity could have changed during the interactive wizard.
 if [[ "$RENDER_ONLY" -eq 0 ]]; then
