@@ -80,7 +80,7 @@ refresh_tools() {
     return 0
   fi
 
-  for module in common service backup config diagnose uninstall; do
+  for module in common service backup config diagnose uninstall detect; do
     tmp="$INSTALL_DIR/lib/.$module.sh.tmp"
     if ! download_file "$DEPLOY_RAW_BASE/lib/$module.sh" "$tmp"; then
       rm -f "$manager_tmp" "$updater_tmp" "$INSTALL_DIR/lib/."*.tmp
@@ -111,6 +111,32 @@ set_image() {
   chmod --reference=.env "$tmp" 2>/dev/null || chmod 600 "$tmp"
   mv "$tmp" .env
 }
+
+load_service_detect_module() {
+  local src_dir tmp
+  src_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+  if [[ -n "$src_dir" && -f "$src_dir/lib/detect.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "$src_dir/lib/detect.sh"
+    return
+  fi
+  tmp="$(mktemp)"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$DEPLOY_RAW_BASE/lib/detect.sh" -o "$tmp" ||
+      { rm -f "$tmp"; die "cannot obtain TXBoard service discovery module"; }
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$tmp" "$DEPLOY_RAW_BASE/lib/detect.sh" ||
+      { rm -f "$tmp"; die "cannot obtain TXBoard service discovery module"; }
+  else
+    rm -f "$tmp"
+    die "curl or wget required for safe service discovery"
+  fi
+  bash -n "$tmp" || { rm -f "$tmp"; die "invalid Docker service discovery module"; }
+  # shellcheck source=/dev/null
+  source "$tmp"
+  rm -f "$tmp"
+}
+load_service_detect_module
 
 current_image="$(get_env TXBOARD_IMAGE)"
 [[ -n "$current_image" ]] || die "TXBOARD_IMAGE is missing from $INSTALL_DIR/.env"
@@ -218,9 +244,12 @@ set_native_flag() {
   mv "$tmp" api.env
 }
 
-container_id="$(docker compose ps -q txboard 2>/dev/null || true)"
-[[ -n "$container_id" ]] || die "TXBoard must be running before database-aware update"
-old_image_id="$(docker inspect "$container_id" --format '{{.Image}}' 2>/dev/null || true)"
+# Do not infer ownership from Compose ps alone: another directory/project may
+# have claimed the same service name. Discovery includes stopped containers.
+txboard_guard_update "$INSTALL_DIR" ||
+  die "target TXBoard service is stopped, unhealthy or ambiguously owned; no upgrade was started"
+container_id="$TXBOARD_DETECT_TARGET_ID"
+old_image_id="$TXBOARD_DETECT_TARGET_IMAGE"
 [[ "$old_image_id" == sha256:* ]] || die "could not pin old running image"
 detect_schema
 # Older TXBoard-Deploy installations had a backup.sh without CHECKSUMS and
@@ -311,6 +340,12 @@ trap 'upgrade_on_exit $?' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# Re-check after pull/backup preparation: a replaced or unhealthy container
+# must not be stopped or migrated under the original ID's identity.
+txboard_guard_update "$INSTALL_DIR" ||
+  die "TXBoard service changed after preflight; refuse to stop or migrate"
+[[ "$TXBOARD_DETECT_TARGET_ID" == "$container_id" ]] ||
+  die "TXBoard container changed during upgrade preflight; abort"
 log "stopping TXBoard, embedded queue workers, WebSocket and scheduled writers..."
 docker compose stop txboard || die "could not stop TXBoard"
 phase=frozen
