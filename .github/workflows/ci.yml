@@ -73,6 +73,9 @@ jobs:
       - name: Check XBoard migration plan safety, legacy filenames and dump input
         run: python3 scripts/test-xboard-plan.py
 
+      - name: Exercise XBoard import mapping against real MySQL 8.4
+        run: bash scripts/test-xboard-mysql.sh
+
       - name: Check BT-Panel local MySQL client discovery
         run: |
           sudo mkdir -p /www/server/mysql/bin
