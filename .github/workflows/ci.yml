@@ -18,6 +18,7 @@ jobs:
           sh -n backup.sh
           bash -n scripts/test-upgrade.sh
           bash -n scripts/test-detect.sh
+          bash -n scripts/test-install-flow.sh
           bash -n txboard.sh
           for f in lib/*.sh; do bash -n "$f"; done
 
@@ -31,6 +32,9 @@ jobs:
           grep -Fq 'mysql_system_socket_candidates()' lib/install-database.sh
           grep -Fq 'TXBOARD_DB_SYSTEM_SOCKET' install.sh
           grep -Fq 'TXBOARD_CLEAN_INSTALL_DIR' install.sh
+          grep -Fq 'verify_database_empty_for_install' install.sh
+          grep -Fq 'LOCAL_DB_RESET_PENDING=1' lib/install-database.sh
+          grep -Fq 'preexisting_tables' lib/install-database.sh
           grep -Fq 'bootstrap_piped_installer()' install.sh
           grep -Fq 'cat >/dev/null &' install.sh
           grep -Fq 'bash "$tmp" "$@" </dev/null' install.sh
@@ -55,6 +59,9 @@ jobs:
           bash txboard.sh help | grep -q 'logs \[service\]'
           bash txboard.sh help | grep -q 'config-show'
           bash txboard.sh help | grep -q 'backups'
+
+      - name: Test installer order and fresh-database protection
+        run: bash scripts/test-install-flow.sh
 
       - name: Test Docker service discovery and ownership safeguards
         run: bash scripts/test-detect.sh
