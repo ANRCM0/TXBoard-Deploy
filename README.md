@@ -277,7 +277,7 @@ chmod 600 /root/xboard.sql.gz /root/xboard.env
 
 ~~~bash
 sudo bash install.sh --yes \
-  --tag dev-sha-1a10b92ac664 \
+  --tag dev-sha-c8492dc2e120 \
   --email admin@example.com --mode http --public-host 127.0.0.1 \
   --install-type xboard-import \
   --xboard-dump /root/xboard.sql.gz \
