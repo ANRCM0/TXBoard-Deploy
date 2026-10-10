@@ -222,6 +222,16 @@ EOF
       die "cannot authenticate as root in MySQL container $container_name"
   fi
 
+  # Existing application data belongs to the upgrade path, never a new
+  # installation. Check before CREATE USER/GRANT or touching Docker networks.
+  local preexisting_tables
+  preexisting_tables="$(mysql_container_exec_root "$container_id" "$root_password" "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='$DB_DATABASE';" 2>/dev/null | tail -n1 | tr -d '[:space:]')" ||
+    die "cannot inspect host container database inventory"
+  [[ "$preexisting_tables" =~ ^[0-9]+$ ]] ||
+    die "invalid host MySQL inventory for $DB_DATABASE"
+  (( preexisting_tables == 0 )) ||
+    die "host MySQL database $DB_DATABASE already contains $preexisting_tables tables; fresh install prohibited, use safe upgrade"
+
   log "creating/updating TXBoard database in host container $container_name..."
   mysql_container_exec_root "$container_id" "$root_password" "$sql" >/dev/null
   connect_db_container_network "$container_id"
@@ -267,6 +277,13 @@ setup_host_system_mysql() {
   [[ "$DB_USERNAME" =~ ^[A-Za-z0-9_]+$ ]] || die "host database username must contain only letters, digits, and underscore"
   DB_PASSWORD="${DB_PASSWORD:-$(random_hex)}"
   sql="$(host_database_sql)"
+  local preexisting_tables
+  preexisting_tables="$(mysql_system_exec_root "$client" "$root_password" "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='$DB_DATABASE';" "$system_socket" 2>/dev/null | tail -n1 | tr -d '[:space:]')" ||
+    die "cannot inspect system MySQL database inventory"
+  [[ "$preexisting_tables" =~ ^[0-9]+$ ]] ||
+    die "invalid system MySQL inventory for $DB_DATABASE"
+  (( preexisting_tables == 0 )) ||
+    die "system MySQL database $DB_DATABASE already contains $preexisting_tables tables; fresh install prohibited, use safe upgrade"
   mysql_system_exec_root "$client" "$root_password" "$sql" "$system_socket" >/dev/null
 
   source_port="$(mysql_system_exec_root "$client" "$root_password" 'SELECT @@port;' "$system_socket" 2>/dev/null | tail -n1)"
@@ -420,6 +437,11 @@ EOF
       DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-$(random_hex)}"
       ;;
     host)
+      if [[ "$ASSUME_YES" -eq 0 ]]; then
+        warn "host MySQL setup may create a database, user and grants before the final deployment summary"
+        confirm "Proceed with host MySQL provisioning? (never replaces existing database tables)" "N" ||
+          die "host database provisioning cancelled without modifying MySQL"
+      fi
       setup_host_database
       ;;
     external)
