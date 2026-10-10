@@ -192,6 +192,32 @@ target_artisan() {
     --entrypoint php txboard /www/artisan "$@" --no-interaction </dev/null
 }
 
+cutover_artisan() {
+  local mode="$1"; shift
+  local -a approval=()
+  if [[ "$mode" == execute ]]; then
+    approval=(-e TXBOARD_CUTOVER_APPROVED=1 -e TXBOARD_BACKUP_VERIFIED=1)
+  fi
+  docker compose run -T --rm --no-deps \
+    -v "$CUTOVER_PLAN:/tmp/txboard-reviewed-cutover.json:ro" \
+    -e CACHE_DRIVER=array -e SETTING_CACHE_STORE=array -e QUEUE_CONNECTION=sync -e SESSION_DRIVER=array \
+    "${approval[@]}" --entrypoint php txboard /www/artisan txboard:database-cutover \
+    --plan=/tmp/txboard-reviewed-cutover.json --direction=up "$@" --no-interaction </dev/null
+}
+
+set_native_flag() {
+  local tmp
+  tmp="$(mktemp "$INSTALL_DIR/.api-env.XXXXXXXX")"
+  awk '
+    BEGIN { found=0 }
+    /^TX_NATIVE_TABLES=/ { print "TX_NATIVE_TABLES=true"; found=1; next }
+    { print }
+    END { if (!found) print "TX_NATIVE_TABLES=true" }
+  ' api.env > "$tmp" || { rm -f "$tmp"; return 1; }
+  chmod --reference=api.env "$tmp" 2>/dev/null || chmod 600 "$tmp"
+  mv "$tmp" api.env
+}
+
 container_id="$(docker compose ps -q txboard 2>/dev/null || true)"
 [[ -n "$container_id" ]] || die "TXBoard must be running before database-aware update"
 old_image_id="$(docker inspect "$container_id" --format '{{.Image}}' 2>/dev/null || true)"
@@ -219,12 +245,39 @@ if ! grep -Fq 'CHECKSUMS.sha256' "$INSTALL_DIR/backup.sh" 2>/dev/null; then
   chmod 700 "$safe_backup"
   mv -f "$safe_backup" "$INSTALL_DIR/backup.sh"
 fi
-if [[ "$ASSUME_YES" -eq 0 ]]; then
-  [[ -r /dev/tty ]] || die "confirmation requires TTY (or --yes)"
-  printf 'Old: %s\nNew: %s\nLegacy DB: backup, downtime and migrations required. Continue? [Y/n]: ' "$current_image" "$new_image" > /dev/tty
-  IFS= read -r answer < /dev/tty || true
-  [[ -n "$answer" ]] || answer=Y
-  [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]] || { log cancelled; exit 0; }
+# Database migration mode is selected once from the detected LIVE schema.
+# Native tx_* databases skip all legacy questions; legacy mode defaults to keeping v2_*.
+UPGRADE_MODE="$SCHEMA_KIND"
+if [[ "$SCHEMA_KIND" == legacy ]]; then
+  if (( ASSUME_YES == 0 )); then
+    [[ -r /dev/tty ]] || die "legacy database requires interactive choice (or --yes to KEEP v2_* names)"
+    printf "\nLegacy v2_* database detected:\n  1) Upgrade application; KEEP v2_* table names (recommended)\n  2) Upgrade and rename ALL tables to tx_* (approved plan + verified restore required)\n  0) Cancel\nChoice [1]: " > /dev/tty
+    IFS= read -r choice < /dev/tty || true
+    case "${choice:-1}" in
+      1) UPGRADE_MODE=legacy ;;
+      2) UPGRADE_MODE=cutover ;;
+      0) log "cancelled before image or database changes"; exit 0 ;;
+      *) die "invalid schema upgrade choice" ;;
+    esac
+  fi
+  if [[ "$UPGRADE_MODE" == cutover ]]; then
+    if [[ -z "$CUTOVER_PLAN" ]]; then
+      printf "Reviewed and approved plan absolute path on HOST: " > /dev/tty
+      IFS= read -r CUTOVER_PLAN < /dev/tty || true
+    fi
+    [[ "$CUTOVER_PLAN" == /* && -f "$CUTOVER_PLAN" && -s "$CUTOVER_PLAN" && -r "$CUTOVER_PLAN" && ! -L "$CUTOVER_PLAN" ]] ||
+      die "cutover requires an independently reviewed, readable, non-symlink JSON plan at an absolute host path"
+    CUTOVER_PLAN="$(realpath "$CUTOVER_PLAN")"
+    printf "\nWARNING: native cutover requires reviewed runtime/plugins, a restore-tested full backup, and a maintenance window.\nType REVIEWED to confirm independent plan/runtime review: " > /dev/tty
+    IFS= read -r typed < /dev/tty || true
+    [[ "$typed" == REVIEWED ]] || die "cutover not approved"
+  elif [[ -n "$CUTOVER_PLAN" ]]; then
+    die "--cutover-plan provided but rename option was not selected"
+  fi
+elif [[ -n "$CUTOVER_PLAN" ]]; then
+  die "already native: --cutover-plan is not applicable"
+else
+  log "native tx_* database detected; no legacy prompt; continuing automatic upgrade"
 fi
 
 log "pulling target image BEFORE stopping writers..."
