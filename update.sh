@@ -314,7 +314,7 @@ trap 'exit 143' TERM
 log "stopping TXBoard, embedded queue workers, WebSocket and scheduled writers..."
 docker compose stop txboard || die "could not stop TXBoard"
 phase=frozen
-schema_preflight
+require_schema "$SCHEMA_KIND"
 before="$(critical_snapshot)" || die "critical snapshot query failed"
 [[ -n "$before" ]] || die "empty critical snapshot"
 
@@ -361,13 +361,30 @@ phase=migrate
 attempted_migrate=1
 log "running normal Laravel schema migrations using the TARGET image..."
 target_artisan migrate --force || die "Laravel migrations failed; manual database recovery required"
-schema_preflight
+require_schema "$SCHEMA_KIND"
+if [[ "$UPGRADE_MODE" == cutover ]]; then
+  log "checking exact, reviewed ALL-table mapping against post-migration v2_* schema..."
+  cutover_artisan dryrun || die "reviewed cutover plan rejected; no rename attempted"
+  printf "\nConfirmed full backup: %s\nProduction backup must have been RESTORED and checked on an isolated clone.\nType RESTORED to attest the recovery test succeeded: " "$backup_path" > /dev/tty
+  IFS= read -r recovery < /dev/tty || true
+  [[ "$recovery" == RESTORED ]] || die "restore verification not confirmed; no rename attempted"
+  log "enabling Laravel maintenance mode while all writers remain frozen..."
+  target_artisan down || die "could not enter Laravel maintenance mode; rename cancelled"
+  log "executing ONE atomic MySQL multi-table rename with approved plan..."
+  cutover_artisan execute --execute || die "native cutover command failed; inspect schema and backup before recovery"
+  set_native_flag || die "cutover succeeded but api.env could not switch to TX_NATIVE_TABLES=true; keep writers stopped"
+  require_schema native
+  target_artisan config:clear || die "cannot clear Laravel config cache after native cutover"
+fi
 migration_status="$(target_artisan migrate:status)" || die "cannot inspect migration status"
 if grep -Eiq '(^|[[:space:]])Pending([[:space:]]|$)' <<< "$migration_status"; then
   die "migrations remain pending"
 fi
 after="$(critical_snapshot)" || die "post-migration snapshot failed"
 [[ "$after" == "$before" ]] || die "critical user/order/balance aggregates changed during schema upgrade"
+if [[ "$UPGRADE_MODE" == cutover ]]; then
+  target_artisan up || die "cannot exit Laravel maintenance mode after confirmed native cutover"
+fi
 phase=post_migrate
 log "schema and financial invariants checked; recreating TXBoard..."
 docker compose up -d --no-deps --force-recreate --wait txboard ||
@@ -375,6 +392,6 @@ docker compose up -d --no-deps --force-recreate --wait txboard ||
 docker compose exec -T txboard php artisan txboard:install-status --no-interaction </dev/null ||
   die "new image install-state check failed"
 phase=complete
-log "upgrade passed: $new_image; retained v2_* schema; archive=$backup_path"
+log "upgrade passed: $new_image; $SCHEMA_KIND schema; archive=$backup_path"
 refresh_tools
 docker compose ps txboard
