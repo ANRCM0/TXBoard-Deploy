@@ -61,7 +61,7 @@ run_update() {
 
 show_help() {
   cat <<'EOF'
-TXBoard manager
+TXBoard 管理工具
 
 Usage:
   txboard
@@ -109,15 +109,15 @@ install_menu() {
     printf '\033[2J\033[H' > /dev/tty
     cat > /dev/tty <<'EOF'
 ========================================
-            TXBoard Manager
+            TXBoard 管理中心
 ========================================
-No TXBoard deployment was found.
+未检测到现有 TXBoard 部署。
 
-  1) Install TXBoard
-  0) Exit
+  1) 安装 TXBoard
+  0) 退出
 ========================================
 EOF
-    case "$(choose "Select" "1" "1")" in
+    case "$(choose "请选择" "1" "1")" in
       1) run_install; return 0 ;;
       0) return 0 ;;
     esac
@@ -132,24 +132,24 @@ main_menu() {
     printf '\033[2J\033[H' > /dev/tty
     cat > /dev/tty <<'EOF'
 ========================================
-            TXBoard Manager
+            TXBoard 管理中心
 ========================================
-  1) Status
-  2) Update
-  3) Start services
-  4) Stop services
-  5) Restart TXBoard
-  6) View logs
-  7) Backup now
-  8) Backup management
-  9) Configuration
- 10) Diagnostics
- 11) Resource usage
- 12) Uninstall
-  0) Exit
+  1) 查看运行状态
+  2) 升级镜像 / 数据库
+  3) 启动服务
+  4) 停止服务
+  5) 重启 TXBoard
+  6) 查看运行日志
+  7) 立即备份
+  8) 备份管理
+  9) 配置管理
+ 10) 故障诊断
+ 11) 资源占用
+ 12) 卸载
+  0) 退出
 ========================================
 EOF
-    case "$(choose "Select" "1" "12")" in
+    case "$(choose "请选择" "1" "12")" in
       1) service_status; pause ;;
       2) run_update; pause ;;
       3) service_start; pause ;;
