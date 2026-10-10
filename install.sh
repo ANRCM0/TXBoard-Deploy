@@ -82,6 +82,9 @@ ASSUME_YES=0
 RENDER_ONLY=0
 RESET_LOCAL_DB=0
 LOCAL_DB_RESET_PENDING=0
+INSTALL_TYPE="${TXBOARD_INSTALL_TYPE:-fresh}"
+XBOARD_DUMP="${TXBOARD_XBOARD_DUMP:-}"
+XBOARD_ENV_FILE="${TXBOARD_XBOARD_ENV_FILE:-}"
 CLEAN_INSTALL_DIR="${TXBOARD_CLEAN_INSTALL_DIR:-false}"
 COMPOSE_PROJECT_NAME="txboard"
 LOCAL_DB_VOLUME="${COMPOSE_PROJECT_NAME}_database-data"
@@ -119,6 +122,9 @@ Options:
   --db-name NAME      Database name (default: txboard)
   --db-user USER      Database username (default: txboard)
   --db-password PASS  Database password (prefer environment variable)
+  --install-type MODE fresh | xboard-import (default: fresh)
+  --xboard-dump PATH Trusted XBoard single-database mysqldump .sql.gz (not a live DB)
+  --xboard-env PATH  Original XBoard .env containing APP_KEY
   --yes               Non-interactive; use CLI/environment/default values
   --reset-local-db    Delete an existing managed MySQL volume before a fresh install
                       (DESTRUCTIVE: all data in that volume will be lost)
@@ -153,6 +159,9 @@ Environment variables:
   TXBOARD_DB_CONTAINER
   TXBOARD_DB_LINK_NETWORK
   TXBOARD_DB_PROXY_PORT
+  TXBOARD_INSTALL_TYPE
+  TXBOARD_XBOARD_DUMP
+  TXBOARD_XBOARD_ENV_FILE
   TXBOARD_CLEAN_INSTALL_DIR
 EOF
 }
@@ -179,6 +188,9 @@ while [[ $# -gt 0 ]]; do
     --db-name) DB_DATABASE="${2:?missing value for --db-name}"; shift 2 ;;
     --db-user) DB_USERNAME="${2:?missing value for --db-user}"; shift 2 ;;
     --db-password) DB_PASSWORD="${2:?missing value for --db-password}"; shift 2 ;;
+    --install-type) INSTALL_TYPE="${2:?missing value for --install-type}"; shift 2 ;;
+    --xboard-dump) XBOARD_DUMP="${2:?missing value for --xboard-dump}"; INSTALL_TYPE=xboard-import; shift 2 ;;
+    --xboard-env) XBOARD_ENV_FILE="${2:?missing value for --xboard-env}"; shift 2 ;;
     --yes) ASSUME_YES=1; shift ;;
     --reset-local-db) RESET_LOCAL_DB=1; shift ;;
     --clean-install-dir) CLEAN_INSTALL_DIR=true; shift ;;
@@ -448,7 +460,7 @@ install_deploy_tools() {
     return 0
   fi
 
-  for module in common service backup config diagnose uninstall detect; do
+  for module in common service backup config diagnose uninstall detect xboard-import; do
     tmp="$INSTALL_DIR/lib/.$module.sh.tmp"
     if ! download_file "$DEPLOY_RAW_BASE/lib/$module.sh" "$tmp"; then
       rm -f "$manager_tmp" "$updater_tmp" "$INSTALL_DIR/lib/."*.tmp
@@ -618,6 +630,35 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
   fi
 fi
 
+if [[ "$ASSUME_YES" -eq 0 && "$INSTALL_TYPE" == fresh && -z "$XBOARD_DUMP" ]]; then
+  install_choice="$(prompt "安装类型：1 全新空库 / 2 从 XBoard SQL 备份迁入" "1")"
+  case "$install_choice" in
+    1) INSTALL_TYPE=fresh ;;
+    2) INSTALL_TYPE=xboard-import ;;
+    *) die "invalid installation type" ;;
+  esac
+fi
+case "$INSTALL_TYPE" in
+  fresh)
+    [[ -z "$XBOARD_DUMP" && -z "$XBOARD_ENV_FILE" ]] ||
+      die "XBoard import requires --install-type xboard-import and both source paths" ;;
+  xboard-import)
+    if [[ "$ASSUME_YES" -eq 0 ]]; then
+      XBOARD_DUMP="$(prompt "XBoard 数据库 SQL.gz 备份的绝对路径" "$XBOARD_DUMP")"
+      XBOARD_ENV_FILE="$(prompt "原 XBoard .env 的绝对路径（用于保留 APP_KEY）" "$XBOARD_ENV_FILE")"
+    fi
+    [[ "$XBOARD_DUMP" == /* && -f "$XBOARD_DUMP" && ! -L "$XBOARD_DUMP" && -s "$XBOARD_DUMP" ]] ||
+      die "XBoard dump must be a nonempty absolute file path"
+    [[ "$XBOARD_ENV_FILE" == /* && -f "$XBOARD_ENV_FILE" && ! -L "$XBOARD_ENV_FILE" ]] ||
+      die "XBoard .env file must be an absolute file path"
+    [[ "$XBOARD_DUMP" != "$INSTALL_DIR/"* && "$XBOARD_ENV_FILE" != "$INSTALL_DIR/"* ]] ||
+      die "XBoard inputs must not be placed inside the new TXBoard installation directory"
+    [[ "$RESET_LOCAL_DB" -eq 0 ]] ||
+      die "XBoard import must never use --reset-local-db"
+    command -v python3 >/dev/null || die "python3 is required for XBoard import" ;;
+  *) die "invalid installation type: $INSTALL_TYPE" ;;
+esac
+
 configure_database
 
 DB_PASSWORD_ENV="$(dotenv_quote "$DB_PASSWORD")"
@@ -689,6 +730,8 @@ Test mode:      $TEST_MODE
 HTTP mapping:   $HTTP_BIND:$HTTP_PORT -> container:80
 Backup retain:  $BACKUP_RETENTION
 MCP Gateway:    $MCP_ENABLED
+Install type:    $INSTALL_TYPE
+XBoard dump:     ${XBOARD_DUMP:-none}
 Database mode:   $DB_MODE
 Database:        $DB_HOST:$DB_PORT/$DB_DATABASE
 EOF
@@ -1118,13 +1161,44 @@ fi
 verify_database_connectivity
 verify_database_empty_for_install
 
+# The separate import path operates only on the just-verified empty target.
+# Never bypass preflight and never run txboard:install against v2_* source data.
+load_xboard_import_module() {
+  local script_dir tmp
+  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+  if [[ -n "$script_dir" && -f "$script_dir/lib/xboard-import.sh" ]]; then
+    source "$script_dir/lib/xboard-import.sh"
+    return
+  fi
+  tmp="$(mktemp "$INSTALL_DIR/.xboard-import.XXXXXXXX")"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$DEPLOY_RAW_BASE/lib/xboard-import.sh" -o "$tmp" ||
+      { rm -f "$tmp"; die "failed to download XBoard import module"; }
+  else
+    wget -qO "$tmp" "$DEPLOY_RAW_BASE/lib/xboard-import.sh" ||
+      { rm -f "$tmp"; die "failed to download XBoard import module"; }
+  fi
+  bash -n "$tmp" || { rm -f "$tmp"; die "invalid XBoard import module"; }
+  source "$tmp"
+  rm -f "$tmp"
+}
+if [[ "$INSTALL_TYPE" == xboard-import ]]; then
+  load_xboard_import_module
+  txboard_import_xboard "$XBOARD_DUMP" "$XBOARD_ENV_FILE"
+  log "Migrated administrator detected. Seeding TXBoard settings without creating a new user..."
+  docker compose run -T --rm --no-deps --entrypoint php txboard     /www/artisan txboard:install --no-interaction </dev/null ||
+    die "TXBoard imported installation finalization failed"
+fi
+
 # Start the real application container before installation, but do not wait for
 # its health check yet. txboard:install relies on the normal container runtime.
-log "正在启动 TXBoard 初始化容器……"
+log "正在启动 TXBoard 服务……"
 docker compose up -d --remove-orphans txboard
 
-log "正在初始化 TXBoard……"
-docker compose exec -T txboard php artisan txboard:install </dev/null
+if [[ "$INSTALL_TYPE" == fresh ]]; then
+  log "正在初始化全新 TXBoard 数据库与管理员……"
+  docker compose exec -T txboard php artisan txboard:install </dev/null
+fi
 
 log "正在重启 TXBoard 并加载正式配置……"
 docker compose restart txboard >/dev/null
