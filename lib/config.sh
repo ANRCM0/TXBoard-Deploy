@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+
+rewrite_ports() {
+  local publish_https="$1" tmp
+  tmp="$(mktemp)"
+  awk -v https="$publish_https" '
+    BEGIN { in_ports=0 }
+    $0=="    ports:" {
+      print
+      print "      - \"\${TXBOARD_HTTP_BIND:-0.0.0.0}:\${TXBOARD_HTTP_PORT:-80}:80\""
+      if (https==1) print "      - \"\${TXBOARD_HTTPS_BIND:-0.0.0.0}:\${TXBOARD_HTTPS_PORT:-443}:443\""
+      in_ports=1
+      next
+    }
+    in_ports && $0=="    healthcheck:" { in_ports=0; print; next }
+    in_ports { next }
+    { print }
+  ' "$TXBOARD_INSTALL_DIR/compose.yaml" > "$tmp"
+  mv "$tmp" "$TXBOARD_INSTALL_DIR/compose.yaml"
+  chmod 644 "$TXBOARD_INSTALL_DIR/compose.yaml"
+}
+
+config_show() {
+  need_install
+  cat <<EOF
+Install dir:       $TXBOARD_INSTALL_DIR
+Mode:              $(detect_mode)
+Test mode:         $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_TEST_MODE)
+Image:             $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_IMAGE)
+APP_URL:           $(env_get "$TXBOARD_INSTALL_DIR/api.env" APP_URL)
+Database mode:     $(database_mode)
+Database host:     $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_HOST)
+Database port:     $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_PORT)
+Database name:     $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_DATABASE)
+HTTP bind:         $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_BIND)
+HTTP port:         $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_PORT)
+HTTPS port:        $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTPS_PORT)
+Backup retention:  $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION)
+MCP Gateway:       $(if [[ "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_ENABLE_MCP)" == "true" ]]; then printf 'true'; else printf 'false'; fi)
+MCP URL:           $(if [[ "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_ENABLE_MCP)" == "true" ]]; then printf '%s/mcp' "$(env_get "$TXBOARD_INSTALL_DIR/api.env" APP_URL)"; else printf 'disabled'; fi)
+EOF
+}
+
+config_access() {
+  require_tty; docker_ok; need_install
+  local choice mode domain host http_port https_port url bind site secure publish_https tmp
+  choice="$(choose "1 自动 HTTPS  2 外部 HTTPS  3 HTTP  0 返回" "1" "3")"
+  [[ "$choice" != "0" ]] || return 0
+
+  domain=""; host=""; publish_https=0; bind="0.0.0.0"; site=":80"; secure=false
+  https_port="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTPS_PORT)"; https_port="${https_port:-443}"
+
+  case "$choice" in
+    1)
+      mode=auto-https
+      domain="$(prompt "域名" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DOMAIN)")"
+      valid_domain "$domain" || die "invalid domain"
+      http_port="$(prompt "HTTP 端口" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_PORT)")"
+      https_port="$(prompt "HTTPS 端口" "$https_port")"
+      valid_port "$http_port" || die "invalid HTTP port"
+      valid_port "$https_port" || die "invalid HTTPS port"
+      url="https://$domain"; site="$domain"; secure=true; publish_https=1
+      ;;
+    2)
+      mode=external-https
+      domain="$(prompt "域名" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DOMAIN)")"
+      valid_domain "$domain" || die "invalid domain"
+      http_port="$(prompt "本地 HTTP 端口" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_PORT)")"
+      valid_port "$http_port" || die "invalid HTTP port"
+      url="https://$domain"; bind="127.0.0.1"; secure=true
+      ;;
+    3)
+      mode=http
+      host="$(prompt "访问主机/IP" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_PUBLIC_HOST)")"
+      [[ -n "$host" && ! "$host" =~ [[:space:]] ]] || die "invalid host"
+      http_port="$(prompt "HTTP 端口" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_PORT)")"
+      valid_port "$http_port" || die "invalid HTTP port"
+      [[ "$http_port" == "80" ]] && url="http://$host" || url="http://$host:$http_port"
+      ;;
+  esac
+
+  tmp="$(mktemp -d)"
+  cp "$TXBOARD_INSTALL_DIR/.env" "$TXBOARD_INSTALL_DIR/api.env" "$TXBOARD_INSTALL_DIR/compose.yaml" "$tmp/"
+
+  env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_MODE "$mode"
+  env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DOMAIN "$domain"
+  env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_PUBLIC_HOST "$host"
+  env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_BIND "$bind"
+  env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_PORT "$http_port"
+  env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTPS_PORT "$https_port"
+  env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_SITE_ADDRESS "$site"
+  env_set "$TXBOARD_INSTALL_DIR/api.env" APP_URL "$url"
+  env_set "$TXBOARD_INSTALL_DIR/api.env" SESSION_SECURE_COOKIE "$secure"
+  rewrite_ports "$publish_https"
+
+  if ! (cd "$TXBOARD_INSTALL_DIR" && docker compose config >/dev/null) ||
+     ! compose up -d --force-recreate --wait txboard; then
+    cp "$tmp/.env" "$TXBOARD_INSTALL_DIR/.env"
+    cp "$tmp/api.env" "$TXBOARD_INSTALL_DIR/api.env"
+    cp "$tmp/compose.yaml" "$TXBOARD_INSTALL_DIR/compose.yaml"
+    compose up -d --force-recreate txboard || true
+    rm -rf "$tmp"
+    die "configuration failed and was rolled back"
+  fi
+
+  rm -rf "$tmp"
+  log "public URL updated: $url"
+}
+
+config_mcp() {
+  require_tty; docker_ok; need_install
+  local current default target tmp
+  current="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_ENABLE_MCP)"
+  [[ "$current" == "true" ]] || current=false
+  default="N"
+  [[ "$current" == "true" ]] && default="Y"
+
+  if confirm "启用 MCP 网关？" "$default"; then
+    target=true
+  else
+    target=false
+  fi
+
+  [[ "$target" != "$current" ]] || { log "MCP Gateway unchanged: $current"; return 0; }
+
+  if [[ "$target" == "true" ]] &&
+     ! compose run -T --rm --no-deps --entrypoint sh txboard -lc 'test -f /opt/txboard-mcp/dist/index.js' >/dev/null; then
+    die "current TXBoard image does not include the embedded MCP Gateway; update TXBoard before enabling MCP"
+  fi
+
+  tmp="$(mktemp)"
+  cp "$TXBOARD_INSTALL_DIR/.env" "$tmp"
+  env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_ENABLE_MCP "$target"
+
+  if ! (cd "$TXBOARD_INSTALL_DIR" && docker compose config >/dev/null) ||
+     ! compose up -d --force-recreate --wait txboard; then
+    cp "$tmp" "$TXBOARD_INSTALL_DIR/.env"
+    compose up -d --force-recreate txboard || true
+    rm -f "$tmp"
+    die "MCP configuration failed and was rolled back"
+  fi
+
+  rm -f "$tmp"
+  log "MCP Gateway: $target"
+  if [[ "$target" == "true" ]]; then
+    log "MCP endpoint: $(env_get "$TXBOARD_INSTALL_DIR/api.env" APP_URL)/mcp"
+  fi
+}
+
+config_menu() {
+  local choice value image tag
+  while true; do
+    choice="$(choose "1 查看配置  2 域名与端口  3 镜像版本  4 备份保留  5 MCP 网关  0 返回" "1" "5")"
+    case "$choice" in
+      1) config_show; pause ;;
+      2) config_access; pause ;;
+      3)
+        image="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_IMAGE)"
+        tag="$(prompt "镜像版本" "${image##*:}")"
+        [[ "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || { warn "invalid tag"; continue; }
+        if [[ -f "$TXBOARD_INSTALL_DIR/update.sh" ]]; then
+          bash "$TXBOARD_INSTALL_DIR/update.sh" --dir "$TXBOARD_INSTALL_DIR" --tag "$tag"
+        else
+          fetch "$TXBOARD_DEPLOY_RAW_BASE/update.sh" | bash -s -- --dir "$TXBOARD_INSTALL_DIR" --tag "$tag"
+        fi
+        pause
+        ;;
+      4)
+        value="$(prompt "备份保留数量（0 为全部保留）" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION)")"
+        [[ "$value" =~ ^[0-9]+$ ]] || { warn "invalid retention"; continue; }
+        env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION "$value"
+        compose up -d --force-recreate backup
+        pause
+        ;;
+      5)
+        config_mcp
+        pause
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
