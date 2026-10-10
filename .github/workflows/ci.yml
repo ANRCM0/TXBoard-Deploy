@@ -26,7 +26,7 @@ jobs:
       - name: Check installer and manager regressions
         run: |
           grep -Fq 'docker compose run -T --rm --no-deps --entrypoint sh backup -lc' lib/install-database.sh
-          grep -Fq 'Switch to automatic host-MySQL mode instead?' lib/install-database.sh
+          grep -Fq '是否切换为自动识别本机 MySQL 模式？' lib/install-database.sh
           grep -Fq '使用本机已有 MySQL（系统 / 1Panel / Docker）' lib/install-database.sh
           grep -Fq '检测到本机可使用的 MySQL/MariaDB 实例：' lib/install-database.sh
           grep -Fq '/www/server/mysql/bin/mysql' lib/install-database.sh
@@ -39,12 +39,12 @@ jobs:
           grep -Fq 'bootstrap_piped_installer()' install.sh
           grep -Fq 'cat >/dev/null &' install.sh
           grep -Fq 'bash "$tmp" "$@" </dev/null' install.sh
-          grep -Fq 'Docker volumes will be preserved' install.sh
+          grep -Fq 'Docker 数据卷会保留' install.sh
           grep -Fq 'refusing to clean dangerous installation directory' install.sh
           grep -Fq 'explicitly enable test deployment mode with --test-mode' install.sh
           grep -Fq 'TXBOARD_TEST_MODE=$TEST_MODE' install.sh
           grep -Fq 'cannot connect to $DB_MODE MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE' lib/install-database.sh
-          grep -Fq 'Docker + Compose v2 not found. Install Docker automatically?' install.sh
+          grep -Fq '未发现 Docker + Compose v2，是否自动安装？' install.sh
           grep -Fq 'docker compose run -T --rm -e BACKUP_INTERVAL=0 -e BACKUP_RETENTION=0 backup' update.sh
           grep -Fq 'txboard_guard_install' install.sh
           grep -Fq 'txboard_guard_update' update.sh
