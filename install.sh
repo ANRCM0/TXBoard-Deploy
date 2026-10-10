@@ -1224,8 +1224,7 @@ Image:       $IMAGE
 MCP Gateway: $MCP_ENABLED
 MCP URL:     $([[ "$MCP_ENABLED" == "true" ]] && printf '%s/mcp' "$APP_URL" || printf 'disabled')
 
-The administrator password was printed by txboard:install above.
-Store it now; the deploy script does not save that password.
+$([[ "$INSTALL_TYPE" == fresh ]] && printf '%s' 'Fresh install: save the administrator password printed above.' || printf '%s' 'Imported users and administrators keep their original accounts and password hashes.')
 
 Management:
   sudo txboard

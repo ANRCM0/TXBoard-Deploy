@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 IDENT = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
-MIGRATION = re.compile(r"^[0-9]{4}_[0-9]{2}_[0-9]{2}_[0-9]{6}_[a-z0-9_]+$")
+MIGRATION = re.compile(r"^[0-9]{4}_[0-9]{2}_[0-9]{2}_(?:[0-9]{6}_)?[a-z0-9_]+$")
 ALLOWED = {"migrations", "failed_jobs", "personal_access_tokens", "password_reset_tokens",
            "password_resets", "jobs", "job_batches", "cache", "cache_locks", "sessions"}
 FORBIDDEN = re.compile(r"^\s*(?:USE\s+|(?:CREATE|DROP|ALTER)\s+(?:DATABASE|SCHEMA|USER)\b|"
