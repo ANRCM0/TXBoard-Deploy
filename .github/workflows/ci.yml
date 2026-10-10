@@ -452,6 +452,9 @@ jobs:
         run: |
           if [ -f /tmp/txboard-deploy-smoke/compose.yaml ]; then
             cd /tmp/txboard-deploy-smoke
+            sudo docker compose ps -a || true
+            sudo docker compose logs --tail=150 txboard || true
+            sudo docker inspect -f '{{json .State.Health}}' txboard-txboard-1 || true
             sudo docker compose down -v --remove-orphans || true
           fi
           sudo rm -rf /tmp/txboard-deploy-smoke

@@ -71,7 +71,15 @@ setup() {
 }
 update() { TXBOARD_INSTALL_DIR="$MOCK_DIR" bash "$repo/update.sh" --yes --tag dev; }
 setup native
-update > "$tmp/native.log" 2>&1 || { tail -50 "$tmp/native.log"; exit 1; }
+update > "$tmp/native.log" 2>&1 || {
+  tail -50 "$tmp/native.log"
+  echo "Mock Docker events:" >&2
+  cat "$MOCK_EVENTS" >&2
+  echo "PATH=$PATH" >&2
+  command -v docker >&2
+  "$tmp/bin/docker" compose version || true
+  exit 1
+}
 grep -Fxq 'TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:dev' "$MOCK_DIR/.env"
 grep -Fq migration-attempted "$MOCK_EVENTS"
 test -s "$MOCK_DIR/api.env"
