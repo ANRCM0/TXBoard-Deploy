@@ -165,6 +165,28 @@ container_id="$(docker compose ps -q txboard 2>/dev/null || true)"
 old_image_id="$(docker inspect "$container_id" --format '{{.Image}}' 2>/dev/null || true)"
 [[ "$old_image_id" == sha256:* ]] || die "could not pin old running image"
 schema_preflight
+# Older TXBoard-Deploy installations had a backup.sh without CHECKSUMS and
+# without a strict failure contract. Upgrade that script before any downtime.
+if ! grep -Fq 'CHECKSUMS.sha256' "$INSTALL_DIR/backup.sh" 2>/dev/null; then
+  log "upgrading legacy backup script before database migration..."
+  safe_backup="$(mktemp "$INSTALL_DIR/.safe-backup.XXXXXXXX")"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$DEPLOY_RAW_BASE/backup.sh" -o "$safe_backup" ||
+      die "cannot retrieve verified upgrade-capable backup helper"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$safe_backup" "$DEPLOY_RAW_BASE/backup.sh" ||
+      die "cannot retrieve verified upgrade-capable backup helper"
+  else
+    die "curl or wget required to upgrade old backup script"
+  fi
+  sh -n "$safe_backup" &&
+    grep -Fq 'CHECKSUMS.sha256' "$safe_backup" &&
+    grep -Fq 'APP_KEY' "$safe_backup" &&
+    grep -Fq 'BACKUP_RETENTION' "$safe_backup" ||
+    die "retrieved backup script failed validation"
+  chmod 700 "$safe_backup"
+  mv -f "$safe_backup" "$INSTALL_DIR/backup.sh"
+fi
 if [[ "$ASSUME_YES" -eq 0 ]]; then
   [[ -r /dev/tty ]] || die "confirmation requires TTY (or --yes)"
   printf 'Old: %s\nNew: %s\nLegacy DB: backup, downtime and migrations required. Continue? [Y/n]: ' "$current_image" "$new_image" > /dev/tty
@@ -219,6 +241,32 @@ docker compose run -T --rm -e BACKUP_INTERVAL=0 -e BACKUP_RETENTION=0 backup </d
 new_backup="$(find "$INSTALL_DIR/backups" -mindepth 1 -maxdepth 1 -type d -name '????????T??????Z' -printf '%f\n' 2>/dev/null | sort | tail -1 || true)"
 [[ -n "$new_backup" && "$new_backup" != "$old_backup" ]] || die "backup did not create a new archive"
 backup_path="$INSTALL_DIR/backups/$new_backup"
+# The old backup Compose binds storage/app, but not all plugin/theme files.
+# Preserve those host paths plus deployment configuration in this archive.
+cp -p "$INSTALL_DIR/.env" "$backup_path/deploy.env" ||
+  die "cannot preserve deployment settings"
+cp -p "$INSTALL_DIR/compose.yaml" "$backup_path/compose.yaml" ||
+  die "cannot preserve deployment compose"
+for spec in 'data/plugins:plugins.tar.gz' 'data/storage/theme:storage-theme.tar.gz'; do
+  subpath="$INSTALL_DIR/${spec%%:*\}"
+  filename="${spec##*:\}"
+  if [[ -d "$subpath" ]]; then
+    tar -czf "$backup_path/$filename" -C "$subpath" . ||
+      die "cannot back up $subpath"
+  fi
+done
+(
+  cd "$backup_path"
+  sha256sum deploy.env compose.yaml > CHECKSUMS.additional
+  for name in plugins.tar.gz storage-theme.tar.gz; do
+    if [[ -f "$name" ]]; then
+      gzip -t "$name" || exit 1
+      sha256sum "$name" >> CHECKSUMS.additional
+    fi
+  done
+  cat CHECKSUMS.additional >> CHECKSUMS.sha256
+  rm -f CHECKSUMS.additional
+) || die "cannot checksum complete persistent files"
 (cd "$backup_path" && test -s env && test -s db.sql.gz && test -s MANIFEST && test -s CHECKSUMS.sha256 && sha256sum -c CHECKSUMS.sha256 && gzip -t db.sql.gz) ||
   die "backup archive checksum or gzip validation failed"
 log "backup archive verified: $backup_path (separate restoration rehearsal is still needed)"
@@ -228,6 +276,7 @@ phase=migrate
 attempted_migrate=1
 log "running normal Laravel schema migrations using the TARGET image..."
 target_artisan migrate --force || die "Laravel migrations failed; manual database recovery required"
+schema_preflight
 migration_status="$(target_artisan migrate:status)" || die "cannot inspect migration status"
 if grep -Eiq '(^|[[:space:]])Pending([[:space:]]|$)' <<< "$migration_status"; then
   die "migrations remain pending"
