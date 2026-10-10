@@ -398,18 +398,7 @@ jobs:
           sudo sed -i 's|^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest$|TXBOARD_IMAGE=ghcr.io/ANRCM0/txboard:latest|' .env
           sudo grep -q '^TXBOARD_IMAGE=ghcr.io/ANRCM0/txboard:latest$' .env
           cat /tmp/txboard-deploy-smoke/update.sh | sudo -E bash -s -- --dir /tmp/txboard-deploy-smoke --yes
-          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest
-          sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
-
-      - name: Cleanup
-        if: always()
-        run: |
-          if [ -f /tmp/txboard-deploy-smoke/compose.yaml ]; then
-            cd /tmp/txboard-deploy-smoke
-            sudo docker compose down -v --remove-orphans || true
-          fi
-          sudo rm -rf /tmp/txboard-deploy-smoke
- .env
+          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest$' .env
           sudo find backups -mindepth 2 -maxdepth 2 -name CHECKSUMS.sha256 | grep -q .
           sudo test -f .upgrade.lock
           sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
