@@ -1,0 +1,467 @@
+name: deploy-ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check shell syntax
+        run: |
+          bash -n install.sh
+          bash -n update.sh
+          sh -n backup.sh
+          bash -n scripts/test-upgrade.sh
+          bash -n scripts/test-detect.sh
+          bash -n scripts/test-install-flow.sh
+          bash -n txboard.sh
+          for f in lib/*.sh; do bash -n "$f"; done
+
+      - name: Check installer and manager regressions
+        run: |
+          grep -Fq 'docker compose run -T --rm --no-deps --entrypoint sh backup -lc' lib/install-database.sh
+          grep -Fq '是否切换为自动识别本机 MySQL 模式？' lib/install-database.sh
+          grep -Fq '使用本机已有 MySQL（系统 / 1Panel / Docker）' lib/install-database.sh
+          grep -Fq '检测到本机可使用的 MySQL/MariaDB 实例：' lib/install-database.sh
+          grep -Fq '/www/server/mysql/bin/mysql' lib/install-database.sh
+          grep -Fq 'mysql_system_socket_candidates()' lib/install-database.sh
+          grep -Fq 'TXBOARD_DB_SYSTEM_SOCKET' install.sh
+          grep -Fq 'TXBOARD_CLEAN_INSTALL_DIR' install.sh
+          grep -Fq 'verify_database_empty_for_install' install.sh
+          grep -Fq 'LOCAL_DB_RESET_PENDING=1' lib/install-database.sh
+          grep -Fq 'preexisting_tables' lib/install-database.sh
+          grep -Fq 'bootstrap_piped_installer()' install.sh
+          grep -Fq 'cat >/dev/null &' install.sh
+          grep -Fq 'bash "$tmp" "$@" </dev/null' install.sh
+          grep -Fq 'Docker 数据卷会保留' install.sh
+          grep -Fq 'refusing to clean dangerous installation directory' install.sh
+          grep -Fq 'explicitly enable test deployment mode with --test-mode' install.sh
+          grep -Fq 'TXBOARD_TEST_MODE=$TEST_MODE' install.sh
+          grep -Fq 'cannot connect to $DB_MODE MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE' lib/install-database.sh
+          grep -Fq '未发现 Docker + Compose v2，是否自动安装？' install.sh
+          grep -Fq 'docker compose run -T --rm -e BACKUP_INTERVAL=0 -e BACKUP_RETENTION=0 backup' update.sh
+          grep -Fq 'txboard_guard_install' install.sh
+          grep -Fq 'txboard_guard_update' update.sh
+          grep -Fq 'lib/detect.sh' install.sh
+          grep -Fq 'detect) docker_ok' txboard.sh
+          grep -Fq 'detect_schema' update.sh
+          grep -Fq 'legacy v2_* schema detected' update.sh
+          ! grep -Fq 'TX_NATIVE_TABLES' update.sh
+          grep -Fq 'target_artisan migrate --force' update.sh
+          grep -Fq 'attempted_migrate == 0' update.sh
+          grep -Fq 'compose run -T --rm -e BACKUP_INTERVAL=0 backup' lib/backup.sh
+          grep -Fq 'compose run -T --rm --no-deps --entrypoint sh backup -lc' lib/diagnose.sh
+          bash txboard.sh help | grep -q 'logs \[service\]'
+          bash txboard.sh help | grep -q 'config-show'
+          bash txboard.sh help | grep -q 'backups'
+
+      - name: Test installer order and fresh-database protection
+        run: bash scripts/test-install-flow.sh
+
+      - name: Test Docker service discovery and ownership safeguards
+        run: bash scripts/test-detect.sh
+
+      - name: Exercise database-aware updater fail-closed state machine
+        run: bash scripts/test-upgrade.sh
+
+      - name: Check XBoard migration plan safety, legacy filenames and dump input
+        run: python3 scripts/test-xboard-plan.py
+
+      - name: Exercise XBoard import mapping against real MySQL 8.4
+        run: bash scripts/test-xboard-mysql.sh
+
+      - name: Check BT-Panel local MySQL client discovery
+        run: |
+          sudo mkdir -p /www/server/mysql/bin
+          printf '#!/bin/sh\nexit 0\n' | sudo tee /www/server/mysql/bin/mysql >/dev/null
+          sudo chmod 755 /www/server/mysql/bin/mysql
+          trap 'sudo rm -f /www/server/mysql/bin/mysql; sudo rmdir /www/server/mysql/bin 2>/dev/null || true; sudo rmdir /www/server/mysql 2>/dev/null || true; sudo rmdir /www/server 2>/dev/null || true; sudo rmdir /www 2>/dev/null || true' EXIT
+          mkdir -p /tmp/txboard-empty-path
+          detected="$(PATH=/tmp/txboard-empty-path /bin/bash -c 'source lib/install-database.sh; mysql_system_client')"
+          test "$detected" = "/www/server/mysql/bin/mysql"
+
+      - name: Check system MySQL socket discovery
+        run: |
+          socket=/tmp/txboard-mysql-ci.sock
+          client=/tmp/txboard-mysql-client-ci
+          python3 - "$socket" <<'PY' &
+          import os
+          import socket
+          import sys
+          import time
+          path = sys.argv[1]
+          try:
+              os.unlink(path)
+          except FileNotFoundError:
+              pass
+          sock = socket.socket(socket.AF_UNIX)
+          sock.bind(path)
+          sock.listen(1)
+          time.sleep(30)
+          PY
+          socket_pid=$!
+          trap 'kill "$socket_pid" >/dev/null 2>&1 || true; rm -f "$socket" "$client"' EXIT
+          for i in $(seq 1 20); do
+            [ -S "$socket" ] && break
+            sleep 0.1
+          done
+          [ -S "$socket" ]
+
+          cat > "$client" <<'SH'
+          #!/bin/sh
+          target="${TXBOARD_TEST_SOCKET:?}"
+          if [ "${1:-}" = "--print-defaults" ]; then
+            printf '%s\n' "--socket=$target"
+            exit 0
+          fi
+          found=0
+          for arg in "$@"; do
+            [ "$arg" = "--socket=$target" ] && found=1
+          done
+          [ "$found" -eq 1 ] || exit 1
+          exit 0
+          SH
+          chmod 755 "$client"
+
+          TXBOARD_TEST_SOCKET="$socket" /bin/bash -c '
+            source lib/install-database.sh
+            DB_SYSTEM_SOCKET=""
+            resolved="$(mysql_system_resolve_socket /tmp/txboard-mysql-client-ci secret)"
+            test "$resolved" = "$TXBOARD_TEST_SOCKET"
+          '
+
+      - name: Reject unattended install into non-empty directory by default
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-residue-refuse-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18087
+          TXBOARD_IMAGE_TAG: latest
+        run: |
+          sudo mkdir -p "$TXBOARD_INSTALL_DIR"
+          printf 'legacy\n' | sudo tee "$TXBOARD_INSTALL_DIR/legacy.txt" >/dev/null
+          trap 'sudo rm -rf "$TXBOARD_INSTALL_DIR"' EXIT
+
+          set +e
+          output="$(sudo -E bash install.sh --yes --render-only 2>&1)"
+          status=$?
+          set -e
+
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -q 'existing files found in /tmp/txboard-residue-refuse-ci'
+          sudo test -f "$TXBOARD_INSTALL_DIR/legacy.txt"
+
+      - name: Clean old install path only when explicitly allowed
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-residue-clean-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18088
+          TXBOARD_IMAGE_TAG: latest
+        run: |
+          sudo mkdir -p "$TXBOARD_INSTALL_DIR/old-data"
+          printf 'legacy\n' | sudo tee "$TXBOARD_INSTALL_DIR/legacy.txt" >/dev/null
+          printf 'legacy-data\n' | sudo tee "$TXBOARD_INSTALL_DIR/old-data/file.txt" >/dev/null
+          trap 'sudo rm -rf "$TXBOARD_INSTALL_DIR"' EXIT
+
+          sudo -E bash install.sh --yes --clean-install-dir --render-only
+
+          sudo test ! -e "$TXBOARD_INSTALL_DIR/legacy.txt"
+          sudo test ! -e "$TXBOARD_INSTALL_DIR/old-data"
+          sudo test -f "$TXBOARD_INSTALL_DIR/compose.yaml"
+          sudo test -f "$TXBOARD_INSTALL_DIR/.env"
+          sudo test -f "$TXBOARD_INSTALL_DIR/api.env"
+
+      - name: Replace a residual file target when explicitly allowed
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-residue-file-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18089
+          TXBOARD_IMAGE_TAG: latest
+        run: |
+          printf 'legacy-file\n' | sudo tee "$TXBOARD_INSTALL_DIR" >/dev/null
+          trap 'sudo rm -rf "$TXBOARD_INSTALL_DIR"' EXIT
+
+          sudo -E bash install.sh --yes --clean-install-dir --render-only
+
+          sudo test -d "$TXBOARD_INSTALL_DIR"
+          sudo test -f "$TXBOARD_INSTALL_DIR/compose.yaml"
+
+      - name: Refuse cleanup after dangerous path normalization
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-residue-danger/..
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18090
+          TXBOARD_IMAGE_TAG: latest
+        run: |
+          set +e
+          output="$(sudo -E bash install.sh --yes --clean-install-dir --render-only 2>&1)"
+          status=$?
+          set -e
+
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -q 'refusing to clean dangerous installation directory: /tmp'
+
+      - name: Render deployment
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18080
+          TXBOARD_IMAGE_TAG: latest
+        run: |
+          sudo -E bash install.sh --yes --render-only
+          test -f /tmp/txboard-deploy-ci/compose.yaml
+          test -f /tmp/txboard-deploy-ci/.env
+          test -f /tmp/txboard-deploy-ci/api.env
+          sudo docker compose -f /tmp/txboard-deploy-ci/compose.yaml \
+            --env-file /tmp/txboard-deploy-ci/.env config >/dev/null
+
+      - name: Verify installed backup script rejects partial database dumps
+        run: sudo bash scripts/test-backup.sh /tmp/txboard-deploy-ci/backup.sh
+
+      - name: Reject wildcard public host outside test mode
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-standard-wildcard-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 0.0.0.0
+          TXBOARD_HTTP_PORT: 18084
+          TXBOARD_IMAGE_TAG: latest
+        run: |
+          set +e
+          output="$(sudo -E bash install.sh --yes --render-only 2>&1)"
+          status=$?
+          set -e
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -q 'public host cannot be 0.0.0.0 in standard deployment mode'
+          sudo rm -rf /tmp/txboard-standard-wildcard-ci
+
+      - name: Render test deployment with wildcard public host
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-test-mode-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_TEST_MODE: "true"
+          TXBOARD_PUBLIC_HOST: 0.0.0.0
+          TXBOARD_HTTP_PORT: 18085
+          TXBOARD_IMAGE_TAG: latest
+        run: |
+          sudo -E bash install.sh --yes --render-only
+          sudo grep -q '^TXBOARD_TEST_MODE=true$' /tmp/txboard-test-mode-ci/.env
+          sudo grep -q '^TXBOARD_PUBLIC_HOST=0.0.0.0$' /tmp/txboard-test-mode-ci/.env
+          sudo grep -q '^APP_URL=http://0.0.0.0:18085$' /tmp/txboard-test-mode-ci/api.env
+          sudo rm -rf /tmp/txboard-test-mode-ci
+
+      - name: Require image-only Compose
+        run: |
+          ! sudo grep -Eq '^[[:space:]]*build:' /tmp/txboard-deploy-ci/compose.yaml
+          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest$' /tmp/txboard-deploy-ci/.env
+          sudo grep -q '^TXBOARD_MODE=http$' /tmp/txboard-deploy-ci/.env
+          test "$(sudo stat -c '%a' /tmp/txboard-deploy-ci/.env)" = "600"
+          test "$(sudo stat -c '%a' /tmp/txboard-deploy-ci/api.env)" = "600"
+
+      - name: Render external database deployment
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-external-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18082
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_DB_MODE: external
+          TXBOARD_DB_HOST: mysql.example.internal
+          TXBOARD_DB_PORT: 3307
+          TXBOARD_DB_DATABASE: txboard_ci
+          TXBOARD_DB_USERNAME: txboard_ci
+          TXBOARD_DB_PASSWORD: ci-secret
+        run: |
+          sudo -E bash install.sh --yes --render-only
+          cd /tmp/txboard-deploy-external-ci
+          sudo docker compose --env-file .env config >/dev/null
+          ! sudo docker compose --env-file .env config --services | grep -qx database
+          sudo grep -q '^TXBOARD_DB_MODE=external$' .env
+          sudo grep -q '^TXBOARD_DB_HOST=mysql.example.internal$' .env
+          sudo grep -q '^TXBOARD_DB_PORT=3307$' .env
+          sudo grep -q '^DB_HOST=mysql.example.internal$' api.env
+          sudo grep -q '^DB_PORT=3307$' api.env
+          sudo grep -q 'host.docker.internal:host-gateway' compose.yaml
+          sudo rm -rf /tmp/txboard-deploy-external-ci
+
+      - name: Render host Docker database deployment
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-host-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18086
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_DB_MODE: host
+          TXBOARD_DB_CONTAINER: txboard-host-mysql-ci
+        run: |
+          sudo docker run -d --name txboard-host-mysql-ci \
+            -e MYSQL_ROOT_PASSWORD=ci-root-password \
+            mysql:8.4.11 >/dev/null
+          trap 'sudo docker rm -f txboard-host-mysql-ci >/dev/null 2>&1 || true; sudo docker network rm txboard-db-link >/dev/null 2>&1 || true; sudo rm -rf /tmp/txboard-deploy-host-ci' EXIT
+
+          for i in $(seq 1 30); do
+            if sudo docker exec -e MYSQL_PWD=ci-root-password txboard-host-mysql-ci \
+              mysqladmin ping -uroot --silent >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+
+          sudo -E bash install.sh --yes --render-only
+          cd /tmp/txboard-deploy-host-ci
+          sudo docker compose --env-file .env config >/dev/null
+          ! sudo docker compose --env-file .env config --services | grep -qx database
+          sudo grep -q '^TXBOARD_DB_MODE=host$' .env
+          sudo grep -q '^TXBOARD_DB_HOST_KIND=docker-container$' .env
+          sudo grep -q '^TXBOARD_DB_HOST=txboard-host-mysql-ci$' .env
+          sudo grep -q '^TXBOARD_DB_LINK_NETWORK=txboard-db-link$' .env
+          sudo grep -q 'name: txboard-db-link' compose.yaml
+          sudo docker inspect -f '{{json .NetworkSettings.Networks}}' txboard-host-mysql-ci | grep -q 'txboard-db-link'
+
+      - name: Reject stale managed MySQL volume
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-stale-volume-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18083
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_DB_MODE: local
+        run: |
+          sudo docker volume create txboard_database-data >/dev/null
+          trap 'sudo docker volume rm txboard_database-data >/dev/null 2>&1 || true; sudo rm -rf /tmp/txboard-stale-volume-ci' EXIT
+
+          set +e
+          output="$(sudo -E bash install.sh --yes 2>&1)"
+          status=$?
+          set -e
+
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -q 'existing managed MySQL volume txboard_database-data detected'
+          test ! -e /tmp/txboard-stale-volume-ci/.env
+
+      - name: Check mixed-case override is normalized
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-mixed-case-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18091
+          TXBOARD_IMAGE_REPO: ghcr.io/ANRCM0/TXBoard
+        run: |
+          sudo -E bash install.sh --yes --render-only
+          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest$' "$TXBOARD_INSTALL_DIR/.env"
+          sudo rm -rf "$TXBOARD_INSTALL_DIR"
+
+      - name: Check public image manifest
+        run: |
+          image="$(sudo sed -n 's/^TXBOARD_IMAGE=//p' /tmp/txboard-deploy-ci/.env | tail -1)"
+          test "$image" = 'ghcr.io/anrcm0/txboard:latest'
+          docker manifest inspect "$image" >/dev/null
+
+  smoke-install:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      TXBOARD_DEPLOY_RAW_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run unattended full installation
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-deploy-smoke
+          TXBOARD_ADMIN_EMAIL: smoke@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18081
+          TXBOARD_IMAGE_TAG: dev-sha-c8492dc2e120
+          TXBOARD_BACKUP_RETENTION: 1
+          TXBOARD_ENABLE_MCP: "true"
+        run: |
+          python3 -c 'import sys,time; data=open("install.sh","rb").read(); [(sys.stdout.buffer.write(data[i:i+64]), sys.stdout.buffer.flush(), time.sleep(0.002)) for i in range(0,len(data),64)]' |
+            sudo -E bash -s -- --yes
+
+      - name: Verify installed state
+        run: |
+          cd /tmp/txboard-deploy-smoke
+          sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
+          curl -fsS http://127.0.0.1:18081/api/health | grep -q '"status":"ok"'
+          sudo grep -q '^TXBOARD_ENABLE_MCP=true$' .env
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18081/mcp)" = "401"
+          sudo test -x /tmp/txboard-deploy-smoke/txboard.sh
+          sudo test -x /tmp/txboard-deploy-smoke/update.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/common.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/backup.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/detect.sh
+          sudo txboard detect | grep -q 'txboard-txboard-1'
+          # Interactive installer recognizes the existing healthy instance and
+          # exits safely when the operator selects 0 (no reinstallation).
+          printf '\n\n\n0\n' | timeout 30s script -q -e -c "sudo bash $GITHUB_WORKSPACE/install.sh --dir /tmp/txboard-deploy-smoke --email smoke@example.com --mode http" /dev/null >/tmp/txboard-detect-interactive.log 2>&1
+          grep -q '已退出，现有 TXBoard 未修改' /tmp/txboard-detect-interactive.log
+          sudo test -f /tmp/txboard-deploy-smoke/compose.yaml
+          # A second installer must not overwrite this healthy installation,
+          # even if the user requested --clean-install-dir explicitly.
+          if sudo bash "$GITHUB_WORKSPACE/install.sh" --yes --clean-install-dir --dir /tmp/txboard-deploy-smoke --email ci@example.com --mode http --public-host 127.0.0.1 >/tmp/txboard-reinstall-test.log 2>&1; then
+            echo "ERROR: installer overwrote a running TXBoard" >&2
+            exit 1
+          fi
+          grep -q 'existing running/stopped TXBoard' /tmp/txboard-reinstall-test.log
+          sudo test -f /tmp/txboard-deploy-smoke/compose.yaml
+          # A different path cannot silently create another instance using the
+          # same hardcoded Compose project name or claim the live deployment.
+          if sudo bash "$GITHUB_WORKSPACE/install.sh" --yes --dir /tmp/txboard-second-ci --email ci@example.com --mode http --public-host 127.0.0.1 >/tmp/txboard-foreign-test.log 2>&1; then
+            echo "ERROR: installer attempted to create conflicting TXBoard" >&2
+            exit 1
+          fi
+          grep -q 'existing running/stopped TXBoard' /tmp/txboard-foreign-test.log
+          test ! -f /tmp/txboard-second-ci/compose.yaml
+          sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
+          sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo txboard status >/dev/null
+          sudo txboard config-show >/dev/null
+          sudo txboard backups >/dev/null
+          sudo txboard help | grep -q 'Quick commands'
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
+          sudo env -u TXBOARD_INSTALL_DIR /tmp/txboard-deploy-smoke/txboard.sh --dir /tmp/txboard-deploy-smoke status >/dev/null
+          # Simulate an existing install saved before GHCR path normalization.
+          sudo sed -i 's|^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:dev-sha-c8492dc2e120$|TXBOARD_IMAGE=ghcr.io/ANRCM0/txboard:dev-sha-c8492dc2e120|' .env
+          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/ANRCM0/txboard:dev-sha-c8492dc2e120$' .env
+          cat /tmp/txboard-deploy-smoke/update.sh | sudo -E bash -s -- --dir /tmp/txboard-deploy-smoke --yes
+          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:dev-sha-c8492dc2e120$' .env
+          sudo find backups -mindepth 2 -maxdepth 2 -name CHECKSUMS.sha256 | grep -q .
+          sudo test -f .upgrade.lock
+          sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
+
+      - name: Exercise full isolated XBoard-style backup import
+        env:
+          TXBOARD_IMPORT_TEST_TAG: dev-sha-c8492dc2e120
+        run: sudo -E bash scripts/test-import-roundtrip.sh
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -f /tmp/txboard-deploy-smoke/compose.yaml ]; then
+            cd /tmp/txboard-deploy-smoke
+            sudo docker compose ps -a || true
+            sudo docker compose logs --tail=150 txboard || true
+            sudo docker inspect -f '{{json .State.Health}}' txboard-txboard-1 || true
+            sudo docker compose down -v --remove-orphans || true
+          fi
+          sudo rm -rf /tmp/txboard-deploy-smoke

@@ -1,0 +1,63 @@
+name: deploy-mcp-ci
+
+on:
+  pull_request:
+    paths:
+      - "install.sh"
+      - "lib/config.sh"
+      - ".github/workflows/ci-mcp.yml"
+  push:
+    branches: [main]
+    paths:
+      - "install.sh"
+      - "lib/config.sh"
+      - ".github/workflows/ci-mcp.yml"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check shell syntax
+        run: |
+          bash -n install.sh
+          bash -n lib/config.sh
+
+      - name: Check MCP deployment contract
+        run: |
+          grep -Fq 'TXBOARD_ENABLE_MCP=$MCP_ENABLED' install.sh
+          grep -Fq '启用 MCP 网关？' install.sh
+          grep -Fq 'ENABLE_MCP: \${TXBOARD_ENABLE_MCP:-false}' install.sh
+          grep -Fq '5 MCP 网关' lib/config.sh
+          grep -Fq 'selected TXBoard image does not include the embedded MCP Gateway' install.sh
+          grep -Fq "test -f /opt/txboard-mcp/dist/index.js' </dev/null >/dev/null" install.sh
+
+      - name: Render default-disabled deployment
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-mcp-default-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18088
+          TXBOARD_IMAGE_TAG: latest
+        run: |
+          sudo -E bash install.sh --yes --render-only
+          cd /tmp/txboard-mcp-default-ci
+          sudo grep -q '^TXBOARD_ENABLE_MCP=false$' .env
+          sudo docker compose --env-file .env config | grep -A40 '^  txboard:' | grep -q 'ENABLE_MCP: "false"'
+
+      - name: Render MCP-enabled deployment
+        env:
+          TXBOARD_INSTALL_DIR: /tmp/txboard-mcp-enabled-ci
+          TXBOARD_ADMIN_EMAIL: ci@example.com
+          TXBOARD_MODE: http
+          TXBOARD_PUBLIC_HOST: 127.0.0.1
+          TXBOARD_HTTP_PORT: 18089
+          TXBOARD_IMAGE_TAG: latest
+          TXBOARD_ENABLE_MCP: "true"
+        run: |
+          sudo -E bash install.sh --yes --render-only
+          cd /tmp/txboard-mcp-enabled-ci
+          sudo grep -q '^TXBOARD_ENABLE_MCP=true$' .env
+          sudo docker compose --env-file .env config | grep -A40 '^  txboard:' | grep -q 'ENABLE_MCP: "true"'
