@@ -391,9 +391,8 @@ EOF
 
       if [[ "$RENDER_ONLY" -eq 0 ]] && docker volume inspect "$LOCAL_DB_VOLUME" >/dev/null 2>&1; then
         if [[ "$RESET_LOCAL_DB" -eq 1 ]]; then
-          warn "deleting existing managed MySQL volume: $LOCAL_DB_VOLUME"
-          docker volume rm "$LOCAL_DB_VOLUME" >/dev/null ||
-            die "cannot remove $LOCAL_DB_VOLUME; it may still be attached to another TXBoard container"
+          warn "managed MySQL volume reset requested: $LOCAL_DB_VOLUME (deferred until final install confirmation)"
+          LOCAL_DB_RESET_PENDING=1
         elif [[ "$ASSUME_YES" -eq 1 ]]; then
           die "existing managed MySQL volume $LOCAL_DB_VOLUME detected. Refusing to generate new credentials for an initialized database. Preserve it by recovering the original deployment/credentials, or rerun a disposable fresh install with --reset-local-db."
         else
@@ -409,9 +408,8 @@ authentication and can hide an existing database from the new deployment.
 
 EOF
           if confirm "Delete this database volume and continue with a completely fresh install? ALL DATABASE DATA WILL BE LOST." "N"; then
-            warn "deleting existing managed MySQL volume: $LOCAL_DB_VOLUME"
-            docker volume rm "$LOCAL_DB_VOLUME" >/dev/null ||
-              die "cannot remove $LOCAL_DB_VOLUME; it may still be attached to another TXBoard container"
+            warn "managed MySQL volume reset approved; actual deletion is deferred until final install confirmation"
+            LOCAL_DB_RESET_PENDING=1
           else
             die "installation stopped to preserve the existing database volume"
           fi
@@ -569,4 +567,21 @@ verify_database_connectivity() {
   if ! docker compose run -T --rm --no-deps --entrypoint sh backup -lc       'MYSQL_PWD="$DB_PASSWORD" mysql --connect-timeout=5 --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="SELECT 1" >/dev/null' </dev/null; then
     die "cannot connect to $DB_MODE MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE from the TXBoard container. Check the selected database, Docker networking, firewall, and MySQL user host permissions."
   fi
+}
+
+
+# Fresh install MUST NOT run txboard:install/migrate on an existing database.
+# The schema-aware updater handles populated TXBoard data and never resets it.
+# Query from the same Docker network and credentials used by the application.
+verify_database_empty_for_install() {
+  local table_count
+  table_count="$(docker compose run -T --rm --no-deps --entrypoint sh backup -ec \
+    'MYSQL_PWD="$DB_PASSWORD" exec mysql --batch --skip-column-names --connect-timeout=10 --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_TYPE='BASE TABLE'"' \
+    </dev/null)" || die "failed to inspect database tables; refusing to initialize an unknown database"
+  table_count="$(printf '%s' "$table_count" | tr -d '[:space:]')"
+  [[ "$table_count" =~ ^[0-9]+$ ]] || die "database inventory is invalid; refusing unsafe fresh install"
+  if (( table_count != 0 )); then
+    die "database $DB_DATABASE contains $table_count existing table(s). Fresh install refused to protect prior data; use txboard update or an independently prepared empty database."
+  fi
+  log "fresh database preflight passed: $DB_DATABASE contains 0 existing tables"
 }
