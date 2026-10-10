@@ -9,10 +9,10 @@ trap cleanup EXIT
 docker run -d --name "$container" -e MYSQL_ROOT_PASSWORD=ci-only mysql:8.4.11 >/dev/null
 mysql_db() { docker exec -i -e MYSQL_PWD=ci-only "$container" mysql -uroot --batch --skip-column-names "$@"; }
 for i in $(seq 1 60); do
-  if docker exec -e MYSQL_PWD=ci-only "$container" mysqladmin -uroot ping --silent >/dev/null 2>&1; then break; fi
+  if docker exec -e MYSQL_PWD=ci-only "$container" mysqladmin --protocol=TCP -h127.0.0.1 -uroot ping --silent >/dev/null 2>&1; then break; fi
   sleep 2
 done
-docker exec -e MYSQL_PWD=ci-only "$container" mysqladmin -uroot ping --silent >/dev/null ||
+docker exec -e MYSQL_PWD=ci-only "$container" mysqladmin --protocol=TCP -h127.0.0.1 -uroot ping --silent >/dev/null ||
   { echo "MySQL fixture failed to start" >&2; exit 1; }
 
 mysql_db <<'SQL'
