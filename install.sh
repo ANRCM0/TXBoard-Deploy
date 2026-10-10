@@ -92,20 +92,20 @@ die() { printf '[TXBoard Deploy] ERROR: %s\n' "$*" >&2; exit 1; }
 
 usage() {
   cat <<'EOF'
-TXBoard interactive Docker installer
+TXBoard Docker 交互式安装向导
 
 Usage:
   install.sh [options]
 
 Options:
   --dir PATH          Install directory (default: /opt/txboard)
-  --tag TAG           TXBoard image tag (default: latest)
+  --tag TAG           TXBoard 镜像版本（latest / dev / 固定版本） (default: latest)
   --email EMAIL       Initial administrator email
   --mode MODE         auto-https | external-https | http
   --domain DOMAIN     Public domain for HTTPS modes
   --public-host HOST  Public host/IP for HTTP mode
-  --http-port PORT    Host HTTP port
-  --https-port PORT   Host HTTPS port (auto-https only)
+  --http-port PORT    HTTP 端口
+  --https-port PORT   HTTPS 端口 (auto-https only)
   --backup-retention N
                       Number of backup archives to retain (default: 7)
   --test-mode         Enable test deployment mode; permits wildcard public hosts
@@ -477,7 +477,7 @@ if [[ "$RENDER_ONLY" -eq 0 ]]; then
   fi
 fi
 
-INSTALL_DIR="$(prompt "Installation directory" "$INSTALL_DIR")"
+INSTALL_DIR="$(prompt "安装目录" "$INSTALL_DIR")"
 [[ -n "$INSTALL_DIR" && "$INSTALL_DIR" == /* ]] || die "installation directory must be an absolute path"
 [[ ! -L "$INSTALL_DIR" ]] || die "refusing to use a symlink installation directory: $INSTALL_DIR"
 if command -v realpath >/dev/null 2>&1; then
@@ -499,7 +499,7 @@ case "${CLEAN_INSTALL_DIR,,}" in
   *) die "invalid TXBOARD_CLEAN_INSTALL_DIR value: $CLEAN_INSTALL_DIR (use true/false)" ;;
 esac
 
-# A healthy existing installation is an UPDATE, never an INSTALL/cleanup.
+# 已有健康 TXBoard 应升级而不是重复安装或清理。
 # Interactive callers can hand off to the safe updater instead of guessing.
 if [[ "$RENDER_ONLY" -eq 0 && "$ASSUME_YES" -eq 0 ]]; then
   txboard_detect_scan "$INSTALL_DIR" ||
@@ -509,10 +509,10 @@ if [[ "$RENDER_ONLY" -eq 0 && "$ASSUME_YES" -eq 0 ]]; then
     if [[ "$TXBOARD_DETECT_TARGET_STATE" == running &&
           ( "$TXBOARD_DETECT_TARGET_HEALTH" == healthy || "$TXBOARD_DETECT_TARGET_HEALTH" == none ) &&
           -f "$INSTALL_DIR/compose.yaml" && -f "$INSTALL_DIR/api.env" && -f "$INSTALL_DIR/.env" ]]; then
-      printf '\nA TXBoard deployment already runs here.\n  1) Upgrade this existing instance (current image tag; full safe upgrade checks)\n  0) Exit without changes\nChoice [0]: ' > /dev/tty
+      printf '\n检测到当前目录已安装并运行 TXBoard。\n  1) 升级现有 TXBoard（自动检测数据库并执行安全备份）\n  0) 退出，不修改任何内容\n请选择 [0]：' > /dev/tty
       IFS= read -r existing_choice < /dev/tty || true
       case "${existing_choice:-0}" in
-        0) log "keeping existing TXBoard unchanged"; exit 0 ;;
+        0) log "已退出，现有 TXBoard 未修改"; exit 0 ;;
         1)
           updated_script="$(mktemp /tmp/txboard-verified-update.XXXXXXXX)"
           if command -v curl >/dev/null 2>&1; then
@@ -532,7 +532,7 @@ if [[ "$RENDER_ONLY" -eq 0 && "$ASSUME_YES" -eq 0 ]]; then
           rm -f "$updated_script"
           exit "$upgrade_status"
           ;;
-        *) die "invalid existing-instance choice; leaving deployment unchanged" ;;
+        *) die "选项无效，现有 TXBoard 未修改" ;;
       esac
     fi
     warn "TXBoard is not healthy/running or deployment config is incomplete; use txboard status/diagnose/start."
@@ -558,13 +558,13 @@ if [[ -z "$MODE" ]]; then
   else
     cat > /dev/tty <<'EOF'
 
-Choose public access mode:
-  1) Domain + Caddy automatic HTTPS
-  2) HTTPS terminated by an external reverse proxy / CDN
-  3) Plain HTTP
+请选择访问方式：
+  1) 域名访问（Caddy 自动配置 HTTPS）
+  2) 外部反向代理或 CDN 提供 HTTPS
+  3) 纯 HTTP（不自动配置 HTTPS）
 
 EOF
-    mode_choice="$(choose "Mode" "1" "3")"
+    mode_choice="$(choose "访问方式" "1" "3")"
     case "$mode_choice" in
       1) MODE="auto-https" ;;
       2) MODE="external-https" ;;
@@ -578,14 +578,14 @@ case "$MODE" in
   *) die "invalid mode: $MODE" ;;
 esac
 
-IMAGE_TAG="$(prompt "TXBoard image tag" "$IMAGE_TAG")"
+IMAGE_TAG="$(prompt "TXBoard 镜像版本（latest / dev / 固定版本）" "$IMAGE_TAG")"
 [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "invalid image tag: $IMAGE_TAG"
 IMAGE="$IMAGE_REPO:$IMAGE_TAG"
 
 if [[ "$ASSUME_YES" -eq 1 && -z "$ADMIN_EMAIL" ]]; then
   die "--yes requires --email or TXBOARD_ADMIN_EMAIL"
 fi
-ADMIN_EMAIL="$(prompt "Administrator email" "${ADMIN_EMAIL:-admin@example.com}")"
+ADMIN_EMAIL="$(prompt "管理员邮箱" "${ADMIN_EMAIL:-admin@example.com}")"
 valid_email "$ADMIN_EMAIL" || die "invalid administrator email: $ADMIN_EMAIL"
 
 case "${TEST_MODE,,}" in
@@ -603,7 +603,7 @@ esac
 if [[ "$ASSUME_YES" -eq 0 ]]; then
   test_default="N"
   [[ "$TEST_MODE" == "true" ]] && test_default="Y"
-  if confirm "Enable test deployment mode? (allows 0.0.0.0/:: as Public host)" "$test_default"; then
+  if confirm "启用测试模式？（允许使用通配地址）" "$test_default"; then
     TEST_MODE=true
   else
     TEST_MODE=false
@@ -611,7 +611,7 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
 
   mcp_default="N"
   [[ "$MCP_ENABLED" == "true" ]] && mcp_default="Y"
-  if confirm "Enable MCP Gateway for AI Agents (Hermes / OpenClaw)?" "$mcp_default"; then
+  if confirm "启用 MCP 网关？" "$mcp_default"; then
     MCP_ENABLED=true
   else
     MCP_ENABLED=false
@@ -631,10 +631,10 @@ PUBLISH_HTTPS=0
 
 case "$MODE" in
   auto-https)
-    DOMAIN="$(prompt "Panel domain" "$DOMAIN")"
+    DOMAIN="$(prompt "面板域名" "$DOMAIN")"
     valid_domain "$DOMAIN" || die "invalid domain: $DOMAIN"
-    HTTP_PORT="$(prompt "Host HTTP port" "${HTTP_PORT:-80}")"
-    HTTPS_PORT="$(prompt "Host HTTPS port" "${HTTPS_PORT:-443}")"
+    HTTP_PORT="$(prompt "HTTP 端口" "${HTTP_PORT:-80}")"
+    HTTPS_PORT="$(prompt "HTTPS 端口" "${HTTPS_PORT:-443}")"
     valid_port "$HTTP_PORT" || die "invalid HTTP port: $HTTP_PORT"
     valid_port "$HTTPS_PORT" || die "invalid HTTPS port: $HTTPS_PORT"
     SITE_ADDRESS="$DOMAIN"
@@ -643,16 +643,16 @@ case "$MODE" in
     PUBLISH_HTTPS=1
     ;;
   external-https)
-    DOMAIN="$(prompt "Public panel domain" "$DOMAIN")"
+    DOMAIN="$(prompt "对外访问域名" "$DOMAIN")"
     valid_domain "$DOMAIN" || die "invalid domain: $DOMAIN"
     HTTP_BIND="127.0.0.1"
-    HTTP_PORT="$(prompt "Local HTTP port for reverse proxy" "${HTTP_PORT:-8080}")"
+    HTTP_PORT="$(prompt "反向代理使用的本地 HTTP 端口" "${HTTP_PORT:-8080}")"
     valid_port "$HTTP_PORT" || die "invalid HTTP port: $HTTP_PORT"
     APP_URL="https://$DOMAIN"
     SESSION_SECURE_COOKIE=true
     ;;
   http)
-    PUBLIC_HOST="$(prompt "Public host / IP" "${PUBLIC_HOST:-$(detect_host)}")"
+    PUBLIC_HOST="$(prompt "公网域名或服务器 IP" "${PUBLIC_HOST:-$(detect_host)}")"
     [[ -n "$PUBLIC_HOST" && ! "$PUBLIC_HOST" =~ [[:space:]] ]] || die "invalid public host"
     if [[ "$PUBLIC_HOST" == "0.0.0.0" || "$PUBLIC_HOST" == "::" ]]; then
       if [[ "$TEST_MODE" == "true" ]]; then
@@ -661,7 +661,7 @@ case "$MODE" in
         die "public host cannot be $PUBLIC_HOST in standard deployment mode. Use the server IP/hostname, or explicitly enable test deployment mode with --test-mode."
       fi
     fi
-    HTTP_PORT="$(prompt "Host HTTP port" "${HTTP_PORT:-80}")"
+    HTTP_PORT="$(prompt "HTTP 端口" "${HTTP_PORT:-80}")"
     valid_port "$HTTP_PORT" || die "invalid HTTP port: $HTTP_PORT"
     if [[ "$HTTP_PORT" == "80" ]]; then
       APP_URL="http://$PUBLIC_HOST"
@@ -671,14 +671,14 @@ case "$MODE" in
     ;;
 esac
 
-BACKUP_RETENTION="$(prompt "Backup archives to retain (0 = keep all)" "$BACKUP_RETENTION")"
+BACKUP_RETENTION="$(prompt "保留备份份数（0 表示全部保留）" "$BACKUP_RETENTION")"
 valid_nonnegative_int "$BACKUP_RETENTION" || die "backup retention must be a non-negative integer"
 
 if [[ "$ASSUME_YES" -eq 0 ]]; then
   cat > /dev/tty <<EOF
 
 ------------------------------------------------------------
-TXBoard deployment summary
+TXBoard 安装信息确认
 
 Image:          $IMAGE
 Mode:           $MODE
@@ -699,7 +699,7 @@ EOF
 ------------------------------------------------------------
 
 EOF
-  confirm "Continue installation?" "Y" || { log "cancelled"; exit 0; }
+  confirm "确认以上配置并开始安装？" "Y" || { log "cancelled"; exit 0; }
 fi
 
 # Existing unrelated files must not be removed before the operator reviews the
@@ -1120,13 +1120,13 @@ verify_database_empty_for_install
 
 # Start the real application container before installation, but do not wait for
 # its health check yet. txboard:install relies on the normal container runtime.
-log "starting TXBoard bootstrap container..."
+log "正在启动 TXBoard 初始化容器……"
 docker compose up -d --remove-orphans txboard
 
-log "initializing TXBoard..."
+log "正在初始化 TXBoard……"
 docker compose exec -T txboard php artisan txboard:install </dev/null
 
-log "restarting TXBoard with the completed runtime configuration..."
+log "正在重启 TXBoard 并加载正式配置……"
 docker compose restart txboard >/dev/null
 docker compose up -d --wait txboard >/dev/null
 
@@ -1134,15 +1134,15 @@ if ! docker compose exec -T txboard php artisan txboard:install-status --no-inte
   die "TXBoard installation state is incomplete. Inspect: cd $INSTALL_DIR && docker compose logs txboard"
 fi
 
-log "starting periodic backups..."
+log "正在启动定时备份……"
 docker compose up -d backup
 
-log "installing TXBoard management command..."
+log "正在安装 TXBoard 管理命令……"
 install_deploy_tools
 
 cat <<EOF
 
-TXBoard installation completed.
+TXBoard 安装成功。
 
 Panel:       $APP_URL/admin/
 Install dir: $INSTALL_DIR
