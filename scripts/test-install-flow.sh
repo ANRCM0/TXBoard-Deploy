@@ -13,8 +13,8 @@ def at(needle):
     assert needle in s, 'missing installer step: '+needle
     return s.index(needle)
 # Always discover before new-install prompts, admin email or database setup.
-assert at('txboard_detect_scan "$INSTALL_DIR" || die "Docker service discovery failed"') < at('INSTALL_DIR="$(prompt "Installation directory" "$INSTALL_DIR")"')
-assert at('INSTALL_DIR="$(prompt "Installation directory" "$INSTALL_DIR")"') < at('if [[ -z "$MODE" ]]; then')
+assert at('txboard_detect_scan "$INSTALL_DIR" || die "Docker service discovery failed"') < at('INSTALL_DIR="$(prompt "安装目录" "$INSTALL_DIR")"')
+assert at('INSTALL_DIR="$(prompt "安装目录" "$INSTALL_DIR")"') < at('if [[ -z "$MODE" ]]; then')
 assert at('txboard_guard_install "$INSTALL_DIR"') < at('if [[ -z "$MODE" ]]; then')
 assert at('if [[ -z "$MODE" ]]; then') < at('ADMIN_EMAIL="$(prompt "Administrator email"')
 assert at('ADMIN_EMAIL="$(prompt "Administrator email"') < at('configure_database\n')
