@@ -17,6 +17,7 @@ jobs:
           bash -n update.sh
           sh -n backup.sh
           bash -n scripts/test-upgrade.sh
+          bash -n scripts/test-detect.sh
           bash -n txboard.sh
           for f in lib/*.sh; do bash -n "$f"; done
 
@@ -40,6 +41,10 @@ jobs:
           grep -Fq 'cannot connect to $DB_MODE MySQL at $DB_HOST:$DB_PORT/$DB_DATABASE' lib/install-database.sh
           grep -Fq 'Docker + Compose v2 not found. Install Docker automatically?' install.sh
           grep -Fq 'docker compose run -T --rm -e BACKUP_INTERVAL=0 -e BACKUP_RETENTION=0 backup' update.sh
+          grep -Fq 'txboard_guard_install' install.sh
+          grep -Fq 'txboard_guard_update' update.sh
+          grep -Fq 'lib/detect.sh' install.sh
+          grep -Fq 'detect) docker_ok' txboard.sh
           grep -Fq 'detect_schema' update.sh
           grep -Fq 'require_schema native' update.sh
           grep -Fq 'cutover_artisan dryrun' update.sh
@@ -50,6 +55,9 @@ jobs:
           bash txboard.sh help | grep -q 'logs \[service\]'
           bash txboard.sh help | grep -q 'config-show'
           bash txboard.sh help | grep -q 'backups'
+
+      - name: Test Docker service discovery and ownership safeguards
+        run: bash scripts/test-detect.sh
 
       - name: Exercise database-aware updater fail-closed state machine
         run: bash scripts/test-upgrade.sh
@@ -388,6 +396,29 @@ jobs:
           sudo test -x /tmp/txboard-deploy-smoke/update.sh
           sudo test -x /tmp/txboard-deploy-smoke/lib/common.sh
           sudo test -x /tmp/txboard-deploy-smoke/lib/backup.sh
+          sudo test -x /tmp/txboard-deploy-smoke/lib/detect.sh
+          sudo txboard detect | grep -q 'txboard-txboard-1'
+          # Interactive installer recognizes the existing healthy instance and
+          # exits safely when the operator selects 0 (no reinstallation).
+          printf '\n\n\n0\n' | timeout 30s script -q -e -c "sudo bash $GITHUB_WORKSPACE/install.sh --dir /tmp/txboard-deploy-smoke --email smoke@example.com --mode http" /dev/null >/tmp/txboard-detect-interactive.log 2>&1
+          grep -q 'keeping existing TXBoard unchanged' /tmp/txboard-detect-interactive.log
+          sudo test -f /tmp/txboard-deploy-smoke/compose.yaml
+          # A second installer must not overwrite this healthy installation,
+          # even if the user requested --clean-install-dir explicitly.
+          if sudo bash "$GITHUB_WORKSPACE/install.sh" --yes --clean-install-dir --dir /tmp/txboard-deploy-smoke --email ci@example.com --mode http --public-host 127.0.0.1 >/tmp/txboard-reinstall-test.log 2>&1; then
+            echo "ERROR: installer overwrote a running TXBoard" >&2
+            exit 1
+          fi
+          grep -q 'existing running/stopped TXBoard' /tmp/txboard-reinstall-test.log
+          sudo test -f /tmp/txboard-deploy-smoke/compose.yaml
+          # A different path cannot silently create another instance using the
+          # same hardcoded Compose project name or claim the live deployment.
+          if sudo bash "$GITHUB_WORKSPACE/install.sh" --yes --dir /tmp/txboard-second-ci --email ci@example.com --mode http --public-host 127.0.0.1 >/tmp/txboard-foreign-test.log 2>&1; then
+            echo "ERROR: installer attempted to create conflicting TXBoard" >&2
+            exit 1
+          fi
+          grep -q 'existing running/stopped TXBoard' /tmp/txboard-foreign-test.log
+          test ! -f /tmp/txboard-second-ci/compose.yaml
           sudo test -x /tmp/txboard-deploy-smoke/lib/config.sh
           sudo /tmp/txboard-deploy-smoke/txboard.sh status >/dev/null
           sudo txboard status >/dev/null

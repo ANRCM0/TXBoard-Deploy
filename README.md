@@ -381,6 +381,30 @@ bash install.sh --enable-mcp ...
 bash install.sh --disable-mcp ...
 ```
 
+## 启动前服务发现（安装 / 更新 / 管理）
+
+安装或镜像更新前，脚本首先枚举 **整个 Docker Engine** 的容器（包含停止和异常的实例），识别 Compose 的 `service=txboard`、`project`、`working_dir` 标签与镜像，核对当前安装目录和 `docker compose ps -a -q txboard` 是否实际指向**同一个**容器。容器名或镜像名不能单独证明拥有修改权限。
+
+```bash
+sudo txboard detect
+sudo txboard status
+```
+
+`txboard detect` 显示容器名称、运行状态、健康状态、Compose 项目、安装目录、镜像与 ID。服务发现结果仅用于识别，不会修改容器或数据库。交互安装发现**当前目录内唯一健康实例**时，明确显示 **升级现有实例 / 不作修改退出** 菜单；不会直接调用安装目录里的旧更新脚本，而是下载并验证最新安全更新器后继续。`--yes` 始终拒绝覆盖现有服务。
+
+| 发现情况 | 安装 / 更新处理 |
+| --- | --- |
+| 未发现 TXBoard、目标目录无部署配置 | 可按正常流程安装 |
+| 目标目录已有唯一的 TXBoard 且健康 | 交互安装器提示改为更新现有实例（使用其当前镜像标签）；禁止重复安装或清理，更新仍经过完整数据库预检 |
+| 已停止、正在启动、重启中、健康异常 | 安装与更新都阻断，先 `txboard status` / `txboard diagnose` / `txboard start` |
+| 来自其他目录/不同 Compose 项目、多个 TXBoard | 不自动猜测实例，不安装、不升级、不清理 |
+| 无容器但已有 `compose.yaml` / `.env` / `api.env` | 视为残缺旧部署，阻止覆盖，需要先恢复或检查 |
+| 旧镜像无 Docker healthcheck | 运行中时需通过 `txboard:install-status` 检查才允许升级 |
+
+出于安全考虑，当前安装器的 Compose 项目名固定为 `txboard`；**不能直接用第二个安装目录覆盖或共用相同的项目名**。后续如支持真正多实例，需要额外隔离 Compose 名称、端口、卷、网络与数据库。服务发现不会尝试替用户执行数据库恢复或卸载。
+
+升级在拉取镜像后、停掉业务写入之前还会重复检查容器 ID、归属和健康状态，以防预检与执行之间被别人替换。即便使用 `--clean-install-dir`，如果检测到现存服务也会拒绝清理；Compose 停止失败同样禁止删除目录。仅用于模板渲染的 `--render-only` 可离线执行，但不会清除现有部署配置。
+
 ## 更新
 
 默认更新当前使用的 image tag：

@@ -15,7 +15,7 @@ fi
 
 LIB_DIR="${TXBOARD_MANAGER_LIB_DIR:-$SCRIPT_DIR/lib}"
 
-for module in common service backup config diagnose uninstall; do
+for module in common service backup config diagnose uninstall detect; do
   [[ -f "$LIB_DIR/$module.sh" ]] || {
     printf '[TXBoard] ERROR: missing module: %s/%s.sh\n' "$LIB_DIR" "$module" >&2
     exit 1
@@ -76,6 +76,7 @@ Interactive:
 
 Quick commands:
   status | ps          Show deployment and container status
+  detect               Discover running/stopped TXBoard instances on this server
   start                Start TXBoard services
   stop                 Stop TXBoard services
   restart              Restart TXBoard
@@ -170,6 +171,7 @@ case "$CMD" in
   menu) main_menu ;;
   install) run_install ;;
   update) run_update "$ARG" ;;
+  detect) docker_ok; txboard_detect_scan "$TXBOARD_INSTALL_DIR"; txboard_detect_print ;;
   status|ps) service_status ;;
   start) service_start ;;
   stop) service_stop ;;

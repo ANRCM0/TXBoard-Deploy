@@ -298,9 +298,17 @@ clean_existing_install_dir() {
     (
       cd "$INSTALL_DIR"
       docker compose down --remove-orphans </dev/null
-    ) || warn "could not fully stop the old Compose deployment; continuing with filesystem cleanup"
+    ) || die "old Compose deployment could not be stopped; refusing installation-directory cleanup"
   fi
 
+  # Avoid a race between the initial install preflight and the cleanup prompt.
+  if [[ "$RENDER_ONLY" -eq 0 ]]; then
+    txboard_guard_install "$INSTALL_DIR" ||
+      die "TXBoard appeared during cleanup confirmation; refusing deletion"
+  else
+    [[ ! -f "$INSTALL_DIR/compose.yaml" && ! -f "$INSTALL_DIR/.env" && ! -f "$INSTALL_DIR/api.env" ]] ||
+      die "render-only cannot clear deployment configuration"
+  fi
   log "removing old TXBoard files from $INSTALL_DIR..."
   rm -rf -- "$INSTALL_DIR"
 }
@@ -389,6 +397,32 @@ load_install_database_module() {
 
 load_install_database_module
 
+load_service_detect_module() {
+  local src_dir tmp
+  src_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+  if [[ -n "$src_dir" && -f "$src_dir/lib/detect.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "$src_dir/lib/detect.sh"
+    return
+  fi
+  tmp="$(mktemp)"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$DEPLOY_RAW_BASE/lib/detect.sh" -o "$tmp" ||
+      { rm -f "$tmp"; die "could not load Docker service discovery module"; }
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$tmp" "$DEPLOY_RAW_BASE/lib/detect.sh" ||
+      { rm -f "$tmp"; die "could not load Docker service discovery module"; }
+  else
+    rm -f "$tmp"
+    die "curl or wget is required for Docker service discovery"
+  fi
+  bash -n "$tmp" || { rm -f "$tmp"; die "service discovery module failed syntax check"; }
+  # shellcheck source=/dev/null
+  source "$tmp"
+  rm -f "$tmp"
+}
+load_service_detect_module
+
 detect_host() {
   local host=""
   host="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
@@ -419,7 +453,7 @@ install_deploy_tools() {
     return 0
   fi
 
-  for module in common service backup config diagnose uninstall; do
+  for module in common service backup config diagnose uninstall detect; do
     tmp="$INSTALL_DIR/lib/.$module.sh.tmp"
     if ! download_file "$DEPLOY_RAW_BASE/lib/$module.sh" "$tmp"; then
       rm -f "$manager_tmp" "$updater_tmp" "$INSTALL_DIR/lib/."*.tmp
@@ -495,6 +529,55 @@ case "${CLEAN_INSTALL_DIR,,}" in
   0|false|no|n|off|"") CLEAN_INSTALL_DIR=false ;;
   *) die "invalid TXBOARD_CLEAN_INSTALL_DIR value: $CLEAN_INSTALL_DIR (use true/false)" ;;
 esac
+
+# A healthy existing installation is an UPDATE, never an INSTALL/cleanup.
+# Interactive callers can hand off to the safe updater instead of guessing.
+if [[ "$RENDER_ONLY" -eq 0 && "$ASSUME_YES" -eq 0 ]]; then
+  txboard_detect_scan "$INSTALL_DIR" ||
+    die "cannot safely discover existing TXBoard containers"
+  if (( TXBOARD_DETECT_TOTAL > 0 && TXBOARD_DETECT_TARGET_COUNT == 1 && TXBOARD_DETECT_FOREIGN_COUNT == 0 )); then
+    txboard_detect_print
+    if [[ "$TXBOARD_DETECT_TARGET_STATE" == running &&
+          ( "$TXBOARD_DETECT_TARGET_HEALTH" == healthy || "$TXBOARD_DETECT_TARGET_HEALTH" == none ) &&
+          -f "$INSTALL_DIR/compose.yaml" && -f "$INSTALL_DIR/api.env" && -f "$INSTALL_DIR/.env" ]]; then
+      printf '\nA TXBoard deployment already runs here.\n  1) Upgrade this existing instance (current image tag; full safe upgrade checks)\n  0) Exit without changes\nChoice [0]: ' > /dev/tty
+      IFS= read -r existing_choice < /dev/tty || true
+      case "${existing_choice:-0}" in
+        0) log "keeping existing TXBoard unchanged"; exit 0 ;;
+        1)
+          updated_script="$(mktemp /tmp/txboard-verified-update.XXXXXXXX)"
+          if command -v curl >/dev/null 2>&1; then
+            curl -fsSL "$DEPLOY_RAW_BASE/update.sh" -o "$updated_script" ||
+              { rm -f "$updated_script"; die "failed to obtain safe existing-instance updater"; }
+          elif command -v wget >/dev/null 2>&1; then
+            wget -qO "$updated_script" "$DEPLOY_RAW_BASE/update.sh" ||
+              { rm -f "$updated_script"; die "failed to obtain safe existing-instance updater"; }
+          else
+            rm -f "$updated_script"
+            die "curl or wget is required for existing-instance upgrade"
+          fi
+          bash -n "$updated_script" || { rm -f "$updated_script"; die "unsafe updater: syntax invalid"; }
+          chmod 700 "$updated_script"
+          upgrade_status=0
+          bash "$updated_script" --dir "$INSTALL_DIR" || upgrade_status=$?
+          rm -f "$updated_script"
+          exit "$upgrade_status"
+          ;;
+        *) die "invalid existing-instance choice; leaving deployment unchanged" ;;
+      esac
+    fi
+    warn "TXBoard is not healthy/running or deployment config is incomplete; use txboard status/diagnose/start."
+  fi
+fi
+
+# Probe all Docker containers (including stopped ones) before ANY cleanup.
+# Render-only does not mutate host Docker; it still protects deployment config.
+if [[ "$RENDER_ONLY" -eq 0 ]]; then
+  txboard_guard_install "$INSTALL_DIR" ||
+    die "existing/ambiguous TXBoard detected; installation did not modify this deployment"
+elif [[ -f "$INSTALL_DIR/compose.yaml" || -f "$INSTALL_DIR/api.env" || -f "$INSTALL_DIR/.env" ]]; then
+  die "render-only cannot replace an existing TXBoard deployment configuration; use a clean staging directory"
+fi
 
 if install_dir_has_content; then
   clean_existing_install_dir
