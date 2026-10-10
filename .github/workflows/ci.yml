@@ -17,6 +17,7 @@ jobs:
           bash -n update.sh
           sh -n backup.sh
           bash -n scripts/test-upgrade.sh
+          bash -n lib/cutover-plan.sh
           bash -n scripts/test-detect.sh
           bash -n scripts/test-install-flow.sh
           bash -n txboard.sh
@@ -26,8 +27,8 @@ jobs:
         run: |
           grep -Fq 'docker compose run -T --rm --no-deps --entrypoint sh backup -lc' lib/install-database.sh
           grep -Fq 'Switch to automatic host-MySQL mode instead?' lib/install-database.sh
-          grep -Fq 'MySQL on this server (auto-detect system / 1Panel / Docker)' lib/install-database.sh
-          grep -Fq 'Detected MySQL/MariaDB instances on this server:' lib/install-database.sh
+          grep -Fq '使用本机已有 MySQL（系统 / 1Panel / Docker）' lib/install-database.sh
+          grep -Fq '检测到本机可使用的 MySQL/MariaDB 实例：' lib/install-database.sh
           grep -Fq '/www/server/mysql/bin/mysql' lib/install-database.sh
           grep -Fq 'mysql_system_socket_candidates()' lib/install-database.sh
           grep -Fq 'TXBOARD_DB_SYSTEM_SOCKET' install.sh
@@ -52,6 +53,9 @@ jobs:
           grep -Fq 'detect_schema' update.sh
           grep -Fq 'require_schema native' update.sh
           grep -Fq 'cutover_artisan dryrun' update.sh
+          grep -Fq 'txboard_generate_cutover_review' update.sh
+          grep -Fq '"executable": False' lib/cutover-plan.sh
+          grep -Fq '自动生成、检查全量 tx_* 重命名计划' update.sh
           grep -Fq 'target_artisan migrate --force' update.sh
           grep -Fq 'attempted_migrate == 0' update.sh
           grep -Fq 'compose run -T --rm -e BACKUP_INTERVAL=0 backup' lib/backup.sh
