@@ -107,8 +107,8 @@ grep -qx 'TX_NATIVE_TABLES=true' "$MOCK_DIR/api.env"
 
 setup auto-review
 if command -v script >/dev/null 2>&1; then
-  printf "2\n0\n" | timeout 25s script -q -e -c "env TXBOARD_INSTALL_DIR=$MOCK_DIR bash $repo/update.sh --tag dev" /dev/null >"$tmp/auto-review" 2>&1 || {
-    tail -30 "$tmp/auto-review" >&2
+  printf "2\n0\n" | timeout 25s script -q -e -c "env TXBOARD_INSTALL_DIR=$MOCK_DIR bash $repo/update.sh --tag dev" /dev/null >"$tmp/auto-review.log" 2>&1 || {
+    tail -30 "$tmp/auto-review.log" >&2
     echo "automatic read-only review failed" >&2; exit 1
   }
   draft="$(find "$MOCK_DIR/backups/cutover-plans" -name '*.json' -print -quit)"
@@ -123,7 +123,7 @@ PY
   ! grep -Fq migration-attempted "$MOCK_EVENTS"
   ! grep -Fq 'compose stop txboard' "$MOCK_EVENTS"
   ! grep -Fq cutover-executed "$MOCK_EVENTS"
-  grep -Fq '未获得全量重命名生产授权' "$tmp/auto-review"
+  grep -Fq '未获得全量重命名生产授权' "$tmp/auto-review.log"
 fi
 
 setup auto-review-fallback
