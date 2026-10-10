@@ -44,7 +44,7 @@ EOF
 config_access() {
   require_tty; docker_ok; need_install
   local choice mode domain host http_port https_port url bind site secure publish_https tmp
-  choice="$(choose "1 auto-https  2 external-https  3 http  0 back" "1" "3")"
+  choice="$(choose "1 自动 HTTPS  2 外部 HTTPS  3 HTTP  0 返回" "1" "3")"
   [[ "$choice" != "0" ]] || return 0
 
   domain=""; host=""; publish_https=0; bind="0.0.0.0"; site=":80"; secure=false
@@ -53,27 +53,27 @@ config_access() {
   case "$choice" in
     1)
       mode=auto-https
-      domain="$(prompt "Domain" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DOMAIN)")"
+      domain="$(prompt "域名" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DOMAIN)")"
       valid_domain "$domain" || die "invalid domain"
-      http_port="$(prompt "HTTP port" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_PORT)")"
-      https_port="$(prompt "HTTPS port" "$https_port")"
+      http_port="$(prompt "HTTP 端口" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_PORT)")"
+      https_port="$(prompt "HTTPS 端口" "$https_port")"
       valid_port "$http_port" || die "invalid HTTP port"
       valid_port "$https_port" || die "invalid HTTPS port"
       url="https://$domain"; site="$domain"; secure=true; publish_https=1
       ;;
     2)
       mode=external-https
-      domain="$(prompt "Domain" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DOMAIN)")"
+      domain="$(prompt "域名" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DOMAIN)")"
       valid_domain "$domain" || die "invalid domain"
-      http_port="$(prompt "Local HTTP port" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_PORT)")"
+      http_port="$(prompt "本地 HTTP 端口" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_PORT)")"
       valid_port "$http_port" || die "invalid HTTP port"
       url="https://$domain"; bind="127.0.0.1"; secure=true
       ;;
     3)
       mode=http
-      host="$(prompt "Host/IP" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_PUBLIC_HOST)")"
+      host="$(prompt "访问主机/IP" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_PUBLIC_HOST)")"
       [[ -n "$host" && ! "$host" =~ [[:space:]] ]] || die "invalid host"
-      http_port="$(prompt "HTTP port" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_PORT)")"
+      http_port="$(prompt "HTTP 端口" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_PORT)")"
       valid_port "$http_port" || die "invalid HTTP port"
       [[ "$http_port" == "80" ]] && url="http://$host" || url="http://$host:$http_port"
       ;;
@@ -115,7 +115,7 @@ config_mcp() {
   default="N"
   [[ "$current" == "true" ]] && default="Y"
 
-  if confirm "Enable MCP Gateway for AI Agents (Hermes / OpenClaw)?" "$default"; then
+  if confirm "启用 MCP 网关？" "$default"; then
     target=true
   else
     target=false
@@ -150,13 +150,13 @@ config_mcp() {
 config_menu() {
   local choice value image tag
   while true; do
-    choice="$(choose "1 show  2 access/domain/ports  3 image tag  4 backup retention  5 MCP Gateway  0 back" "1" "5")"
+    choice="$(choose "1 查看配置  2 域名与端口  3 镜像版本  4 备份保留  5 MCP 网关  0 返回" "1" "5")"
     case "$choice" in
       1) config_show; pause ;;
       2) config_access; pause ;;
       3)
         image="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_IMAGE)"
-        tag="$(prompt "Image tag" "${image##*:}")"
+        tag="$(prompt "镜像版本" "${image##*:}")"
         [[ "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || { warn "invalid tag"; continue; }
         if [[ -f "$TXBOARD_INSTALL_DIR/update.sh" ]]; then
           bash "$TXBOARD_INSTALL_DIR/update.sh" --dir "$TXBOARD_INSTALL_DIR" --tag "$tag"
@@ -166,7 +166,7 @@ config_menu() {
         pause
         ;;
       4)
-        value="$(prompt "Retention (0=keep all)" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION)")"
+        value="$(prompt "备份保留数量（0 为全部保留）" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION)")"
         [[ "$value" =~ ^[0-9]+$ ]] || { warn "invalid retention"; continue; }
         env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION "$value"
         compose up -d --force-recreate backup
