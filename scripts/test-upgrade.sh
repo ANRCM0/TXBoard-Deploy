@@ -105,6 +105,9 @@ if command -v script >/dev/null 2>&1; then
     tail -35 "$tmp/cutover-success" >&2; echo "mocked interactive cutover failed" >&2; exit 1;
   }
   grep -Fq cutover-executed "$MOCK_EVENTS"
+  archived="$(find "$MOCK_DIR/backups" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  test -s "$archived/reviewed-plan.json"
+  (cd "$archived" && sha256sum -c CHECKSUMS.sha256 >/dev/null)
   grep -qx "TX_NATIVE_TABLES=true" "$MOCK_DIR/api.env"
   grep -Fq "cutover" "$tmp/cutover-success"
 fi
