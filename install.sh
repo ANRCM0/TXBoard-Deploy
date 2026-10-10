@@ -293,13 +293,9 @@ clean_existing_install_dir() {
     esac
   fi
 
-  if [[ -f "$INSTALL_DIR/compose.yaml" ]] && command -v docker >/dev/null 2>&1; then
-    log "stopping old TXBoard Compose services while preserving Docker volumes..."
-    (
-      cd "$INSTALL_DIR"
-      docker compose down --remove-orphans </dev/null
-    ) || die "old Compose deployment could not be stopped; refusing installation-directory cleanup"
-  fi
+  # Existing Compose configuration and all TXBoard containers were already
+  # excluded by the service guard. Never issue "compose down" during cleanup
+  # of unrelated residual files; it could stop a different workload.
 
   # Avoid a race between the initial install preflight and the cleanup prompt.
   if [[ "$RENDER_ONLY" -eq 0 ]]; then
@@ -395,8 +391,6 @@ load_install_database_module() {
   rm -f "$tmp"
 }
 
-load_install_database_module
-
 load_service_detect_module() {
   local src_dir tmp
   src_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
@@ -472,41 +466,15 @@ install_deploy_tools() {
   fi
 }
 
-if [[ -z "$MODE" ]]; then
-  if [[ "$ASSUME_YES" -eq 1 ]]; then
-    MODE="http"
-  else
-    cat > /dev/tty <<'EOF'
-
-Choose public access mode:
-  1) Domain + Caddy automatic HTTPS
-  2) HTTPS terminated by an external reverse proxy / CDN
-  3) Plain HTTP
-
-EOF
-    mode_choice="$(choose "Mode" "1" "3")"
-    case "$mode_choice" in
-      1) MODE="auto-https" ;;
-      2) MODE="external-https" ;;
-      3) MODE="http" ;;
-    esac
+# Detect pre-existing deployments before asking how a NEW installation should
+# expose HTTP/HTTPS, choose an administrator or create database credentials.
+# --dir/env is authoritative; interactive users can select a different target.
+if [[ "$RENDER_ONLY" -eq 0 ]]; then
+  txboard_detect_scan "$INSTALL_DIR" || die "Docker service discovery failed"
+  if (( TXBOARD_DETECT_TOTAL > 0 )); then
+    txboard_detect_print
   fi
 fi
-
-case "$MODE" in
-  auto-https|external-https|http) ;;
-  *) die "invalid mode: $MODE" ;;
-esac
-
-IMAGE_TAG="$(prompt "TXBoard image tag" "$IMAGE_TAG")"
-[[ "$IMAGE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "invalid image tag: $IMAGE_TAG"
-IMAGE="$IMAGE_REPO:$IMAGE_TAG"
-
-if [[ "$ASSUME_YES" -eq 1 && -z "$ADMIN_EMAIL" ]]; then
-  die "--yes requires --email or TXBOARD_ADMIN_EMAIL"
-fi
-ADMIN_EMAIL="$(prompt "Administrator email" "${ADMIN_EMAIL:-admin@example.com}")"
-valid_email "$ADMIN_EMAIL" || die "invalid administrator email: $ADMIN_EMAIL"
 
 INSTALL_DIR="$(prompt "Installation directory" "$INSTALL_DIR")"
 [[ -n "$INSTALL_DIR" && "$INSTALL_DIR" == /* ]] || die "installation directory must be an absolute path"
@@ -579,9 +547,45 @@ elif [[ -f "$INSTALL_DIR/compose.yaml" || -f "$INSTALL_DIR/api.env" || -f "$INST
   die "render-only cannot replace an existing TXBoard deployment configuration; use a clean staging directory"
 fi
 
-if install_dir_has_content; then
-  clean_existing_install_dir
+# Delay database-plugin provisioning until an existing-install short circuit has
+# succeeded, so discovery does not require or alter database credentials.
+load_install_database_module
+
+if [[ -z "$MODE" ]]; then
+  if [[ "$ASSUME_YES" -eq 1 ]]; then
+    MODE="http"
+  else
+    cat > /dev/tty <<'EOF'
+
+Choose public access mode:
+  1) Domain + Caddy automatic HTTPS
+  2) HTTPS terminated by an external reverse proxy / CDN
+  3) Plain HTTP
+
+EOF
+    mode_choice="$(choose "Mode" "1" "3")"
+    case "$mode_choice" in
+      1) MODE="auto-https" ;;
+      2) MODE="external-https" ;;
+      3) MODE="http" ;;
+    esac
+  fi
 fi
+
+case "$MODE" in
+  auto-https|external-https|http) ;;
+  *) die "invalid mode: $MODE" ;;
+esac
+
+IMAGE_TAG="$(prompt "TXBoard image tag" "$IMAGE_TAG")"
+[[ "$IMAGE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "invalid image tag: $IMAGE_TAG"
+IMAGE="$IMAGE_REPO:$IMAGE_TAG"
+
+if [[ "$ASSUME_YES" -eq 1 && -z "$ADMIN_EMAIL" ]]; then
+  die "--yes requires --email or TXBOARD_ADMIN_EMAIL"
+fi
+ADMIN_EMAIL="$(prompt "Administrator email" "${ADMIN_EMAIL:-admin@example.com}")"
+valid_email "$ADMIN_EMAIL" || die "invalid administrator email: $ADMIN_EMAIL"
 
 case "${TEST_MODE,,}" in
   1|true|yes|y|on) TEST_MODE=true ;;
@@ -695,6 +699,12 @@ EOF
 
 EOF
   confirm "Continue installation?" "Y" || { log "cancelled"; exit 0; }
+fi
+
+# Existing unrelated files must not be removed before the operator reviews the
+# complete installation summary; a cancelled wizard leaves everything intact.
+if install_dir_has_content; then
+  clean_existing_install_dir
 fi
 
 mkdir -p "$INSTALL_DIR"
