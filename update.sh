@@ -136,7 +136,7 @@ flock -n 9 || die "another TXBoard upgrade is running"
 # No application credentials or row data are printed.
 db_sql() {
   docker compose run -T --rm --no-deps --entrypoint sh backup -ec \
-    'MYSQL_PWD="$DB_PASSWORD" exec mysql --batch --skip-column-names --connect-timeout=10 --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="$1"' sh "$1"
+    'MYSQL_PWD="$DB_PASSWORD" exec mysql --batch --skip-column-names --connect-timeout=10 --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USERNAME" --database="$DB_DATABASE" --execute="$1"' sh "$1" </dev/null
 }
 schema_preflight() {
   local inventory v2 tx u settings orders history mode
@@ -157,7 +157,7 @@ critical_snapshot() {
 target_artisan() {
   docker compose run -T --rm --no-deps \
     -e CACHE_DRIVER=array -e SETTING_CACHE_STORE=array -e QUEUE_CONNECTION=sync -e SESSION_DRIVER=array \
-    --entrypoint php txboard /www/artisan "$@" --no-interaction
+    --entrypoint php txboard /www/artisan "$@" --no-interaction </dev/null
 }
 
 container_id="$(docker compose ps -q txboard 2>/dev/null || true)"
