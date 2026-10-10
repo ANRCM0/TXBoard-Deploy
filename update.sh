@@ -252,6 +252,75 @@ container_id="$TXBOARD_DETECT_TARGET_ID"
 old_image_id="$TXBOARD_DETECT_TARGET_IMAGE"
 [[ "$old_image_id" == sha256:* ]] || die "could not pin old running image"
 detect_schema
+# Database migration mode is selected once from the detected LIVE schema.
+# Native tx_* databases skip all legacy questions; legacy mode defaults to keeping v2_*.
+load_cutover_review_module() {
+  local src_dir tmp
+  src_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+  if [[ -n "$src_dir" && -f "$src_dir/lib/cutover-plan.sh" ]]; then
+    source "$src_dir/lib/cutover-plan.sh"
+    return
+  fi
+  tmp="$(mktemp)" || die "无法建立临时文件"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$DEPLOY_RAW_BASE/lib/cutover-plan.sh" -o "$tmp" ||
+      { rm -f "$tmp"; die "无法下载数据库审核模块"; }
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$tmp" "$DEPLOY_RAW_BASE/lib/cutover-plan.sh" ||
+      { rm -f "$tmp"; die "无法下载数据库审核模块"; }
+  else
+    rm -f "$tmp"
+    die "缺少 curl/wget，无法下载数据库审核模块"
+  fi
+  bash -n "$tmp" || { rm -f "$tmp"; die "数据库审核模块格式不合法"; }
+  source "$tmp"
+  rm -f "$tmp"
+}
+UPGRADE_MODE="$SCHEMA_KIND"
+if [[ "$SCHEMA_KIND" == legacy ]]; then
+  if (( ASSUME_YES == 0 )); then
+    [[ -r /dev/tty ]] || die "旧数据库需要交互选择；无人值守模式请使用 --yes 保留原表名"
+    while :; do
+      printf '\n======= TXBoard 数据库升级 =======\n检测到旧版数据库 v2_*。\n\n  1) 安全升级，保留 v2_* 表名（推荐）\n  2) 自动生成、检查全量 tx_* 重命名计划\n  0) 退出，不修改数据\n\n请选择 [1]：' > /dev/tty
+      IFS= read -r choice < /dev/tty || true
+      case "${choice:-1}" in
+        1) UPGRADE_MODE=legacy; break ;;
+        2)
+          if [[ -n "$CUTOVER_PLAN" ]]; then
+            UPGRADE_MODE=cutover
+            break
+          fi
+          load_cutover_review_module
+          txboard_generate_cutover_review ||
+            die "自动审核失败；未停止服务，也未修改数据库"
+          printf '\n注意：当前 TXBoard 仍有原生 SQL、插件、后台任务等兼容性审核要求。\n尚未满足自动切换条件，因此不会跳过安全保护执行重命名。\n\n  1) 保留旧表名，正常升级\n  0) 退出（默认）\n\n请选择 [0]：' > /dev/tty
+          IFS= read -r fallback < /dev/tty || true
+          case "${fallback:-0}" in
+            1) UPGRADE_MODE=legacy; break ;;
+            0) log "已退出；仅创建只读审核报告，TXBoard 没有停机"; exit 0 ;;
+            *) die "选择无效，未修改数据库" ;;
+          esac ;;
+        0) log "已退出；未修改数据库"; exit 0 ;;
+        *) warn "无效选项，请选择 0、1 或 2" ;;
+      esac
+    done
+  fi
+  if [[ "$UPGRADE_MODE" == cutover ]]; then
+    [[ "$CUTOVER_PLAN" == /* && -f "$CUTOVER_PLAN" && -s "$CUTOVER_PLAN" && -r "$CUTOVER_PLAN" && ! -L "$CUTOVER_PLAN" ]] ||
+      die "生产切换必须提供已经独立审核过的有效计划文件"
+    CUTOVER_PLAN="$(realpath "$CUTOVER_PLAN")"
+    printf '\n正式切换必须确认：完整映射、原生代码与插件兼容、独立环境备份恢复演练。\n确认已完成独立审核请输入 REVIEWED：' > /dev/tty
+    IFS= read -r typed < /dev/tty || true
+    [[ "$typed" == REVIEWED ]] || die "未确认独立审核，操作取消"
+  elif [[ -n "$CUTOVER_PLAN" ]]; then
+    die "指定了计划文件却未选择正式切换，操作取消"
+  fi
+elif [[ -n "$CUTOVER_PLAN" ]]; then
+  die "当前已是 tx_* 数据库，不需要旧库转换计划"
+else
+  log "已检测到 tx_* 原生数据库，跳过旧库询问，进入常规升级"
+fi
+
 # Older TXBoard-Deploy installations had a backup.sh without CHECKSUMS and
 # without a strict failure contract. Upgrade that script before any downtime.
 if ! grep -Fq 'CHECKSUMS.sha256' "$INSTALL_DIR/backup.sh" 2>/dev/null; then
@@ -273,40 +342,6 @@ if ! grep -Fq 'CHECKSUMS.sha256' "$INSTALL_DIR/backup.sh" 2>/dev/null; then
     die "retrieved backup script failed validation"
   chmod 700 "$safe_backup"
   mv -f "$safe_backup" "$INSTALL_DIR/backup.sh"
-fi
-# Database migration mode is selected once from the detected LIVE schema.
-# Native tx_* databases skip all legacy questions; legacy mode defaults to keeping v2_*.
-UPGRADE_MODE="$SCHEMA_KIND"
-if [[ "$SCHEMA_KIND" == legacy ]]; then
-  if (( ASSUME_YES == 0 )); then
-    [[ -r /dev/tty ]] || die "legacy database requires interactive choice (or --yes to KEEP v2_* names)"
-    printf "\nLegacy v2_* database detected:\n  1) Upgrade application; KEEP v2_* table names (recommended)\n  2) Upgrade and rename ALL tables to tx_* (approved plan + verified restore required)\n  0) Cancel\nChoice [1]: " > /dev/tty
-    IFS= read -r choice < /dev/tty || true
-    case "${choice:-1}" in
-      1) UPGRADE_MODE=legacy ;;
-      2) UPGRADE_MODE=cutover ;;
-      0) log "cancelled before image or database changes"; exit 0 ;;
-      *) die "invalid schema upgrade choice" ;;
-    esac
-  fi
-  if [[ "$UPGRADE_MODE" == cutover ]]; then
-    if [[ -z "$CUTOVER_PLAN" ]]; then
-      printf "Reviewed and approved plan absolute path on HOST: " > /dev/tty
-      IFS= read -r CUTOVER_PLAN < /dev/tty || true
-    fi
-    [[ "$CUTOVER_PLAN" == /* && -f "$CUTOVER_PLAN" && -s "$CUTOVER_PLAN" && -r "$CUTOVER_PLAN" && ! -L "$CUTOVER_PLAN" ]] ||
-      die "cutover requires an independently reviewed, readable, non-symlink JSON plan at an absolute host path"
-    CUTOVER_PLAN="$(realpath "$CUTOVER_PLAN")"
-    printf "\nWARNING: native cutover requires reviewed runtime/plugins, a restore-tested full backup, and a maintenance window.\nType REVIEWED to confirm independent plan/runtime review: " > /dev/tty
-    IFS= read -r typed < /dev/tty || true
-    [[ "$typed" == REVIEWED ]] || die "cutover not approved"
-  elif [[ -n "$CUTOVER_PLAN" ]]; then
-    die "--cutover-plan provided but rename option was not selected"
-  fi
-elif [[ -n "$CUTOVER_PLAN" ]]; then
-  die "already native: --cutover-plan is not applicable"
-else
-  log "native tx_* database detected; no legacy prompt; continuing automatic upgrade"
 fi
 
 log "pulling target image BEFORE stopping writers..."
