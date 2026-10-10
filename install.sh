@@ -298,9 +298,13 @@ clean_existing_install_dir() {
     (
       cd "$INSTALL_DIR"
       docker compose down --remove-orphans </dev/null
-    ) || warn "could not fully stop the old Compose deployment; continuing with filesystem cleanup"
+    ) || die "old Compose deployment could not be stopped; refusing installation-directory cleanup"
   fi
 
+  # Avoid a race between the initial install preflight and the cleanup prompt.
+  [[ "$RENDER_ONLY" -eq 1 ]] ||
+    txboard_guard_install "$INSTALL_DIR" ||
+    die "TXBoard appeared during cleanup confirmation; refusing deletion"
   log "removing old TXBoard files from $INSTALL_DIR..."
   rm -rf -- "$INSTALL_DIR"
 }
@@ -389,6 +393,32 @@ load_install_database_module() {
 
 load_install_database_module
 
+load_service_detect_module() {
+  local src_dir tmp
+  src_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+  if [[ -n "$src_dir" && -f "$src_dir/lib/detect.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "$src_dir/lib/detect.sh"
+    return
+  fi
+  tmp="$(mktemp)"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$DEPLOY_RAW_BASE/lib/detect.sh" -o "$tmp" ||
+      { rm -f "$tmp"; die "could not load Docker service discovery module"; }
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$tmp" "$DEPLOY_RAW_BASE/lib/detect.sh" ||
+      { rm -f "$tmp"; die "could not load Docker service discovery module"; }
+  else
+    rm -f "$tmp"
+    die "curl or wget is required for Docker service discovery"
+  fi
+  bash -n "$tmp" || { rm -f "$tmp"; die "service discovery module failed syntax check"; }
+  # shellcheck source=/dev/null
+  source "$tmp"
+  rm -f "$tmp"
+}
+load_service_detect_module
+
 detect_host() {
   local host=""
   host="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
@@ -419,7 +449,7 @@ install_deploy_tools() {
     return 0
   fi
 
-  for module in common service backup config diagnose uninstall; do
+  for module in common service backup config diagnose uninstall detect; do
     tmp="$INSTALL_DIR/lib/.$module.sh.tmp"
     if ! download_file "$DEPLOY_RAW_BASE/lib/$module.sh" "$tmp"; then
       rm -f "$manager_tmp" "$updater_tmp" "$INSTALL_DIR/lib/."*.tmp
@@ -495,6 +525,13 @@ case "${CLEAN_INSTALL_DIR,,}" in
   0|false|no|n|off|"") CLEAN_INSTALL_DIR=false ;;
   *) die "invalid TXBOARD_CLEAN_INSTALL_DIR value: $CLEAN_INSTALL_DIR (use true/false)" ;;
 esac
+
+# Probe all Docker containers (including stopped ones) before ANY cleanup.
+# Render-only intentionally does not mutate the host; allow offline rendering.
+if [[ "$RENDER_ONLY" -eq 0 ]]; then
+  txboard_guard_install "$INSTALL_DIR" ||
+    die "existing/ambiguous TXBoard detected; installation did not modify this deployment"
+fi
 
 if install_dir_has_content; then
   clean_existing_install_dir
