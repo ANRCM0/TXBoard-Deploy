@@ -412,7 +412,7 @@ jobs:
           # Interactive installer recognizes the existing healthy instance and
           # exits safely when the operator selects 0 (no reinstallation).
           printf '\n\n\n0\n' | timeout 30s script -q -e -c "sudo bash $GITHUB_WORKSPACE/install.sh --dir /tmp/txboard-deploy-smoke --email smoke@example.com --mode http" /dev/null >/tmp/txboard-detect-interactive.log 2>&1
-          grep -q 'keeping existing TXBoard unchanged' /tmp/txboard-detect-interactive.log
+          grep -q '已退出，现有 TXBoard 未修改' /tmp/txboard-detect-interactive.log
           sudo test -f /tmp/txboard-deploy-smoke/compose.yaml
           # A second installer must not overwrite this healthy installation,
           # even if the user requested --clean-install-dir explicitly.
