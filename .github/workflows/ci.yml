@@ -449,6 +449,11 @@ jobs:
           sudo test -f .upgrade.lock
           sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
 
+      - name: Exercise full isolated XBoard-style backup import
+        env:
+          TXBOARD_IMPORT_TEST_TAG: dev-sha-c8492dc2e120
+        run: sudo -E bash scripts/test-import-roundtrip.sh
+
       - name: Cleanup
         if: always()
         run: |
