@@ -248,8 +248,8 @@ cp -p "$INSTALL_DIR/.env" "$backup_path/deploy.env" ||
 cp -p "$INSTALL_DIR/compose.yaml" "$backup_path/compose.yaml" ||
   die "cannot preserve deployment compose"
 for spec in 'data/plugins:plugins.tar.gz' 'data/storage/theme:storage-theme.tar.gz'; do
-  subpath="$INSTALL_DIR/${spec%%:*\}"
-  filename="${spec##*:\}"
+  subpath="$INSTALL_DIR/${spec%%:*}"
+  filename="${spec##*:}"
   if [[ -d "$subpath" ]]; then
     tar -czf "$backup_path/$filename" -C "$subpath" . ||
       die "cannot back up $subpath"
