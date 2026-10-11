@@ -73,9 +73,16 @@ txboard_auto_backup_xboard_source() {
     docker exec -e MYSQL_PWD="$source_password" "$container" sh -ec '
       client="$(command -v mysqldump || command -v mariadb-dump || true)"
       [ -n "$client" ] || { echo "mysqldump not available" >&2; exit 127; }
-      exec "$client" --user=root --protocol=socket --single-transaction --quick \
+      database="$1"
+      set --
+      # The MySQL-specific flag stops source GTID state from being restored
+      # into the destination; MariaDB dump clients may not support it.
+      if "$client" --help 2>/dev/null | grep -q -- "--set-gtid-purged"; then
+        set -- --set-gtid-purged=OFF
+      fi
+      exec "$client" "$@" --user=root --protocol=socket --single-transaction --quick \
         --default-character-set=utf8mb4 --no-tablespaces \
-        --skip-lock-tables --skip-add-locks "$1"
+        --skip-lock-tables --skip-add-locks "$database"
     ' sh "$db" | gzip -c > "$partial"
   ); then
     rm -f -- "$partial"
