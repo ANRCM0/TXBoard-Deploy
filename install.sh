@@ -104,8 +104,37 @@ die() { printf '[TXBoard Deploy] ERROR: %s\n' "$*" >&2; exit 1; }
 
 # Interactive stage spinner, never a simulated percentage. A private full log
 # preserves every underlying command's output for error diagnosis.
+# Install wizard colors are strictly opt-in for real terminals. No ANSI in
+# CI logs, piped output, NO_COLOR or TERM=dumb sessions.
+install_ui_color() {
+  [[ -t 2 && "${TERM:-dumb}" != dumb && -z "${NO_COLOR+x}" && "${TXBOARD_COLOR:-auto}" != never ]] || return 0
+  case "$1" in
+    blue) printf '\033[1;94m' ;;
+    cyan) printf '\033[1;96m' ;;
+    green) printf '\033[1;92m' ;;
+    red) printf '\033[1;91m' ;;
+    yellow) printf '\033[1;93m' ;;
+    muted) printf '\033[90m' ;;
+    reset) printf '\033[0m' ;;
+  esac
+}
+install_ui_banner() {
+  [[ "$ASSUME_YES" -eq 0 ]] || return 0
+  printf '\n%b  ◆ TXBoard Installer%b\n' "$(install_ui_color blue)" "$(install_ui_color reset)" > /dev/tty
+  printf '%b  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%b\n' "$(install_ui_color blue)" "$(install_ui_color reset)" > /dev/tty
+  printf '  %b安全部署 · 数据库迁移 · 自动备份%b\n\n' "$(install_ui_color muted)" "$(install_ui_color reset)" > /dev/tty
+}
+install_ui_section() {
+  [[ "$ASSUME_YES" -eq 0 ]] || return 0
+  printf '\n  %b◆ %s%b\n' "$(install_ui_color cyan)" "$1" "$(install_ui_color reset)" > /dev/tty
+}
+
 install_progress_step() {
-  local title="$1" pid frame=0 status=0 log_file step_no bar="" i
+  local title="$1" pid frame=0 status=0 log_file step_no bar="" i ui_blue ui_green ui_red ui_reset
+  ui_blue="$(install_ui_color cyan)"
+  ui_green="$(install_ui_color green)"
+  ui_red="$(install_ui_color red)"
+  ui_reset="$(install_ui_color reset)"
   shift
   log_file="${INSTALL_LOG_FILE:?installer log file not initialized}"
   step_no=$((INSTALL_PROGRESS_DONE + 1))
@@ -131,7 +160,7 @@ install_progress_step() {
   pid=$!
   local frames=('|' '/' '-' '\')
   while kill -0 "$pid" 2>/dev/null; do
-    printf '\r\033[2K[TXBoard] [%s] %d/%d [%s] %s' "${frames[$((frame % ${#frames[@]}))]}" "$step_no" "$INSTALL_PROGRESS_TOTAL" "$bar" "$title" > /dev/tty
+    printf '\r\033[2K%b◆ TXBoard%b [%s] %d/%d [%s] %s' "$ui_blue" "$ui_reset" "${frames[$((frame % ${#frames[@]}))]}" "$step_no" "$INSTALL_PROGRESS_TOTAL" "$bar" "$title" > /dev/tty
     frame=$((frame + 1))
     sleep 0.15
   done
@@ -141,12 +170,12 @@ install_progress_step() {
     for ((i = 0; i < INSTALL_PROGRESS_TOTAL; i++)); do
       if ((i < INSTALL_PROGRESS_DONE)); then bar+="█"; else bar+="░"; fi
     done
-    printf '\r\033[2K[TXBoard] [✓] %d/%d [%s] %s\n' "$INSTALL_PROGRESS_DONE" "$INSTALL_PROGRESS_TOTAL" "$bar" "$title" > /dev/tty
+    printf '\r\033[2K%b✓%b %d/%d [%s] %s\n' "$ui_green" "$ui_reset" "$INSTALL_PROGRESS_DONE" "$INSTALL_PROGRESS_TOTAL" "$bar" "$title" > /dev/tty
     return 0
   else
     status=$?
   fi
-  printf '\r\033[2K[TXBoard] [✗] %d/%d [%s] %s（失败）\n' "$step_no" "$INSTALL_PROGRESS_TOTAL" "$bar" "$title" > /dev/tty
+  printf '\r\033[2K%b✗%b %d/%d [%s] %s（失败）\n' "$ui_red" "$ui_reset" "$step_no" "$INSTALL_PROGRESS_TOTAL" "$bar" "$title" > /dev/tty
   warn "$title failed (exit $status); latest diagnostic lines:"
   tail -n 24 "$log_file" >&2 || true
   warn "完整日志：$log_file"
@@ -593,6 +622,8 @@ if [[ "$RENDER_ONLY" -eq 0 ]]; then
   fi
 fi
 
+install_ui_banner
+install_ui_section "安装位置"
 INSTALL_DIR="$(prompt "安装目录" "$INSTALL_DIR")"
 [[ -n "$INSTALL_DIR" && "$INSTALL_DIR" == /* ]] || die "installation directory must be an absolute path"
 [[ ! -L "$INSTALL_DIR" ]] || die "refusing to use a symlink installation directory: $INSTALL_DIR"
@@ -698,14 +729,10 @@ if [[ -z "$MODE" ]]; then
   if [[ "$ASSUME_YES" -eq 1 ]]; then
     MODE="http"
   else
-    cat > /dev/tty <<'EOF'
-
-请选择访问方式：
-  1) 域名访问（Caddy 自动配置 HTTPS）
-  2) 外部反向代理或 CDN 提供 HTTPS
-  3) 纯 HTTP（不自动配置 HTTPS）
-
-EOF
+    install_ui_section "访问模式"
+    printf '  %b1%b  域名访问（自动 HTTPS）\n' "$(install_ui_color yellow)" "$(install_ui_color reset)" > /dev/tty
+    printf '  %b2%b  反向代理 / CDN HTTPS\n' "$(install_ui_color yellow)" "$(install_ui_color reset)" > /dev/tty
+    printf '  %b3%b  纯 HTTP\n\n' "$(install_ui_color yellow)" "$(install_ui_color reset)" > /dev/tty
     mode_choice="$(choose "访问方式" "1" "3")"
     case "$mode_choice" in
       1) MODE="auto-https" ;;
@@ -720,6 +747,7 @@ case "$MODE" in
   *) die "invalid mode: $MODE" ;;
 esac
 
+install_ui_section "应用配置"
 IMAGE_TAG="$(prompt "TXBoard 镜像版本（latest / dev / 固定版本）" "$IMAGE_TAG")"
 [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "invalid image tag: $IMAGE_TAG"
 IMAGE="$IMAGE_REPO:$IMAGE_TAG"
@@ -761,7 +789,10 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
 fi
 
 if [[ "$ASSUME_YES" -eq 0 && "$INSTALL_TYPE" == fresh && -z "$XBOARD_DUMP" ]]; then
-  install_choice="$(prompt "安装类型：1 全新空库 / 2 从 XBoard SQL 备份迁入" "1")"
+  install_ui_section "安装方式"
+  printf '  %b1%b  全新安装        %b创建新的空数据库%b\n' "$(install_ui_color yellow)" "$(install_ui_color reset)" "$(install_ui_color muted)" "$(install_ui_color reset)" > /dev/tty
+  printf '  %b2%b  从 XBoard 迁入  %b可自动备份原 MySQL%b\n' "$(install_ui_color yellow)" "$(install_ui_color reset)" "$(install_ui_color muted)" "$(install_ui_color reset)" > /dev/tty
+  install_choice="$(prompt "安装类型（1 / 2）" "1")"
   case "$install_choice" in
     1) INSTALL_TYPE=fresh ;;
     2) INSTALL_TYPE=xboard-import ;;
@@ -789,8 +820,13 @@ case "$INSTALL_TYPE" in
   xboard-import)
     if [[ "$ASSUME_YES" -eq 0 ]]; then
       if [[ -z "$XBOARD_DUMP" && "$XBOARD_AUTO_DUMP" == false ]]; then
-        source_choice="$(choose "XBoard 数据来源：1 自动备份本机 MySQL / 2 已有 SQL.gz" "1" "2")"
-        [[ "$source_choice" == 1 ]] && XBOARD_AUTO_DUMP=true
+        install_ui_section "XBoard 数据来源"
+        printf '  %b1%b  自动导出本机 MySQL     %b推荐 · 自动生成 SQL.gz%b\n' "$(install_ui_color yellow)" "$(install_ui_color reset)" "$(install_ui_color muted)" "$(install_ui_color reset)" > /dev/tty
+        printf '  %b2%b  使用已有 SQL.gz 文件\n' "$(install_ui_color yellow)" "$(install_ui_color reset)" > /dev/tty
+        source_choice="$(choose "数据来源" "1" "2")"
+        if [[ "$source_choice" == 1 ]]; then
+          XBOARD_AUTO_DUMP=true
+        fi
       fi
       if [[ "$XBOARD_AUTO_DUMP" == false ]]; then
         XBOARD_DUMP="$(prompt "XBoard 数据库 SQL.gz 备份的绝对路径" "$XBOARD_DUMP")"
@@ -845,6 +881,7 @@ case "$INSTALL_TYPE" in
   *) die "invalid installation type: $INSTALL_TYPE" ;;
 esac
 
+install_ui_section "数据库配置"
 configure_database
 
 # Fail closed even for external/host connection aliases. Different source and
@@ -912,6 +949,7 @@ BACKUP_RETENTION="$(prompt "保留备份份数（0 表示全部保留）" "$BACK
 valid_nonnegative_int "$BACKUP_RETENTION" || die "backup retention must be a non-negative integer"
 
 if [[ "$ASSUME_YES" -eq 0 ]]; then
+  install_ui_section "TXBoard 安装信息确认"
   cat > /dev/tty <<EOF
 
 ------------------------------------------------------------

@@ -108,7 +108,19 @@ maintenance_menu() {
   require_tty
   local choice
   while true; do
-    choice="$(choose "1 重置管理员密码  2 修复 txboard 命令  3 安装状态  4 清理配置缓存  5 重启 Horizon  6 重置管理面板安全路径  0 返回" "1" "6")"
+    ui_screen
+    ui_header "运维工具" "诊断、维护与管理员恢复"
+    ui_section "账号与权限"
+    ui_item 1 "重置管理员密码" "显示一次性凭证"
+    ui_item 6 "重置后台安全路径"
+    ui_section "系统维护"
+    ui_item 2 "修复 txboard 命令"
+    ui_item 3 "检查安装状态"
+    ui_item 4 "清理配置缓存"
+    ui_item 5 "平滑重启 Horizon"
+    ui_footer
+    ui_item 0 "返回主菜单"
+    choice="$(choose "请选择" "1" "6")"
     case "$choice" in
       1) maintenance_reset_admin_password; pause ;;
       2) maintenance_repair_command; pause ;;
