@@ -21,6 +21,8 @@ assert at('ADMIN_EMAIL="$(prompt "管理员邮箱"') < at('configure_database\n'
 assert at('confirm "确认以上配置并开始安装？"') < at('if install_dir_has_content; then\n  clean_existing_install_dir\nfi')
 assert at('confirm "确认以上配置并开始安装？"') < at('docker volume rm "$LOCAL_DB_VOLUME"')
 assert at('verify_database_connectivity\nverify_database_empty_for_install') < at('docker compose up -d --remove-orphans txboard')
+assert at('confirm "确认以上配置并开始安装？"') < at('txboard_auto_backup_xboard_source "$XBOARD_SOURCE_CONTAINER" "$XBOARD_SOURCE_DATABASE"')
+assert at('txboard_auto_backup_xboard_source "$XBOARD_SOURCE_CONTAINER" "$XBOARD_SOURCE_DATABASE"') < at('if install_dir_has_content; then\\n  clean_existing_install_dir\\nfi')
 assert 'docker compose down --remove-orphans </dev/null' not in s
 print('installer ordering and deferred destructive actions: passed')
 PY
