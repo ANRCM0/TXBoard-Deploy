@@ -170,7 +170,7 @@ main_menu() {
     ui_item 16 "重置后台安全路径"
     ui_item 14 "运维工具"
     ui_item 15 "更新运维脚本" "不修改业务数据"
-    ui_item 12 "卸载" "高风险 · 二次确认"
+    ui_danger_item 12 "卸载" "高风险 · 二次确认"
     ui_footer
     ui_item 0 "退出"
     case "$(choose "请选择" "1" "16")" in
