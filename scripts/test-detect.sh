@@ -94,5 +94,18 @@ if txboard_guard_update "$temp/managed" >/dev/null 2>&1; then echo "ignored Comp
 reset
 touch "$temp/managed/compose.yaml"
 if txboard_guard_install "$temp/managed" >/dev/null 2>&1; then echo "deleted orphaned deployment configuration" >&2; exit 1; fi
+# Explicit archive permission is valid only if there are ZERO TXBoard
+# containers, including stopped ones. Defaults remain fail-closed.
+txboard_guard_install "$temp/managed" true >/dev/null
+fixture own "$temp/managed" running healthy
+if txboard_guard_install "$temp/managed" true >/dev/null 2>&1; then
+  echo "archived config owned by running TXBoard" >&2; exit 1
+fi
+reset
+touch "$temp/managed/api.env"
+fixture own "$temp/managed" exited none
+if txboard_guard_install "$temp/managed" true >/dev/null 2>&1; then
+  echo "archived config with stopped TXBoard" >&2; exit 1
+fi
 
 echo "TXBoard service discovery safety tests passed"
