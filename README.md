@@ -296,6 +296,22 @@ UUID、余额与订单；--email 不会创建新管理员。APP_KEY 从原环境
 → 才允许启动 TXBoard。导入报告位于 backups/xboard-import/，权限为私有。
 不允许未知历史迁移、混合 tx_* 数据、插件自建未知表静默略过。
 
+### 从上一次失败的安装继续（残留 Compose 配置）
+
+如果上次导入失败后已生成 `/opt/txboard/.env`、`api.env` 或
+`compose.yaml`，但没有任何属于 TXBoard 的 Docker 容器，安装器不会默认覆盖配置。
+交互式重新运行时，会询问是否**归档**无主部署目录（默认 N）。
+答应后仅记下归档意图；直到最终确认新安装且数据源备份成功，才将
+`/opt/txboard` 整体安全移动至
+`/opt/txboard.orphan-时间-随机值/deployment`。所有旧配置、私密环境文件、日志、
+存储数据都完整保留（私有目录模式），不会删除 MySQL 容器、数据库或 Docker 数据卷。
+如确认取消，原目录保持原样。已运行或已停止的 TXBoard 应用容器会始终阻止这种归档。
+
+无人值守时需要明确指定 `--archive-orphan-dir`（或
+`TXBOARD_ARCHIVE_ORPHAN_DIR=true`）。`--clean-install-dir` **不能**绕过对遗留
+部署配置的保护。该方式不是升级现有 TXBoard，只适用于确定上一次全新安装中断，
+需要保留原文件并重新执行安装的情况。
+
 ### 自动创建 XBoard SQL.gz 备份（推荐）
 
 现在交互式选择 **安装类型 2 从 XBoard 迁入** 后，默认使用
