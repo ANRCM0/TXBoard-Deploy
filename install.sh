@@ -85,6 +85,7 @@ LOCAL_DB_RESET_PENDING=0
 INSTALL_TYPE="${TXBOARD_INSTALL_TYPE:-fresh}"
 XBOARD_DUMP="${TXBOARD_XBOARD_DUMP:-}"
 XBOARD_ENV_FILE="${TXBOARD_XBOARD_ENV_FILE:-}"
+DISCARD_LEGACY_AUDIT="${TXBOARD_DISCARD_LEGACY_AUDIT:-false}"
 CLEAN_INSTALL_DIR="${TXBOARD_CLEAN_INSTALL_DIR:-false}"
 COMPOSE_PROJECT_NAME="txboard"
 LOCAL_DB_VOLUME="${COMPOSE_PROJECT_NAME}_database-data"
@@ -125,6 +126,7 @@ Options:
   --install-type MODE fresh | xboard-import (default: fresh)
   --xboard-dump PATH Trusted XBoard single-database mysqldump .sql.gz (not a live DB)
   --xboard-env PATH  Original XBoard .env containing APP_KEY
+  --discard-legacy-audit  Opt-in: discard known legacy audit plugin tables/history in NEW target
   --yes               Non-interactive; use CLI/environment/default values
   --reset-local-db    Delete an existing managed MySQL volume before a fresh install
                       (DESTRUCTIVE: all data in that volume will be lost)
@@ -162,6 +164,7 @@ Environment variables:
   TXBOARD_INSTALL_TYPE
   TXBOARD_XBOARD_DUMP
   TXBOARD_XBOARD_ENV_FILE
+  TXBOARD_DISCARD_LEGACY_AUDIT
   TXBOARD_CLEAN_INSTALL_DIR
 EOF
 }
@@ -191,6 +194,7 @@ while [[ $# -gt 0 ]]; do
     --install-type) INSTALL_TYPE="${2:?missing value for --install-type}"; shift 2 ;;
     --xboard-dump) XBOARD_DUMP="${2:?missing value for --xboard-dump}"; INSTALL_TYPE=xboard-import; shift 2 ;;
     --xboard-env) XBOARD_ENV_FILE="${2:?missing value for --xboard-env}"; shift 2 ;;
+    --discard-legacy-audit) DISCARD_LEGACY_AUDIT=true; shift ;;
     --yes) ASSUME_YES=1; shift ;;
     --reset-local-db) RESET_LOCAL_DB=1; shift ;;
     --clean-install-dir) CLEAN_INSTALL_DIR=true; shift ;;
@@ -638,14 +642,25 @@ if [[ "$ASSUME_YES" -eq 0 && "$INSTALL_TYPE" == fresh && -z "$XBOARD_DUMP" ]]; t
     *) die "invalid installation type" ;;
   esac
 fi
+case "${DISCARD_LEGACY_AUDIT,,}" in
+  1|true|yes|y|on) DISCARD_LEGACY_AUDIT=true ;;
+  0|false|no|n|off|"") DISCARD_LEGACY_AUDIT=false ;;
+  *) die "invalid TXBOARD_DISCARD_LEGACY_AUDIT value: $DISCARD_LEGACY_AUDIT" ;;
+esac
 case "$INSTALL_TYPE" in
   fresh)
+    [[ "$DISCARD_LEGACY_AUDIT" == false ]] ||
+      die "--discard-legacy-audit requires XBoard import mode"
     [[ -z "$XBOARD_DUMP" && -z "$XBOARD_ENV_FILE" ]] ||
       die "XBoard import requires --install-type xboard-import and both source paths" ;;
   xboard-import)
     if [[ "$ASSUME_YES" -eq 0 ]]; then
       XBOARD_DUMP="$(prompt "XBoard 数据库 SQL.gz 备份的绝对路径" "$XBOARD_DUMP")"
       XBOARD_ENV_FILE="$(prompt "原 XBoard .env 的绝对路径（用于保留 APP_KEY）" "$XBOARD_ENV_FILE")"
+      if [[ "$DISCARD_LEGACY_AUDIT" == false ]] &&
+          confirm "只在新目标库丢弃旧审计插件的 6 张表及 5 条迁移记录？（源备份保留）" "N"; then
+        DISCARD_LEGACY_AUDIT=true
+      fi
     fi
     [[ "$XBOARD_DUMP" == /* && -f "$XBOARD_DUMP" && ! -L "$XBOARD_DUMP" && -s "$XBOARD_DUMP" ]] ||
       die "XBoard dump must be a nonempty absolute file path"
@@ -732,6 +747,7 @@ Backup retain:  $BACKUP_RETENTION
 MCP Gateway:    $MCP_ENABLED
 Install type:    $INSTALL_TYPE
 XBoard dump:     ${XBOARD_DUMP:-none}
+Discard old audit: $DISCARD_LEGACY_AUDIT (isolated target only)
 Database mode:   $DB_MODE
 Database:        $DB_HOST:$DB_PORT/$DB_DATABASE
 EOF
