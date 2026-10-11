@@ -16,15 +16,16 @@ case "$*" in
   "compose version"|"info") exit 0 ;;
   "compose ps --status running -q txboard") echo fake-container ;;
   "compose exec -T txboard php artisan reset:password admin@example.com --no-interaction") printf '新密码为：mock-password\n' ;;
-  "compose exec -T txboard php artisan txboard:install-status --no-interaction"|
-  "compose exec -T txboard php artisan config:clear --no-interaction"|
-  "compose exec -T txboard php artisan route:clear --no-interaction"|
-  "compose exec -T txboard php artisan view:clear --no-interaction"|
+  "compose exec -T txboard php artisan txboard:install-status --no-interaction") exit 0 ;;
+  "compose exec -T txboard php artisan config:clear --no-interaction") exit 0 ;;
+  "compose exec -T txboard php artisan route:clear --no-interaction") exit 0 ;;
+  "compose exec -T txboard php artisan view:clear --no-interaction") exit 0 ;;
   "compose exec -T txboard php artisan horizon:terminate --no-interaction") exit 0 ;;
   *) echo "unexpected docker call: $*" >&2; exit 99 ;;
 esac
 MOCK
 chmod +x "$tmp/bin/docker"
+bash -n "$tmp/bin/docker"
 export PATH="$tmp/bin:$PATH" MOCK_DOCKER_LOG="$tmp/docker.log"
 : > "$MOCK_DOCKER_LOG"
 
