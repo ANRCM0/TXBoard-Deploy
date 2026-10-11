@@ -98,4 +98,33 @@ mysql_db txboard_legacy_audit_ci < "$tmp/audit-convert.sql"
   { echo "retired, already-applied core migration history lost" >&2; exit 1; }
 [[ "$(mysql_db txboard_legacy_audit_ci -e "SELECT COUNT(*) FROM tx_user WHERE balance=100 AND commission_balance=20")" == 1 ]] ||
   { echo "core financial data modified during plugin cleanup" >&2; exit 1; }
-echo 'Real MySQL table/history conversion and opt-in plugin cleanup smoke passed'
+# Exercise the same automatic SQL.gz backup used by the interactive installer.
+(
+  set -Eeuo pipefail
+  export HOME="$tmp/home"
+  mkdir -p -m 700 "$HOME"
+  ASSUME_YES=1
+  DB_HOST_KIND="docker-container"
+  DB_CONTAINER="$container"
+  DB_DATABASE="some_other_target"
+  INSTALL_DIR="$tmp/unrelated-install"
+  source "$repo/lib/install-database.sh"
+  log() { printf '%s\n' "$*" >&2; }
+  die() { printf '%s\n' "$*" >&2; exit 1; }
+  txboard_auto_backup_xboard_source "$container" txboard_import_ci
+  test -s "$XBOARD_DUMP"
+  gzip -t "$XBOARD_DUMP"
+  python3 "$repo/scripts/xboard-plan.py" --check-dump "$XBOARD_DUMP"
+  (cd "$(dirname "$XBOARD_DUMP")" && sha256sum -c "$(basename "$XBOARD_DUMP").sha256")
+  test "$(mysql_db txboard_import_ci -e 'SELECT COUNT(*) FROM v2_user')" = 2
+  if (txboard_auto_backup_xboard_source "$container" does_not_exist >/dev/null 2>&1); then
+    echo "automatic backup accepted an invalid XBoard source" >&2
+    exit 1
+  fi
+  DB_DATABASE="txboard_import_ci"
+  if (txboard_auto_backup_xboard_source "$container" txboard_import_ci >/dev/null 2>&1); then
+    echo "automatic backup failed to protect same source/target database" >&2
+    exit 1
+  fi
+)
+echo 'Real MySQL table/history conversion, plugin cleanup and auto backup passed'
