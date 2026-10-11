@@ -26,7 +26,11 @@ LEGACY_AUDIT_MIGRATIONS = {
 }
 # Already applied in the legacy source, but no longer shipped by TXBoard.
 # Keep its history entry and effect; do not attempt to replay or synthesize it.
-RETIRED_LEGACY_MIGRATIONS = {"2026_03_28_050000_lowercase_existing_emails"}
+RETIRED_LEGACY_MIGRATIONS = {
+    "2026_03_28_050000_lowercase_existing_emails",
+    "2025_11_29_000000_add_server_id_to_stat_user",
+    "2025_11_29_120000_update_stat_user_unique_constraint",
+}
 FORBIDDEN = re.compile(r"^\s*(?:USE\s+|(?:CREATE|DROP|ALTER)\s+(?:DATABASE|SCHEMA|USER)\b|"
                        r"GRANT\s+|REVOKE\s+|FLUSH\s+PRIVILEGES\b|SET\s+GLOBAL\b|SOURCE\s+|\\\.)", re.I)
 
@@ -75,7 +79,7 @@ def make_plan(tables, history, native, discard_legacy_audit=False):
     mapped = {}
     retired = []
     for m in history:
-        if m in RETIRED_LEGACY_MIGRATIONS:
+        if m in RETIRED_LEGACY_MIGRATIONS and m not in native:
             retired.append(m)
             continue
         if discard_legacy_audit and m in LEGACY_AUDIT_MIGRATIONS:
