@@ -13,6 +13,85 @@ DB_CONTAINER="${DB_CONTAINER:-${TXBOARD_DB_CONTAINER:-}}"
 DB_ADMIN_PASSWORD="${DB_ADMIN_PASSWORD:-${TXBOARD_DB_ADMIN_PASSWORD:-}}"
 DB_SYSTEM_SOCKET="${DB_SYSTEM_SOCKET:-${TXBOARD_DB_SYSTEM_SOCKET:-}}"
 
+# Read a non-secret XBoard database setting without executing .env as shell code.
+xboard_source_env_value() {
+  local file="$1" key="$2" value
+  value="$(sed -n "s/^${key}=//p" "$file" | tail -n1 | tr -d '\r')"
+  if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then
+    value="${value:1:${#value}-2}"
+  fi
+  printf '%s' "$value"
+}
+
+# Only reads XBoard MySQL; stores a verified private SQL.gz outside install dir.
+# XBOARD_DUMP is populated only after a successful atomic export.
+txboard_auto_backup_xboard_source() {
+  local container="$1" db="$2" source_password="${TXBOARD_XBOARD_DB_ADMIN_PASSWORD:-}"
+  local count backup_dir partial final source_id
+  [[ -n "$container" && "$db" =~ ^[A-Za-z0-9_]+$ ]] ||
+    die "invalid XBoard source container/database"
+  docker inspect --type container "$container" >/dev/null 2>&1 ||
+    die "XBoard source MySQL container not found: $container"
+  [[ "$(docker inspect --type container -f '{{.State.Running}}' "$container")" == true ]] ||
+    die "XBoard source MySQL container is not running"
+
+  # Canonical IDs prevent container aliases from bypassing the source/target guard.
+  if [[ "${DB_HOST_KIND:-}" == docker-container && "$db" == "${DB_DATABASE:-}" ]]; then
+    source_id="$(docker inspect --type container -f '{{.Id}}' "$container")"
+    [[ "$source_id" != "$(docker inspect --type container -f '{{.Id}}' "$DB_CONTAINER")" ]] ||
+      die "XBoard source and TXBoard destination are the SAME database"
+  fi
+  [[ -n "$source_password" ]] || source_password="$(install_db_container_env "$container" MYSQL_ROOT_PASSWORD)"
+  [[ -n "$source_password" ]] || source_password="$(install_db_container_env "$container" MARIADB_ROOT_PASSWORD)"
+  if ! mysql_container_exec_root "$container" "$source_password" "SELECT 1;" >/dev/null 2>&1; then
+    [[ "${ASSUME_YES:-0}" == 0 ]] ||
+      die "cannot authenticate to XBoard MySQL; set TXBOARD_XBOARD_DB_ADMIN_PASSWORD"
+    source_password="$(prompt_secret "原 XBoard MySQL 容器管理员密码" "")"
+    mysql_container_exec_root "$container" "$source_password" "SELECT 1;" >/dev/null 2>&1 ||
+      die "cannot authenticate to XBoard source MySQL"
+  fi
+  count="$(mysql_container_exec_root "$container" "$source_password" \
+    "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='$db' AND TABLE_NAME IN ('v2_user','v2_order','v2_settings','migrations');" |
+    tail -n 1 | tr -d '[:space:]')" ||
+    die "cannot inspect XBoard source database"
+  [[ "$count" == 4 ]] ||
+    die "XBoard source $db is missing required tables; no dump created"
+
+  backup_dir="${HOME:?HOME is required}/txboard-xboard-import-backups"
+  [[ ! -L "$backup_dir" && "$backup_dir" != "$INSTALL_DIR" && "$backup_dir" != "$INSTALL_DIR/"* ]] ||
+    die "unsafe XBoard backup directory"
+  mkdir -p -m 700 -- "$backup_dir" || die "cannot create private source backup directory"
+  chmod 700 -- "$backup_dir"
+  partial="$(mktemp "$backup_dir/xboard-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX.sql.gz.partial")" ||
+    die "cannot reserve unique XBoard backup path"
+  final="${partial%.partial}"
+  chmod 600 -- "$partial"
+
+  log "creating XBoard backup from $container/$db (source database is not modified)..."
+  if ! (
+    set -o pipefail
+    docker exec -e MYSQL_PWD="$source_password" "$container" sh -ec '
+      client="$(command -v mysqldump || command -v mariadb-dump || true)"
+      [ -n "$client" ] || { echo "mysqldump not available" >&2; exit 127; }
+      exec "$client" --user=root --protocol=socket --single-transaction --quick \
+        --default-character-set=utf8mb4 --no-tablespaces \
+        --skip-lock-tables --skip-add-locks "$1"
+    ' sh "$db" | gzip -c > "$partial"
+  ); then
+    rm -f -- "$partial"
+    die "XBoard SQL export failed; incomplete archive deleted, target import blocked"
+  fi
+  if [[ ! -s "$partial" ]] || ! gzip -t "$partial"; then
+    rm -f -- "$partial"
+    die "XBoard backup failed gzip validation; target import blocked"
+  fi
+  mv -- "$partial" "$final" || die "cannot finalize XBoard SQL backup"
+  XBOARD_DUMP="$final"
+  sha256sum "$XBOARD_DUMP" > "$XBOARD_DUMP.sha256"
+  chmod 600 -- "$XBOARD_DUMP" "$XBOARD_DUMP.sha256"
+  log "XBoard backup ready: $XBOARD_DUMP (SHA256 recorded; original database unchanged)"
+}
+
 list_mysql_containers() {
   docker ps --format '{{.ID}}\t{{.Names}}\t{{.Image}}' |
     awk 'BEGIN{IGNORECASE=1} $2 ~ /(mysql|mariadb)/ || $3 ~ /(mysql|mariadb)/ {print}'
