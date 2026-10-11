@@ -150,7 +150,20 @@ config_mcp() {
 config_menu() {
   local choice value image tag
   while true; do
-    choice="$(choose "1 查看配置  2 域名与端口  3 镜像版本  4 备份保留  5 MCP 网关  6 重置管理面板安全路径  0 返回" "1" "6")"
+    ui_screen
+    ui_header "配置中心" "修改应用访问方式与部署参数"
+    ui_section "当前配置"
+    ui_item 1 "查看部署配置"
+    ui_section "基础配置"
+    ui_item 2 "访问域名与端口"
+    ui_item 3 "更新镜像版本"
+    ui_item 4 "备份保留数量"
+    ui_item 5 "MCP 网关"
+    ui_section "安全"
+    ui_item 6 "重置管理面板安全路径" "原链接会失效"
+    ui_footer
+    ui_item 0 "返回主菜单"
+    choice="$(choose "请选择" "1" "6")"
     case "$choice" in
       1) config_show; pause ;;
       2) config_access; pause ;;
