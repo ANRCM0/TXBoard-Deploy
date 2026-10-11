@@ -39,6 +39,8 @@ PY
   INSTALL_PROGRESS_DONE=0
   log() { printf '%s\n' "$*"; }
   warn() { printf '%s\n' "$*" >&2; }
+  # The standalone progress function now reads colors from the install wizard.
+  install_ui_color() { :; }
   source <(awk '/^install_progress_step\(\) \{/{reading=1} reading{print} reading && /^\}$/ {exit}' "$repo/install.sh")
   install_progress_step "testing successful stage" bash -c 'echo safe-output' >"$tmp/progress.out" 2>&1
   [[ "$INSTALL_PROGRESS_DONE" == 1 ]]
