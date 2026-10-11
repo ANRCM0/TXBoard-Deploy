@@ -68,9 +68,13 @@ txboard_import_xboard() {
     'for p in /www/database/migrations/*.php; do basename "$p" .php; done' \
     > "$report/native-migrations.txt" </dev/null ||
     die "cannot inspect native image migration catalog"
+  local -a audit_args=()
+  if [[ "${DISCARD_LEGACY_AUDIT:-false}" == true ]]; then
+    audit_args+=(--discard-legacy-audit)
+  fi
   python3 "$helper" --tables "$report/tables.txt" --history "$report/history.txt" \
     --native "$report/native-migrations.txt" --plan "$report/plan.json" \
-    --sql "$report/convert.sql" ||
+    --sql "$report/convert.sql" "${audit_args[@]}" ||
     die "XBoard version unsupported; target data preserved for diagnosis, no table renamed"
 
   before_users="$(xboard_db_sql 'SELECT id,email,password,balance,commission_balance,uuid,plan_id,expired_at,u,d,transfer_enable FROM v2_user ORDER BY id' | sha256sum | awk '{print $1}')" ||
