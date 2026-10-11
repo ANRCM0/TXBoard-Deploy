@@ -91,12 +91,56 @@ XBOARD_SOURCE_DATABASE="${TXBOARD_XBOARD_SOURCE_DATABASE:-}"
 DISCARD_LEGACY_AUDIT="${TXBOARD_DISCARD_LEGACY_AUDIT:-false}"
 CLEAN_INSTALL_DIR="${TXBOARD_CLEAN_INSTALL_DIR:-false}"
 ARCHIVE_ORPHAN_DIR="${TXBOARD_ARCHIVE_ORPHAN_DIR:-false}"
+INSTALL_VERBOSE="${TXBOARD_INSTALL_VERBOSE:-false}"
+INSTALL_LOG_FILE=""
 COMPOSE_PROJECT_NAME="txboard"
 LOCAL_DB_VOLUME="${COMPOSE_PROJECT_NAME}_database-data"
 
 log() { printf '[TXBoard Deploy] %s\n' "$*"; }
 warn() { printf '[TXBoard Deploy] WARNING: %s\n' "$*" >&2; }
 die() { printf '[TXBoard Deploy] ERROR: %s\n' "$*" >&2; exit 1; }
+
+# Interactive stage spinner, never a simulated percentage. A private full log
+# preserves every underlying command's output for error diagnosis.
+install_progress_step() {
+  local title="$1" pid frame=0 status=0 log_file
+  shift
+  log_file="${INSTALL_LOG_FILE:?installer log file not initialized}"
+  printf '\n==> %s\n' "$title" >> "$log_file"
+
+  if [[ "$INSTALL_VERBOSE" == true || ! -t 2 || "${TERM:-}" == dumb ]]; then
+    log "$title..."
+    if "$@" 2>&1 | tee -a "$log_file"; then
+      log "$title 已完成"
+      return 0
+    else
+      status=$?
+      warn "$title 失败（退出码 $status）；完整日志：$log_file"
+      return "$status"
+    fi
+  fi
+
+  "$@" >> "$log_file" 2>&1 &
+  pid=$!
+  local frames=('|' '/' '-' '\')
+  while kill -0 "$pid" 2>/dev/null; do
+    printf '\r\033[2K[TXBoard] [%s] %s（正在处理）' "${frames[$((frame % ${#frames[@]}))]}" "$title" > /dev/tty
+    frame=$((frame + 1))
+    sleep 0.15
+  done
+  if wait "$pid"; then
+    printf '\r\033[2K[TXBoard] [✓] %s\n' "$title" > /dev/tty
+    return 0
+  else
+    status=$?
+  fi
+  printf '\r\033[2K[TXBoard] [✗] %s（失败）\n' "$title" > /dev/tty
+  warn "$title failed (exit $status); latest diagnostic lines:"
+  tail -n 24 "$log_file" >&2 || true
+  warn "完整日志：$log_file"
+  return "$status"
+}
+
 
 usage() {
   cat <<'EOF'
@@ -140,6 +184,7 @@ Options:
   --clean-install-dir  Remove unrelated files in target install directory (with approval)
   --archive-orphan-dir  Archive a failed deployment config if NO TXBoard containers exist
                       (preserves prior files and Docker volumes; never deletes them)
+  --verbose           Show full Docker/MySQL/installer output (also saved privately)
   --render-only       Generate and validate files, do not pull/start containers
   -h, --help          Show this help
 
@@ -179,6 +224,7 @@ Environment variables:
   TXBOARD_DISCARD_LEGACY_AUDIT
   TXBOARD_CLEAN_INSTALL_DIR
   TXBOARD_ARCHIVE_ORPHAN_DIR
+  TXBOARD_INSTALL_VERBOSE
 EOF
 }
 
@@ -215,6 +261,7 @@ while [[ $# -gt 0 ]]; do
     --reset-local-db) RESET_LOCAL_DB=1; shift ;;
     --clean-install-dir) CLEAN_INSTALL_DIR=true; shift ;;
     --archive-orphan-dir) ARCHIVE_ORPHAN_DIR=true; shift ;;
+    --verbose) INSTALL_VERBOSE=true; shift ;;
     --render-only) RENDER_ONLY=1; ASSUME_YES=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
@@ -559,6 +606,11 @@ case "${ARCHIVE_ORPHAN_DIR,,}" in
   1|true|yes|y|on) ARCHIVE_ORPHAN_DIR=true ;;
   0|false|no|n|off|"") ARCHIVE_ORPHAN_DIR=false ;;
   *) die "invalid TXBOARD_ARCHIVE_ORPHAN_DIR value: $ARCHIVE_ORPHAN_DIR" ;;
+esac
+case "${INSTALL_VERBOSE,,}" in
+  1|true|yes|y|on) INSTALL_VERBOSE=true ;;
+  0|false|no|n|off|"") INSTALL_VERBOSE=false ;;
+  *) die "invalid TXBOARD_INSTALL_VERBOSE value: $INSTALL_VERBOSE" ;;
 esac
 
 # 已有健康 TXBoard 应升级而不是重复安装或清理。
