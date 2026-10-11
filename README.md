@@ -296,6 +296,19 @@ UUID、余额与订单；--email 不会创建新管理员。APP_KEY 从原环境
 → 才允许启动 TXBoard。导入报告位于 backups/xboard-import/，权限为私有。
 不允许未知历史迁移、混合 tx_* 数据、插件自建未知表静默略过。
 
+### 旧 XBoard Access Audit 插件：可选丢弃（仅隔离目标库）
+旧审计插件表 `audit_access_logs`、`audit_ban_logs`、`audit_hourly_stats`、
+`audit_node_status`、`audit_reports`、`audit_rules` 及对应 5 条
+`2026_09_16_*` / `2026_09_17_*` 迁移记录，与 TXBoard 自带的原生审计结构不同。
+**默认拒绝迁移**；如果已确认不需要保留旧插件数据，可在交互安装时明确同意，
+或以 `--discard-legacy-audit`（环境变量 `TXBOARD_DISCARD_LEGACY_AUDIT=true`）开启。
+仅恢复到**全新、独立且空的 TXBoard 目标数据库**后，才按精确白名单删除旧插件表及
+历史迁移记录，随后由 TXBoard 原生迁移创建自己的审计表。原 XBoard 数据库、原始备份
+以及核心用户/订单/余额等业务数据均不被删除。其他未知扩展表或迁移仍严格拒绝。
+已执行但原生目录不再保留脚本的
+`2026_03_28_050000_lowercase_existing_emails` 被识别为历史记录：保留原结果和迁移记录，
+不重新执行。完整预演并核验应用层行为后才能正式切换。
+
 **当前支持边界：** 主流程以标准 XBoard 历史结构为基线，非标准 fork、
 自定义表/插件和不同版本可能被阻止。仅数据库迁入不等于完整业务迁移：
 用户上传文件、主题与插件文件、外部支付回调域名、TX-Node 节点配置、
