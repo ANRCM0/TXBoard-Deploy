@@ -607,10 +607,14 @@ fi
 if [[ "$RENDER_ONLY" -eq 0 &&
       ( -f "$INSTALL_DIR/compose.yaml" || -f "$INSTALL_DIR/api.env" || -f "$INSTALL_DIR/.env" ) &&
       "$ARCHIVE_ORPHAN_DIR" != true && "$ASSUME_YES" -eq 0 ]]; then
-  warn "发现上次安装留下的部署配置：$INSTALL_DIR"
-  confirm "未检测到实际 TXBoard 容器时，是否在最终确认后归档旧目录并重新安装？原文件完整保留。" "N" ||
-    die "existing deployment files preserved; archive declined"
-  ARCHIVE_ORPHAN_DIR=true
+  txboard_detect_scan "$INSTALL_DIR" ||
+    die "cannot safely inspect orphan configuration owner"
+  if (( TXBOARD_DETECT_TOTAL == 0 )); then
+    warn "发现上次安装留下的部署配置：$INSTALL_DIR"
+    confirm "未检测到实际 TXBoard 容器，是否在最终确认后归档旧目录并重新安装？原文件完整保留。" "N" ||
+      die "existing deployment files preserved; archive declined"
+    ARCHIVE_ORPHAN_DIR=true
+  fi
 fi
 
 # Probe all Docker containers (including stopped ones) before ANY cleanup.
