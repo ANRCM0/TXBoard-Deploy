@@ -43,6 +43,35 @@ class TestXBoardImport(unittest.TestCase):
         self.assertIn("create_tx_tables", stmts)
         self.assertNotIn("WHEN '2025_01_04_optimize_plan_table'", stmts)
 
+    def test_legacy_audit_plugin_requires_explicit_discard(self):
+        tables = TABLES + sorted(m.LEGACY_AUDIT_TABLES)
+        history = HISTORY + sorted(m.LEGACY_AUDIT_MIGRATIONS) + [
+            "2026_03_28_050000_lowercase_existing_emails"
+        ]
+        with self.assertRaisesRegex(ValueError, "explicit --discard-legacy-audit"):
+            m.make_plan(tables, history, NATIVE)
+        plan = m.make_plan(tables, history, NATIVE, discard_legacy_audit=True)
+        self.assertEqual(set(plan["discardedLegacyAuditTables"]), m.LEGACY_AUDIT_TABLES)
+        self.assertEqual(set(plan["discardedLegacyAuditMigrations"]), m.LEGACY_AUDIT_MIGRATIONS)
+        self.assertEqual(plan["retainedRetiredMigrationHistory"], [
+            "2026_03_28_050000_lowercase_existing_emails"
+        ])
+        output = m.sql(plan)
+        self.assertIn("DROP TABLE", output)
+        self.assertIn("DELETE FROM migrations WHERE migration IN", output)
+        self.assertNotIn("DROP TABLE `tx_user`", output)
+        self.assertNotIn("DELETE FROM migrations WHERE migration = '2026_03_28", output)
+
+    def test_similar_plugin_names_still_fail_closed(self):
+        tables = TABLES + ["audit_unexpected_table"]
+        with self.assertRaisesRegex(ValueError, "unknown non-XBoard"):
+            m.make_plan(tables, HISTORY, NATIVE, discard_legacy_audit=True)
+
+    def test_unrelated_unknown_migration_still_fails_with_audit_opt_in(self):
+        with self.assertRaisesRegex(ValueError, "unrecognized"):
+            m.make_plan(TABLES, HISTORY + ["2026_09_17_000006_surprise_plugin"], NATIVE,
+                        discard_legacy_audit=True)
+
     def test_unknown_version_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "unrecognized"):
             m.make_plan(TABLES, HISTORY + ["2099_01_01_custom"], NATIVE)
