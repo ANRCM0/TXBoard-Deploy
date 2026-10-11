@@ -37,7 +37,17 @@ service_stats() {
 service_menu() {
   local choice
   while true; do
-    choice="$(choose "1 状态  2 启动  3 停止  4 重启  5 资源占用  0 返回" "1" "5")"
+    ui_screen
+    ui_header "服务管理" "启动、停止和查看应用容器状态"
+    ui_section "服务操作"
+    ui_item 1 "运行状态"
+    ui_item 2 "启动全部服务"
+    ui_item 3 "停止服务"
+    ui_item 4 "重启 TXBoard"
+    ui_item 5 "查看资源占用"
+    ui_footer
+    ui_item 0 "返回主菜单"
+    choice="$(choose "请选择" "1" "5")"
     case "$choice" in
       1) service_status; pause ;;
       2) service_start; pause ;;
