@@ -21,9 +21,40 @@ assert at('ADMIN_EMAIL="$(prompt "管理员邮箱"') < at('configure_database\n'
 assert at('confirm "确认以上配置并开始安装？"') < at('if install_dir_has_content; then\n  clean_existing_install_dir\nfi')
 assert at('confirm "确认以上配置并开始安装？"') < at('docker volume rm "$LOCAL_DB_VOLUME"')
 assert at('verify_database_connectivity\nverify_database_empty_for_install') < at('docker compose up -d --remove-orphans txboard')
+assert at('confirm "确认以上配置并开始安装？"') < at('txboard_auto_backup_xboard_source "$XBOARD_SOURCE_CONTAINER" "$XBOARD_SOURCE_DATABASE"')
+assert at('txboard_auto_backup_xboard_source "$XBOARD_SOURCE_CONTAINER" "$XBOARD_SOURCE_DATABASE"') < at('if install_dir_has_content; then\n  clean_existing_install_dir\nfi')
+assert at('confirm "确认以上配置并开始安装？"') < at('archive_orphan_install_dir\nfi')
+assert at('archive_orphan_install_dir\nfi') < at('if install_dir_has_content; then\n  clean_existing_install_dir\nfi')
+assert at('txboard_guard_install "$INSTALL_DIR" "$ARCHIVE_ORPHAN_DIR"') < at('configure_database\n')
+assert 'mv -T -- "$INSTALL_DIR" "$archive_root/deployment"' in s
 assert 'docker compose down --remove-orphans </dev/null' not in s
 print('installer ordering and deferred destructive actions: passed')
 PY
+
+# Exercise the progress wrapper without starting real Docker. A failing step
+# must fail closed and preserve diagnostics; completion never advances on error.
+(
+  export INSTALL_LOG_FILE="$tmp/progress.log" INSTALL_VERBOSE=true TERM=dumb
+  INSTALL_PROGRESS_TOTAL=2
+  INSTALL_PROGRESS_DONE=0
+  log() { printf '%s\n' "$*"; }
+  warn() { printf '%s\n' "$*" >&2; }
+  source <(awk '/^install_progress_step\(\) \{/{reading=1} reading{print} reading && /^\}$/ {exit}' "$repo/install.sh")
+  install_progress_step "testing successful stage" bash -c 'echo safe-output' >"$tmp/progress.out" 2>&1
+  [[ "$INSTALL_PROGRESS_DONE" == 1 ]]
+  grep -Fq 'safe-output' "$INSTALL_LOG_FILE"
+  grep -Fq '[1/2]' "$tmp/progress.out"
+  if install_progress_step "testing failed stage" bash -c 'echo intentional-error >&2; exit 23' >"$tmp/progress.failed" 2>&1; then
+    echo "progress wrapper masked a failed command" >&2
+    exit 1
+  else
+    [[ "$?" == 23 ]] || { echo "progress wrapper changed failing exit status" >&2; exit 1; }
+  fi
+  [[ "$INSTALL_PROGRESS_DONE" == 1 ]] || { echo "failed progress stage advanced the progress bar" >&2; exit 1; }
+  grep -Fq 'intentional-error' "$INSTALL_LOG_FILE"
+  grep -Fq '完整日志：' "$tmp/progress.failed"
+)
+echo 'installer stage progress and error log preservation: passed'
 
 mkdir -p "$tmp/bin"
 cat > "$tmp/bin/docker" <<'MOCK'

@@ -85,13 +85,74 @@ LOCAL_DB_RESET_PENDING=0
 INSTALL_TYPE="${TXBOARD_INSTALL_TYPE:-fresh}"
 XBOARD_DUMP="${TXBOARD_XBOARD_DUMP:-}"
 XBOARD_ENV_FILE="${TXBOARD_XBOARD_ENV_FILE:-}"
+XBOARD_AUTO_DUMP="${TXBOARD_XBOARD_AUTO_DUMP:-false}"
+XBOARD_SOURCE_CONTAINER="${TXBOARD_XBOARD_SOURCE_CONTAINER:-}"
+XBOARD_SOURCE_DATABASE="${TXBOARD_XBOARD_SOURCE_DATABASE:-}"
+DISCARD_LEGACY_AUDIT="${TXBOARD_DISCARD_LEGACY_AUDIT:-false}"
 CLEAN_INSTALL_DIR="${TXBOARD_CLEAN_INSTALL_DIR:-false}"
+ARCHIVE_ORPHAN_DIR="${TXBOARD_ARCHIVE_ORPHAN_DIR:-false}"
+INSTALL_VERBOSE="${TXBOARD_INSTALL_VERBOSE:-false}"
+INSTALL_LOG_FILE=""
+INSTALL_PROGRESS_TOTAL=0
+INSTALL_PROGRESS_DONE=0
 COMPOSE_PROJECT_NAME="txboard"
 LOCAL_DB_VOLUME="${COMPOSE_PROJECT_NAME}_database-data"
 
 log() { printf '[TXBoard Deploy] %s\n' "$*"; }
 warn() { printf '[TXBoard Deploy] WARNING: %s\n' "$*" >&2; }
 die() { printf '[TXBoard Deploy] ERROR: %s\n' "$*" >&2; exit 1; }
+
+# Interactive stage spinner, never a simulated percentage. A private full log
+# preserves every underlying command's output for error diagnosis.
+install_progress_step() {
+  local title="$1" pid frame=0 status=0 log_file step_no bar="" i
+  shift
+  log_file="${INSTALL_LOG_FILE:?installer log file not initialized}"
+  step_no=$((INSTALL_PROGRESS_DONE + 1))
+  for ((i = 0; i < INSTALL_PROGRESS_TOTAL; i++)); do
+    if ((i < INSTALL_PROGRESS_DONE)); then bar+="█"; else bar+="░"; fi
+  done
+  printf '\n==> %s\n' "$title" >> "$log_file"
+
+  if [[ "$INSTALL_VERBOSE" == true || ! -t 2 || "${TERM:-}" == dumb ]]; then
+    log "$title..."
+    if "$@" 2>&1 | tee -a "$log_file"; then
+      INSTALL_PROGRESS_DONE=$((INSTALL_PROGRESS_DONE + 1))
+      log "[$INSTALL_PROGRESS_DONE/$INSTALL_PROGRESS_TOTAL] $title 已完成"
+      return 0
+    else
+      status=$?
+      warn "$title 失败（退出码 $status）；完整日志：$log_file"
+      return "$status"
+    fi
+  fi
+
+  "$@" >> "$log_file" 2>&1 &
+  pid=$!
+  local frames=('|' '/' '-' '\')
+  while kill -0 "$pid" 2>/dev/null; do
+    printf '\r\033[2K[TXBoard] [%s] %d/%d [%s] %s' "${frames[$((frame % ${#frames[@]}))]}" "$step_no" "$INSTALL_PROGRESS_TOTAL" "$bar" "$title" > /dev/tty
+    frame=$((frame + 1))
+    sleep 0.15
+  done
+  if wait "$pid"; then
+    INSTALL_PROGRESS_DONE=$((INSTALL_PROGRESS_DONE + 1))
+    bar=""
+    for ((i = 0; i < INSTALL_PROGRESS_TOTAL; i++)); do
+      if ((i < INSTALL_PROGRESS_DONE)); then bar+="█"; else bar+="░"; fi
+    done
+    printf '\r\033[2K[TXBoard] [✓] %d/%d [%s] %s\n' "$INSTALL_PROGRESS_DONE" "$INSTALL_PROGRESS_TOTAL" "$bar" "$title" > /dev/tty
+    return 0
+  else
+    status=$?
+  fi
+  printf '\r\033[2K[TXBoard] [✗] %d/%d [%s] %s（失败）\n' "$step_no" "$INSTALL_PROGRESS_TOTAL" "$bar" "$title" > /dev/tty
+  warn "$title failed (exit $status); latest diagnostic lines:"
+  tail -n 24 "$log_file" >&2 || true
+  warn "完整日志：$log_file"
+  return "$status"
+}
+
 
 usage() {
   cat <<'EOF'
@@ -125,11 +186,17 @@ Options:
   --install-type MODE fresh | xboard-import (default: fresh)
   --xboard-dump PATH Trusted XBoard single-database mysqldump .sql.gz (not a live DB)
   --xboard-env PATH  Original XBoard .env containing APP_KEY
+  --xboard-auto-dump  Export .sql.gz automatically from local XBoard MySQL container
+  --xboard-source-container NAME  Source 1Panel/Docker MySQL container
+  --xboard-source-db NAME  Source MySQL database (default from old .env)
+  --discard-legacy-audit  Opt-in: discard known legacy audit plugin tables/history in NEW target
   --yes               Non-interactive; use CLI/environment/default values
   --reset-local-db    Delete an existing managed MySQL volume before a fresh install
                       (DESTRUCTIVE: all data in that volume will be lost)
-  --clean-install-dir  Remove existing files from the target install directory first
-                      (Docker volumes are preserved; managed DB reset is separate)
+  --clean-install-dir  Remove unrelated files in target install directory (with approval)
+  --archive-orphan-dir  Archive a failed deployment config if NO TXBoard containers exist
+                      (preserves prior files and Docker volumes; never deletes them)
+  --verbose           Show full Docker/MySQL/installer output (also saved privately)
   --render-only       Generate and validate files, do not pull/start containers
   -h, --help          Show this help
 
@@ -162,7 +229,14 @@ Environment variables:
   TXBOARD_INSTALL_TYPE
   TXBOARD_XBOARD_DUMP
   TXBOARD_XBOARD_ENV_FILE
+  TXBOARD_XBOARD_AUTO_DUMP
+  TXBOARD_XBOARD_SOURCE_CONTAINER
+  TXBOARD_XBOARD_SOURCE_DATABASE
+  TXBOARD_XBOARD_DB_ADMIN_PASSWORD
+  TXBOARD_DISCARD_LEGACY_AUDIT
   TXBOARD_CLEAN_INSTALL_DIR
+  TXBOARD_ARCHIVE_ORPHAN_DIR
+  TXBOARD_INSTALL_VERBOSE
 EOF
 }
 
@@ -191,9 +265,15 @@ while [[ $# -gt 0 ]]; do
     --install-type) INSTALL_TYPE="${2:?missing value for --install-type}"; shift 2 ;;
     --xboard-dump) XBOARD_DUMP="${2:?missing value for --xboard-dump}"; INSTALL_TYPE=xboard-import; shift 2 ;;
     --xboard-env) XBOARD_ENV_FILE="${2:?missing value for --xboard-env}"; shift 2 ;;
+    --xboard-auto-dump) XBOARD_AUTO_DUMP=true; INSTALL_TYPE=xboard-import; shift ;;
+    --xboard-source-container) XBOARD_SOURCE_CONTAINER="${2:?missing value for --xboard-source-container}"; XBOARD_AUTO_DUMP=true; INSTALL_TYPE=xboard-import; shift 2 ;;
+    --xboard-source-db) XBOARD_SOURCE_DATABASE="${2:?missing value for --xboard-source-db}"; XBOARD_AUTO_DUMP=true; INSTALL_TYPE=xboard-import; shift 2 ;;
+    --discard-legacy-audit) DISCARD_LEGACY_AUDIT=true; shift ;;
     --yes) ASSUME_YES=1; shift ;;
     --reset-local-db) RESET_LOCAL_DB=1; shift ;;
     --clean-install-dir) CLEAN_INSTALL_DIR=true; shift ;;
+    --archive-orphan-dir) ARCHIVE_ORPHAN_DIR=true; shift ;;
+    --verbose) INSTALL_VERBOSE=true; shift ;;
     --render-only) RENDER_ONLY=1; ASSUME_YES=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
@@ -281,6 +361,30 @@ validate_install_cleanup_target() {
       die "refusing to clean dangerous installation directory: $INSTALL_DIR"
       ;;
   esac
+}
+
+# Preserve the complete abandoned deployment directory, including secrets and
+# generated app/storage files, instead of deleting/overwriting unknown content.
+# Called ONLY after final confirmation; every call rechecks Docker ownership.
+archive_orphan_install_dir() {
+  local archive_root
+  [[ "$ARCHIVE_ORPHAN_DIR" == true ]] || die "orphan archive was not approved"
+  validate_install_cleanup_target
+  [[ -d "$INSTALL_DIR" && ! -L "$INSTALL_DIR" ]] ||
+    die "orphan deployment path is not a real directory"
+  [[ -f "$INSTALL_DIR/compose.yaml" || -f "$INSTALL_DIR/api.env" || -f "$INSTALL_DIR/.env" ]] ||
+    die "orphaned deployment config disappeared; refusing to move unexpected files"
+  txboard_guard_install "$INSTALL_DIR" true ||
+    die "TXBoard container appeared; cannot archive current deployment"
+  archive_root="$(mktemp -d "${INSTALL_DIR}.orphan-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX")" ||
+    die "could not reserve safe orphan archive directory"
+  chmod 700 "$archive_root"
+  # mv is same-filesystem and does not dereference symlinks inside the tree.
+  if ! mv -T -- "$INSTALL_DIR" "$archive_root/deployment"; then
+    rmdir -- "$archive_root" 2>/dev/null || true
+    die "failed to preserve orphan deployment directory; installation blocked"
+  fi
+  log "previous TXBoard configuration archived intact at: $archive_root/deployment"
 }
 
 clean_existing_install_dir() {
@@ -510,6 +614,16 @@ case "${CLEAN_INSTALL_DIR,,}" in
   0|false|no|n|off|"") CLEAN_INSTALL_DIR=false ;;
   *) die "invalid TXBOARD_CLEAN_INSTALL_DIR value: $CLEAN_INSTALL_DIR (use true/false)" ;;
 esac
+case "${ARCHIVE_ORPHAN_DIR,,}" in
+  1|true|yes|y|on) ARCHIVE_ORPHAN_DIR=true ;;
+  0|false|no|n|off|"") ARCHIVE_ORPHAN_DIR=false ;;
+  *) die "invalid TXBOARD_ARCHIVE_ORPHAN_DIR value: $ARCHIVE_ORPHAN_DIR" ;;
+esac
+case "${INSTALL_VERBOSE,,}" in
+  1|true|yes|y|on) INSTALL_VERBOSE=true ;;
+  0|false|no|n|off|"") INSTALL_VERBOSE=false ;;
+  *) die "invalid TXBOARD_INSTALL_VERBOSE value: $INSTALL_VERBOSE" ;;
+esac
 
 # 已有健康 TXBoard 应升级而不是重复安装或清理。
 # Interactive callers can hand off to the safe updater instead of guessing.
@@ -551,10 +665,26 @@ if [[ "$RENDER_ONLY" -eq 0 && "$ASSUME_YES" -eq 0 ]]; then
   fi
 fi
 
+# A previous failed setup can leave Compose credentials without a container.
+# Only offer non-destructive archival, never silent deletion. Archive takes
+# place AFTER the complete installation summary has been confirmed.
+if [[ "$RENDER_ONLY" -eq 0 &&
+      ( -f "$INSTALL_DIR/compose.yaml" || -f "$INSTALL_DIR/api.env" || -f "$INSTALL_DIR/.env" ) &&
+      "$ARCHIVE_ORPHAN_DIR" != true && "$ASSUME_YES" -eq 0 ]]; then
+  txboard_detect_scan "$INSTALL_DIR" ||
+    die "cannot safely inspect orphan configuration owner"
+  if (( TXBOARD_DETECT_TOTAL == 0 )); then
+    warn "发现上次安装留下的部署配置：$INSTALL_DIR"
+    confirm "未检测到实际 TXBoard 容器，是否在最终确认后归档旧目录并重新安装？原文件完整保留。" "N" ||
+      die "existing deployment files preserved; archive declined"
+    ARCHIVE_ORPHAN_DIR=true
+  fi
+fi
+
 # Probe all Docker containers (including stopped ones) before ANY cleanup.
 # Render-only does not mutate host Docker; it still protects deployment config.
 if [[ "$RENDER_ONLY" -eq 0 ]]; then
-  txboard_guard_install "$INSTALL_DIR" ||
+  txboard_guard_install "$INSTALL_DIR" "$ARCHIVE_ORPHAN_DIR" ||
     die "existing/ambiguous TXBoard detected; installation did not modify this deployment"
 elif [[ -f "$INSTALL_DIR/compose.yaml" || -f "$INSTALL_DIR/api.env" || -f "$INSTALL_DIR/.env" ]]; then
   die "render-only cannot replace an existing TXBoard deployment configuration; use a clean staging directory"
@@ -638,21 +768,77 @@ if [[ "$ASSUME_YES" -eq 0 && "$INSTALL_TYPE" == fresh && -z "$XBOARD_DUMP" ]]; t
     *) die "invalid installation type" ;;
   esac
 fi
+case "${XBOARD_AUTO_DUMP,,}" in
+  1|true|yes|y|on) XBOARD_AUTO_DUMP=true ;;
+  0|false|no|n|off|"") XBOARD_AUTO_DUMP=false ;;
+  *) die "invalid TXBOARD_XBOARD_AUTO_DUMP value: $XBOARD_AUTO_DUMP" ;;
+esac
+case "${DISCARD_LEGACY_AUDIT,,}" in
+  1|true|yes|y|on) DISCARD_LEGACY_AUDIT=true ;;
+  0|false|no|n|off|"") DISCARD_LEGACY_AUDIT=false ;;
+  *) die "invalid TXBOARD_DISCARD_LEGACY_AUDIT value: $DISCARD_LEGACY_AUDIT" ;;
+esac
 case "$INSTALL_TYPE" in
   fresh)
+    [[ "$XBOARD_AUTO_DUMP" == false && -z "$XBOARD_SOURCE_CONTAINER" && -z "$XBOARD_SOURCE_DATABASE" ]] ||
+      die "automatic XBoard backup requires XBoard import mode"
+    [[ "$DISCARD_LEGACY_AUDIT" == false ]] ||
+      die "--discard-legacy-audit requires XBoard import mode"
     [[ -z "$XBOARD_DUMP" && -z "$XBOARD_ENV_FILE" ]] ||
       die "XBoard import requires --install-type xboard-import and both source paths" ;;
   xboard-import)
     if [[ "$ASSUME_YES" -eq 0 ]]; then
-      XBOARD_DUMP="$(prompt "XBoard 数据库 SQL.gz 备份的绝对路径" "$XBOARD_DUMP")"
-      XBOARD_ENV_FILE="$(prompt "原 XBoard .env 的绝对路径（用于保留 APP_KEY）" "$XBOARD_ENV_FILE")"
+      if [[ -z "$XBOARD_DUMP" && "$XBOARD_AUTO_DUMP" == false ]]; then
+        source_choice="$(choose "XBoard 数据来源：1 自动备份本机 MySQL / 2 已有 SQL.gz" "1" "2")"
+        [[ "$source_choice" == 1 ]] && XBOARD_AUTO_DUMP=true
+      fi
+      if [[ "$XBOARD_AUTO_DUMP" == false ]]; then
+        XBOARD_DUMP="$(prompt "XBoard 数据库 SQL.gz 备份的绝对路径" "$XBOARD_DUMP")"
+      fi
+      xboard_default_env=""
+      [[ -f /opt/xboard/.env ]] && xboard_default_env=/opt/xboard/.env
+      XBOARD_ENV_FILE="$(prompt "原 XBoard .env 的绝对路径（用于保留 APP_KEY）" "${XBOARD_ENV_FILE:-$xboard_default_env}")"
+      if [[ "$DISCARD_LEGACY_AUDIT" == false ]] &&
+          confirm "只在新目标库丢弃旧审计插件的 6 张表及 5 条迁移记录？（源备份保留）" "N"; then
+        DISCARD_LEGACY_AUDIT=true
+      fi
     fi
-    [[ "$XBOARD_DUMP" == /* && -f "$XBOARD_DUMP" && ! -L "$XBOARD_DUMP" && -s "$XBOARD_DUMP" ]] ||
-      die "XBoard dump must be a nonempty absolute file path"
     [[ "$XBOARD_ENV_FILE" == /* && -f "$XBOARD_ENV_FILE" && ! -L "$XBOARD_ENV_FILE" ]] ||
       die "XBoard .env file must be an absolute file path"
-    [[ "$XBOARD_DUMP" != "$INSTALL_DIR/"* && "$XBOARD_ENV_FILE" != "$INSTALL_DIR/"* ]] ||
-      die "XBoard inputs must not be placed inside the new TXBoard installation directory"
+    [[ "$XBOARD_ENV_FILE" != "$INSTALL_DIR/"* ]] ||
+      die "XBoard .env must not be inside the TXBoard install directory"
+    if [[ "$XBOARD_AUTO_DUMP" == true ]]; then
+      [[ -z "$XBOARD_DUMP" ]] || die "--xboard-auto-dump cannot combine with --xboard-dump"
+      [[ "$RENDER_ONLY" -eq 0 ]] || die "--xboard-auto-dump cannot combine with --render-only"
+      XBOARD_SOURCE_CONTAINER="${XBOARD_SOURCE_CONTAINER:-$(xboard_source_env_value "$XBOARD_ENV_FILE" DB_HOST)}"
+      XBOARD_SOURCE_DATABASE="${XBOARD_SOURCE_DATABASE:-$(xboard_source_env_value "$XBOARD_ENV_FILE" DB_DATABASE)}"
+      if ! docker inspect --type container "$XBOARD_SOURCE_CONTAINER" >/dev/null 2>&1; then
+        [[ "$ASSUME_YES" -eq 0 ]] ||
+          die "source MySQL container '$XBOARD_SOURCE_CONTAINER' missing; use --xboard-source-container"
+        warn "XBoard .env DB_HOST is not a Docker container; select from detected MySQL containers"
+        mapfile -t source_mysql_candidates < <(list_mysql_containers)
+        (( ${#source_mysql_candidates[@]} > 0 )) || die "no MySQL Docker container found; use SQL.gz manually"
+        printf '\nMySQL containers:\n' > /dev/tty
+        for i in "${!source_mysql_candidates[@]}"; do
+          printf '  %d) %s\n' "$((i+1))" "${source_mysql_candidates[$i]}" > /dev/tty
+        done
+        source_pick="$(choose "XBoard MySQL 源容器" "1" "${#source_mysql_candidates[@]}")"
+        IFS=$'\t' read -r _ XBOARD_SOURCE_CONTAINER _ <<< "${source_mysql_candidates[$((source_pick-1))]}"
+      fi
+      if [[ "$ASSUME_YES" -eq 0 ]]; then
+        XBOARD_SOURCE_DATABASE="$(prompt "原 XBoard 数据库名（只备份）" "${XBOARD_SOURCE_DATABASE:-xboard}")"
+      fi
+      [[ "$XBOARD_SOURCE_DATABASE" =~ ^[A-Za-z0-9_]+$ ]] ||
+        die "invalid XBoard source database name"
+      log "XBoard source: $XBOARD_SOURCE_CONTAINER/$XBOARD_SOURCE_DATABASE"
+    else
+      [[ -z "$XBOARD_SOURCE_CONTAINER" && -z "$XBOARD_SOURCE_DATABASE" ]] ||
+        die "manual SQL.gz and automatic MySQL source settings cannot mix"
+      [[ "$XBOARD_DUMP" == /* && -f "$XBOARD_DUMP" && ! -L "$XBOARD_DUMP" && -s "$XBOARD_DUMP" ]] ||
+        die "XBoard dump must be a nonempty absolute file path"
+      [[ "$XBOARD_DUMP" != "$INSTALL_DIR/"* ]] ||
+        die "XBoard dump must not reside inside the TXBoard installation directory"
+    fi
     [[ "$RESET_LOCAL_DB" -eq 0 ]] ||
       die "XBoard import must never use --reset-local-db"
     command -v python3 >/dev/null || die "python3 is required for XBoard import" ;;
@@ -660,6 +846,16 @@ case "$INSTALL_TYPE" in
 esac
 
 configure_database
+
+# Fail closed even for external/host connection aliases. Different source and
+# destination database NAMES are required for automatic imports.
+if [[ "$INSTALL_TYPE" == xboard-import && "$XBOARD_AUTO_DUMP" == true &&
+      "$XBOARD_SOURCE_DATABASE" == "$DB_DATABASE" ]]; then
+  die "automatic XBoard import requires a distinct target database name (source: $XBOARD_SOURCE_DATABASE)"
+fi
+
+# Source and destination database names were already required to differ above.
+
 
 DB_PASSWORD_ENV="$(dotenv_quote "$DB_PASSWORD")"
 
@@ -731,7 +927,10 @@ HTTP mapping:   $HTTP_BIND:$HTTP_PORT -> container:80
 Backup retain:  $BACKUP_RETENTION
 MCP Gateway:    $MCP_ENABLED
 Install type:    $INSTALL_TYPE
-XBoard dump:     ${XBOARD_DUMP:-none}
+XBoard dump:     $(if [[ "$XBOARD_AUTO_DUMP" == true ]]; then printf 'automatically generated'; else printf '%s' "${XBOARD_DUMP:-none}"; fi)
+XBoard source:   $(if [[ "$XBOARD_AUTO_DUMP" == true ]]; then printf '%s/%s' "$XBOARD_SOURCE_CONTAINER" "$XBOARD_SOURCE_DATABASE"; else printf 'offline backup'; fi)
+Discard old audit: $DISCARD_LEGACY_AUDIT (isolated target only)
+Archive orphan dir: $ARCHIVE_ORPHAN_DIR (keep all prior files)
 Database mode:   $DB_MODE
 Database:        $DB_HOST:$DB_PORT/$DB_DATABASE
 EOF
@@ -750,10 +949,20 @@ fi
 # Repeat the non-destructive ownership guard after the final confirmation.
 # Docker/container identity could have changed during the interactive wizard.
 if [[ "$RENDER_ONLY" -eq 0 ]]; then
-  txboard_guard_install "$INSTALL_DIR" ||
+  txboard_guard_install "$INSTALL_DIR" "$ARCHIVE_ORPHAN_DIR" ||
     die "TXBoard appeared before installation; existing data is untouched"
 fi
 
+# Produce and validate source SQL.gz before touching installation files or
+# importing anything into the disposable target database.
+if [[ "$INSTALL_TYPE" == xboard-import && "$XBOARD_AUTO_DUMP" == true && "$RENDER_ONLY" -eq 0 ]]; then
+  txboard_auto_backup_xboard_source "$XBOARD_SOURCE_CONTAINER" "$XBOARD_SOURCE_DATABASE"
+fi
+
+if [[ "$ARCHIVE_ORPHAN_DIR" == true &&
+      ( -f "$INSTALL_DIR/compose.yaml" || -f "$INSTALL_DIR/api.env" || -f "$INSTALL_DIR/.env" ) ]]; then
+  archive_orphan_install_dir
+fi
 if install_dir_has_content; then
   clean_existing_install_dir
 fi
@@ -775,6 +984,11 @@ cd "$INSTALL_DIR"
 umask 077
 
 mkdir -p data/storage/app data/plugins backups
+mkdir -p -m 700 backups/installer
+chmod 700 backups/installer
+INSTALL_LOG_FILE="$INSTALL_DIR/backups/installer/install.log"
+touch "$INSTALL_LOG_FILE"
+chmod 600 "$INSTALL_LOG_FILE"
 
 cat > .env <<EOF
 TXBOARD_IMAGE=$IMAGE
@@ -1147,8 +1361,11 @@ if [[ "$RENDER_ONLY" -eq 1 ]]; then
   exit 0
 fi
 
-log "pulling TXBoard and infrastructure images..."
-docker compose pull
+INSTALL_PROGRESS_TOTAL=5
+[[ "$INSTALL_TYPE" == xboard-import ]] && INSTALL_PROGRESS_TOTAL=7
+INSTALL_PROGRESS_DONE=0
+install_progress_step "拉取 TXBoard 与依赖镜像" docker compose pull ||
+  die "unable to pull TXBoard images"
 
 if [[ "$MCP_ENABLED" == "true" ]]; then
   log "verifying TXBoard image includes the embedded MCP Gateway..."
@@ -1184,32 +1401,34 @@ load_xboard_import_module() {
 }
 if [[ "$INSTALL_TYPE" == xboard-import ]]; then
   load_xboard_import_module
-  txboard_import_xboard "$XBOARD_DUMP" "$XBOARD_ENV_FILE"
-  log "Migrated administrator detected. Seeding TXBoard settings without creating a new user..."
-  docker compose run -T --rm --no-deps --entrypoint php txboard     /www/artisan txboard:install --no-interaction </dev/null ||
+  install_progress_step "导入 XBoard 数据并校验用户与订单" txboard_import_xboard "$XBOARD_DUMP" "$XBOARD_ENV_FILE" ||
+    die "XBoard import failed; see $INSTALL_LOG_FILE"
+  install_progress_step "完成迁移后的 TXBoard 初始化" docker compose run -T --rm --no-deps --entrypoint php txboard /www/artisan txboard:install --no-interaction ||
     die "TXBoard imported installation finalization failed"
 fi
 
 # Start the real application container before installation, but do not wait for
 # its health check yet. txboard:install relies on the normal container runtime.
-log "正在启动 TXBoard 服务……"
-docker compose up -d --remove-orphans txboard
+install_progress_step "启动 TXBoard 应用容器" docker compose up -d --remove-orphans txboard ||
+  die "failed to start TXBoard"
 
 if [[ "$INSTALL_TYPE" == fresh ]]; then
-  log "正在初始化全新 TXBoard 数据库与管理员……"
+  # Fresh installs may emit a one-time password; keep that output visible.
+  log "初始化管理员（请保存输出的一次性密码）..."
   docker compose exec -T txboard php artisan txboard:install </dev/null
 fi
 
-log "正在重启 TXBoard 并加载正式配置……"
-docker compose restart txboard >/dev/null
-docker compose up -d --wait txboard >/dev/null
+install_progress_step "重新加载 TXBoard 正式配置" docker compose restart txboard ||
+  die "TXBoard restart failed"
+install_progress_step "等待 TXBoard 服务健康检查" docker compose up -d --wait txboard ||
+  die "TXBoard readiness check failed"
 
 if ! docker compose exec -T txboard php artisan txboard:install-status --no-interaction </dev/null >/dev/null; then
   die "TXBoard installation state is incomplete. Inspect: cd $INSTALL_DIR && docker compose logs txboard"
 fi
 
-log "正在启动定时备份……"
-docker compose up -d backup
+install_progress_step "启动定时备份" docker compose up -d backup ||
+  die "failed to start backup service"
 
 log "正在安装 TXBoard 管理命令……"
 install_deploy_tools
@@ -1218,6 +1437,7 @@ cat <<EOF
 
 TXBoard 安装成功。
 
+安装日志：$INSTALL_LOG_FILE
 Panel:       $APP_URL/admin/
 Install dir: $INSTALL_DIR
 Image:       $IMAGE

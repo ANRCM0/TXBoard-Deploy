@@ -75,7 +75,7 @@ txboard_detect_print() {
 }
 
 txboard_guard_install() {
-  local install_dir="$1"
+  local install_dir="$1" allow_orphan_archive="${2:-false}"
   txboard_detect_scan "$install_dir" || return 1
   txboard_detect_print
   if (( TXBOARD_DETECT_TOTAL > 0 )); then
@@ -86,6 +86,10 @@ txboard_guard_install() {
   fi
   # An incomplete installation can have no container but preserve credentials.
   if [[ -f "$install_dir/compose.yaml" || -f "$install_dir/api.env" || -f "$install_dir/.env" ]]; then
+    if [[ "$allow_orphan_archive" == true ]]; then
+      printf '[TXBoard Detect] WARNING: orphan deployment configuration will be archived after final confirmation: %s\n' "$install_dir" >&2
+      return 0
+    fi
     printf '[TXBoard Detect] ERROR: existing deployment config in %s without an owned container. Recover or inspect it first.\n' "$install_dir" >&2
     return 1
   fi
