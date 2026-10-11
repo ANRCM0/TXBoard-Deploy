@@ -296,6 +296,41 @@ UUID、余额与订单；--email 不会创建新管理员。APP_KEY 从原环境
 → 才允许启动 TXBoard。导入报告位于 backups/xboard-import/，权限为私有。
 不允许未知历史迁移、混合 tx_* 数据、插件自建未知表静默略过。
 
+### 自动创建 XBoard SQL.gz 备份（推荐）
+
+现在交互式选择 **安装类型 2 从 XBoard 迁入** 后，默认使用
+**1 自动从本机 MySQL 导出 / 2 使用已有 SQL.gz**。脚本从原 XBoard
+`.env` 自动读取 `DB_HOST` 和 `DB_DATABASE`，识别 1Panel / Docker MySQL
+容器；匹配失败时可从检测到的容器列表中选择。
+
+最终确认后，安装器会自动从源库生成只读 SQL 备份，保存到
+`$HOME/txboard-xboard-import-backups/xboard-时间-随机后缀.sql.gz`。
+每份备份包含独立 SHA256 清单，目录和文件权限仅授权当前系统用户。
+导出错误或 gzip 校验失败会中止安装并清理不完整文件。
+**XBoard 生产数据库始终不会被修改，目标库必须与源库不同。**
+
+无人值守调用示例：
+
+~~~bash
+sudo bash install.sh --yes --xboard-auto-dump \
+  --xboard-env /opt/xboard/.env \
+  --xboard-source-container 1Panel-mysql-KIWu --xboard-source-db xboard \
+  --db-mode host --db-container 1Panel-mysql-KIWu --db-name txboard \
+  --email admin@example.com --mode http --public-host 127.0.0.1 \
+  --discard-legacy-audit
+~~~
+
+若 `/opt/xboard/.env` 的 DB_HOST 和 DB_DATABASE 已经准确指向运行中的
+Docker 容器及源数据库，上例的两项 `--xboard-source-*` 参数均可省略。
+若无法从 MySQL 容器环境读取管理员密码，可设置
+`TXBOARD_XBOARD_DB_ADMIN_PASSWORD`；交互安装则会提示输入。
+目前自动导出仅支持本机 Docker / 1Panel MySQL；其他来源仍可提供 SQL.gz。
+
+使用 `mysqldump --single-transaction --quick` 生成的是时间点快照。
+**正式切换前仍应冻结 XBoard 业务写入、支付回调和队列，再生成最终备份**，
+否则导出后发生的订单及余额变化不会自动迁入。
+`--xboard-auto-dump` 与 `--xboard-dump` 不可同时使用；`--render-only` 不导出数据。
+
 ### 旧 XBoard Access Audit 插件：可选丢弃（仅隔离目标库）
 旧审计插件表 `audit_access_logs`、`audit_ban_logs`、`audit_hourly_stats`、
 `audit_node_status`、`audit_reports`、`audit_rules` 及对应 5 条
