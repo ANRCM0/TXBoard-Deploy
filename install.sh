@@ -734,14 +734,15 @@ esac
 
 configure_database
 
-# Never import into the same source database, even if Docker aliases differ.
+# Fail closed even for external/host connection aliases. Different source and
+# destination database NAMES are required for automatic imports.
 if [[ "$INSTALL_TYPE" == xboard-import && "$XBOARD_AUTO_DUMP" == true &&
-      "$DB_HOST_KIND" == docker-container && "$XBOARD_SOURCE_DATABASE" == "$DB_DATABASE" ]]; then
-  source_id="$(docker inspect --type container -f '{{.Id}}' "$XBOARD_SOURCE_CONTAINER")"
-  target_id="$(docker inspect --type container -f '{{.Id}}' "$DB_CONTAINER")"
-  [[ "$source_id" != "$target_id" ]] ||
-    die "refusing import: source XBoard and TXBoard destination are the same database"
+      "$XBOARD_SOURCE_DATABASE" == "$DB_DATABASE" ]]; then
+  die "automatic XBoard import requires a distinct target database name (source: $XBOARD_SOURCE_DATABASE)"
 fi
+
+# Source and destination database names were already required to differ above.
+
 
 DB_PASSWORD_ENV="$(dotenv_quote "$DB_PASSWORD")"
 
