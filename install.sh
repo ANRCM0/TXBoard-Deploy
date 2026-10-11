@@ -85,6 +85,9 @@ LOCAL_DB_RESET_PENDING=0
 INSTALL_TYPE="${TXBOARD_INSTALL_TYPE:-fresh}"
 XBOARD_DUMP="${TXBOARD_XBOARD_DUMP:-}"
 XBOARD_ENV_FILE="${TXBOARD_XBOARD_ENV_FILE:-}"
+XBOARD_AUTO_DUMP="${TXBOARD_XBOARD_AUTO_DUMP:-false}"
+XBOARD_SOURCE_CONTAINER="${TXBOARD_XBOARD_SOURCE_CONTAINER:-}"
+XBOARD_SOURCE_DATABASE="${TXBOARD_XBOARD_SOURCE_DATABASE:-}"
 DISCARD_LEGACY_AUDIT="${TXBOARD_DISCARD_LEGACY_AUDIT:-false}"
 CLEAN_INSTALL_DIR="${TXBOARD_CLEAN_INSTALL_DIR:-false}"
 COMPOSE_PROJECT_NAME="txboard"
@@ -126,6 +129,9 @@ Options:
   --install-type MODE fresh | xboard-import (default: fresh)
   --xboard-dump PATH Trusted XBoard single-database mysqldump .sql.gz (not a live DB)
   --xboard-env PATH  Original XBoard .env containing APP_KEY
+  --xboard-auto-dump  Export .sql.gz automatically from local XBoard MySQL container
+  --xboard-source-container NAME  Source 1Panel/Docker MySQL container
+  --xboard-source-db NAME  Source MySQL database (default from old .env)
   --discard-legacy-audit  Opt-in: discard known legacy audit plugin tables/history in NEW target
   --yes               Non-interactive; use CLI/environment/default values
   --reset-local-db    Delete an existing managed MySQL volume before a fresh install
@@ -164,6 +170,10 @@ Environment variables:
   TXBOARD_INSTALL_TYPE
   TXBOARD_XBOARD_DUMP
   TXBOARD_XBOARD_ENV_FILE
+  TXBOARD_XBOARD_AUTO_DUMP
+  TXBOARD_XBOARD_SOURCE_CONTAINER
+  TXBOARD_XBOARD_SOURCE_DATABASE
+  TXBOARD_XBOARD_DB_ADMIN_PASSWORD
   TXBOARD_DISCARD_LEGACY_AUDIT
   TXBOARD_CLEAN_INSTALL_DIR
 EOF
@@ -194,6 +204,9 @@ while [[ $# -gt 0 ]]; do
     --install-type) INSTALL_TYPE="${2:?missing value for --install-type}"; shift 2 ;;
     --xboard-dump) XBOARD_DUMP="${2:?missing value for --xboard-dump}"; INSTALL_TYPE=xboard-import; shift 2 ;;
     --xboard-env) XBOARD_ENV_FILE="${2:?missing value for --xboard-env}"; shift 2 ;;
+    --xboard-auto-dump) XBOARD_AUTO_DUMP=true; INSTALL_TYPE=xboard-import; shift ;;
+    --xboard-source-container) XBOARD_SOURCE_CONTAINER="${2:?missing value for --xboard-source-container}"; XBOARD_AUTO_DUMP=true; INSTALL_TYPE=xboard-import; shift 2 ;;
+    --xboard-source-db) XBOARD_SOURCE_DATABASE="${2:?missing value for --xboard-source-db}"; XBOARD_AUTO_DUMP=true; INSTALL_TYPE=xboard-import; shift 2 ;;
     --discard-legacy-audit) DISCARD_LEGACY_AUDIT=true; shift ;;
     --yes) ASSUME_YES=1; shift ;;
     --reset-local-db) RESET_LOCAL_DB=1; shift ;;
@@ -642,6 +655,11 @@ if [[ "$ASSUME_YES" -eq 0 && "$INSTALL_TYPE" == fresh && -z "$XBOARD_DUMP" ]]; t
     *) die "invalid installation type" ;;
   esac
 fi
+case "${XBOARD_AUTO_DUMP,,}" in
+  1|true|yes|y|on) XBOARD_AUTO_DUMP=true ;;
+  0|false|no|n|off|"") XBOARD_AUTO_DUMP=false ;;
+  *) die "invalid TXBOARD_XBOARD_AUTO_DUMP value: $XBOARD_AUTO_DUMP" ;;
+esac
 case "${DISCARD_LEGACY_AUDIT,,}" in
   1|true|yes|y|on) DISCARD_LEGACY_AUDIT=true ;;
   0|false|no|n|off|"") DISCARD_LEGACY_AUDIT=false ;;
@@ -649,25 +667,65 @@ case "${DISCARD_LEGACY_AUDIT,,}" in
 esac
 case "$INSTALL_TYPE" in
   fresh)
+    [[ "$XBOARD_AUTO_DUMP" == false && -z "$XBOARD_SOURCE_CONTAINER" && -z "$XBOARD_SOURCE_DATABASE" ]] ||
+      die "automatic XBoard backup requires XBoard import mode"
     [[ "$DISCARD_LEGACY_AUDIT" == false ]] ||
       die "--discard-legacy-audit requires XBoard import mode"
     [[ -z "$XBOARD_DUMP" && -z "$XBOARD_ENV_FILE" ]] ||
       die "XBoard import requires --install-type xboard-import and both source paths" ;;
   xboard-import)
     if [[ "$ASSUME_YES" -eq 0 ]]; then
-      XBOARD_DUMP="$(prompt "XBoard 数据库 SQL.gz 备份的绝对路径" "$XBOARD_DUMP")"
-      XBOARD_ENV_FILE="$(prompt "原 XBoard .env 的绝对路径（用于保留 APP_KEY）" "$XBOARD_ENV_FILE")"
+      if [[ -z "$XBOARD_DUMP" && "$XBOARD_AUTO_DUMP" == false ]]; then
+        source_choice="$(choose "XBoard 数据来源：1 自动备份本机 MySQL / 2 已有 SQL.gz" "1" "2")"
+        [[ "$source_choice" == 1 ]] && XBOARD_AUTO_DUMP=true
+      fi
+      if [[ "$XBOARD_AUTO_DUMP" == false ]]; then
+        XBOARD_DUMP="$(prompt "XBoard 数据库 SQL.gz 备份的绝对路径" "$XBOARD_DUMP")"
+      fi
+      xboard_default_env=""
+      [[ -f /opt/xboard/.env ]] && xboard_default_env=/opt/xboard/.env
+      XBOARD_ENV_FILE="$(prompt "原 XBoard .env 的绝对路径（用于保留 APP_KEY）" "${XBOARD_ENV_FILE:-$xboard_default_env}")"
       if [[ "$DISCARD_LEGACY_AUDIT" == false ]] &&
           confirm "只在新目标库丢弃旧审计插件的 6 张表及 5 条迁移记录？（源备份保留）" "N"; then
         DISCARD_LEGACY_AUDIT=true
       fi
     fi
-    [[ "$XBOARD_DUMP" == /* && -f "$XBOARD_DUMP" && ! -L "$XBOARD_DUMP" && -s "$XBOARD_DUMP" ]] ||
-      die "XBoard dump must be a nonempty absolute file path"
     [[ "$XBOARD_ENV_FILE" == /* && -f "$XBOARD_ENV_FILE" && ! -L "$XBOARD_ENV_FILE" ]] ||
       die "XBoard .env file must be an absolute file path"
-    [[ "$XBOARD_DUMP" != "$INSTALL_DIR/"* && "$XBOARD_ENV_FILE" != "$INSTALL_DIR/"* ]] ||
-      die "XBoard inputs must not be placed inside the new TXBoard installation directory"
+    [[ "$XBOARD_ENV_FILE" != "$INSTALL_DIR/"* ]] ||
+      die "XBoard .env must not be inside the TXBoard install directory"
+    if [[ "$XBOARD_AUTO_DUMP" == true ]]; then
+      [[ -z "$XBOARD_DUMP" ]] || die "--xboard-auto-dump cannot combine with --xboard-dump"
+      [[ "$RENDER_ONLY" -eq 0 ]] || die "--xboard-auto-dump cannot combine with --render-only"
+      XBOARD_SOURCE_CONTAINER="${XBOARD_SOURCE_CONTAINER:-$(xboard_source_env_value "$XBOARD_ENV_FILE" DB_HOST)}"
+      XBOARD_SOURCE_DATABASE="${XBOARD_SOURCE_DATABASE:-$(xboard_source_env_value "$XBOARD_ENV_FILE" DB_DATABASE)}"
+      if ! docker inspect --type container "$XBOARD_SOURCE_CONTAINER" >/dev/null 2>&1; then
+        [[ "$ASSUME_YES" -eq 0 ]] ||
+          die "source MySQL container '$XBOARD_SOURCE_CONTAINER' missing; use --xboard-source-container"
+        warn "XBoard .env DB_HOST is not a Docker container; select from detected MySQL containers"
+        mapfile -t source_mysql_candidates < <(list_mysql_containers)
+        (( ${#source_mysql_candidates[@]} > 0 )) || die "no MySQL Docker container found; use SQL.gz manually"
+        printf '\nMySQL containers:\n' > /dev/tty
+        for i in "${!source_mysql_candidates[@]}"; do
+          printf '  %d) %s\n' "$((i+1))" "${source_mysql_candidates[$i]}" > /dev/tty
+        done
+        source_pick="$(choose "XBoard MySQL 源容器" "1" "${#source_mysql_candidates[@]}")"
+        IFS=$'\t' read -r _ XBOARD_SOURCE_CONTAINER _ <<< "${source_mysql_candidates[$((source_pick-1))]}"
+      fi
+      if [[ "$ASSUME_YES" -eq 0 ]]; then
+        XBOARD_SOURCE_DATABASE="$(prompt "原 XBoard 数据库名（只备份）" "${XBOARD_SOURCE_DATABASE:-xboard}")"
+      fi
+      [[ "$XBOARD_SOURCE_DATABASE" =~ ^[A-Za-z0-9_]+$ ]] ||
+        die "invalid XBoard source database name"
+      log "XBoard source: $XBOARD_SOURCE_CONTAINER/$XBOARD_SOURCE_DATABASE"
+    else
+      [[ -z "$XBOARD_SOURCE_CONTAINER" && -z "$XBOARD_SOURCE_DATABASE" ]] ||
+        die "manual SQL.gz and automatic MySQL source settings cannot mix"
+      [[ "$XBOARD_DUMP" == /* && -f "$XBOARD_DUMP" && ! -L "$XBOARD_DUMP" && -s "$XBOARD_DUMP" ]] ||
+        die "XBoard dump must be a nonempty absolute file path"
+      [[ "$XBOARD_DUMP" != "$INSTALL_DIR/"* ]] ||
+        die "XBoard dump must not reside inside the TXBoard installation directory"
+    fi
     [[ "$RESET_LOCAL_DB" -eq 0 ]] ||
       die "XBoard import must never use --reset-local-db"
     command -v python3 >/dev/null || die "python3 is required for XBoard import" ;;
@@ -675,6 +733,15 @@ case "$INSTALL_TYPE" in
 esac
 
 configure_database
+
+# Never import into the same source database, even if Docker aliases differ.
+if [[ "$INSTALL_TYPE" == xboard-import && "$XBOARD_AUTO_DUMP" == true &&
+      "$DB_HOST_KIND" == docker-container && "$XBOARD_SOURCE_DATABASE" == "$DB_DATABASE" ]]; then
+  source_id="$(docker inspect --type container -f '{{.Id}}' "$XBOARD_SOURCE_CONTAINER")"
+  target_id="$(docker inspect --type container -f '{{.Id}}' "$DB_CONTAINER")"
+  [[ "$source_id" != "$target_id" ]] ||
+    die "refusing import: source XBoard and TXBoard destination are the same database"
+fi
 
 DB_PASSWORD_ENV="$(dotenv_quote "$DB_PASSWORD")"
 
@@ -746,7 +813,8 @@ HTTP mapping:   $HTTP_BIND:$HTTP_PORT -> container:80
 Backup retain:  $BACKUP_RETENTION
 MCP Gateway:    $MCP_ENABLED
 Install type:    $INSTALL_TYPE
-XBoard dump:     ${XBOARD_DUMP:-none}
+XBoard dump:     $(if [[ "$XBOARD_AUTO_DUMP" == true ]]; then printf 'automatically generated'; else printf '%s' "${XBOARD_DUMP:-none}"; fi)
+XBoard source:   $(if [[ "$XBOARD_AUTO_DUMP" == true ]]; then printf '%s/%s' "$XBOARD_SOURCE_CONTAINER" "$XBOARD_SOURCE_DATABASE"; else printf 'offline backup'; fi)
 Discard old audit: $DISCARD_LEGACY_AUDIT (isolated target only)
 Database mode:   $DB_MODE
 Database:        $DB_HOST:$DB_PORT/$DB_DATABASE
@@ -768,6 +836,12 @@ fi
 if [[ "$RENDER_ONLY" -eq 0 ]]; then
   txboard_guard_install "$INSTALL_DIR" ||
     die "TXBoard appeared before installation; existing data is untouched"
+fi
+
+# Produce and validate source SQL.gz before touching installation files or
+# importing anything into the disposable target database.
+if [[ "$INSTALL_TYPE" == xboard-import && "$XBOARD_AUTO_DUMP" == true && "$RENDER_ONLY" -eq 0 ]]; then
+  txboard_auto_backup_xboard_source "$XBOARD_SOURCE_CONTAINER" "$XBOARD_SOURCE_DATABASE"
 fi
 
 if install_dir_has_content; then
