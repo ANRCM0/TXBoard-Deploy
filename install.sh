@@ -90,6 +90,7 @@ XBOARD_SOURCE_CONTAINER="${TXBOARD_XBOARD_SOURCE_CONTAINER:-}"
 XBOARD_SOURCE_DATABASE="${TXBOARD_XBOARD_SOURCE_DATABASE:-}"
 DISCARD_LEGACY_AUDIT="${TXBOARD_DISCARD_LEGACY_AUDIT:-false}"
 CLEAN_INSTALL_DIR="${TXBOARD_CLEAN_INSTALL_DIR:-false}"
+ARCHIVE_ORPHAN_DIR="${TXBOARD_ARCHIVE_ORPHAN_DIR:-false}"
 COMPOSE_PROJECT_NAME="txboard"
 LOCAL_DB_VOLUME="${COMPOSE_PROJECT_NAME}_database-data"
 
@@ -136,8 +137,9 @@ Options:
   --yes               Non-interactive; use CLI/environment/default values
   --reset-local-db    Delete an existing managed MySQL volume before a fresh install
                       (DESTRUCTIVE: all data in that volume will be lost)
-  --clean-install-dir  Remove existing files from the target install directory first
-                      (Docker volumes are preserved; managed DB reset is separate)
+  --clean-install-dir  Remove unrelated files in target install directory (with approval)
+  --archive-orphan-dir  Archive a failed deployment config if NO TXBoard containers exist
+                      (preserves prior files and Docker volumes; never deletes them)
   --render-only       Generate and validate files, do not pull/start containers
   -h, --help          Show this help
 
@@ -176,6 +178,7 @@ Environment variables:
   TXBOARD_XBOARD_DB_ADMIN_PASSWORD
   TXBOARD_DISCARD_LEGACY_AUDIT
   TXBOARD_CLEAN_INSTALL_DIR
+  TXBOARD_ARCHIVE_ORPHAN_DIR
 EOF
 }
 
@@ -211,6 +214,7 @@ while [[ $# -gt 0 ]]; do
     --yes) ASSUME_YES=1; shift ;;
     --reset-local-db) RESET_LOCAL_DB=1; shift ;;
     --clean-install-dir) CLEAN_INSTALL_DIR=true; shift ;;
+    --archive-orphan-dir) ARCHIVE_ORPHAN_DIR=true; shift ;;
     --render-only) RENDER_ONLY=1; ASSUME_YES=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
@@ -298,6 +302,30 @@ validate_install_cleanup_target() {
       die "refusing to clean dangerous installation directory: $INSTALL_DIR"
       ;;
   esac
+}
+
+# Preserve the complete abandoned deployment directory, including secrets and
+# generated app/storage files, instead of deleting/overwriting unknown content.
+# Called ONLY after final confirmation; every call rechecks Docker ownership.
+archive_orphan_install_dir() {
+  local archive_root
+  [[ "$ARCHIVE_ORPHAN_DIR" == true ]] || die "orphan archive was not approved"
+  validate_install_cleanup_target
+  [[ -d "$INSTALL_DIR" && ! -L "$INSTALL_DIR" ]] ||
+    die "orphan deployment path is not a real directory"
+  [[ -f "$INSTALL_DIR/compose.yaml" || -f "$INSTALL_DIR/api.env" || -f "$INSTALL_DIR/.env" ]] ||
+    die "orphaned deployment config disappeared; refusing to move unexpected files"
+  txboard_guard_install "$INSTALL_DIR" true ||
+    die "TXBoard container appeared; cannot archive current deployment"
+  archive_root="$(mktemp -d "${INSTALL_DIR}.orphan-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX")" ||
+    die "could not reserve safe orphan archive directory"
+  chmod 700 "$archive_root"
+  # mv is same-filesystem and does not dereference symlinks inside the tree.
+  if ! mv -T -- "$INSTALL_DIR" "$archive_root/deployment"; then
+    rmdir -- "$archive_root" 2>/dev/null || true
+    die "failed to preserve orphan deployment directory; installation blocked"
+  fi
+  log "previous TXBoard configuration archived intact at: $archive_root/deployment"
 }
 
 clean_existing_install_dir() {
@@ -527,6 +555,11 @@ case "${CLEAN_INSTALL_DIR,,}" in
   0|false|no|n|off|"") CLEAN_INSTALL_DIR=false ;;
   *) die "invalid TXBOARD_CLEAN_INSTALL_DIR value: $CLEAN_INSTALL_DIR (use true/false)" ;;
 esac
+case "${ARCHIVE_ORPHAN_DIR,,}" in
+  1|true|yes|y|on) ARCHIVE_ORPHAN_DIR=true ;;
+  0|false|no|n|off|"") ARCHIVE_ORPHAN_DIR=false ;;
+  *) die "invalid TXBOARD_ARCHIVE_ORPHAN_DIR value: $ARCHIVE_ORPHAN_DIR" ;;
+esac
 
 # 已有健康 TXBoard 应升级而不是重复安装或清理。
 # Interactive callers can hand off to the safe updater instead of guessing.
@@ -568,10 +601,22 @@ if [[ "$RENDER_ONLY" -eq 0 && "$ASSUME_YES" -eq 0 ]]; then
   fi
 fi
 
+# A previous failed setup can leave Compose credentials without a container.
+# Only offer non-destructive archival, never silent deletion. Archive takes
+# place AFTER the complete installation summary has been confirmed.
+if [[ "$RENDER_ONLY" -eq 0 &&
+      ( -f "$INSTALL_DIR/compose.yaml" || -f "$INSTALL_DIR/api.env" || -f "$INSTALL_DIR/.env" ) &&
+      "$ARCHIVE_ORPHAN_DIR" != true && "$ASSUME_YES" -eq 0 ]]; then
+  warn "发现上次安装留下的部署配置：$INSTALL_DIR"
+  confirm "未检测到实际 TXBoard 容器时，是否在最终确认后归档旧目录并重新安装？原文件完整保留。" "N" ||
+    die "existing deployment files preserved; archive declined"
+  ARCHIVE_ORPHAN_DIR=true
+fi
+
 # Probe all Docker containers (including stopped ones) before ANY cleanup.
 # Render-only does not mutate host Docker; it still protects deployment config.
 if [[ "$RENDER_ONLY" -eq 0 ]]; then
-  txboard_guard_install "$INSTALL_DIR" ||
+  txboard_guard_install "$INSTALL_DIR" "$ARCHIVE_ORPHAN_DIR" ||
     die "existing/ambiguous TXBoard detected; installation did not modify this deployment"
 elif [[ -f "$INSTALL_DIR/compose.yaml" || -f "$INSTALL_DIR/api.env" || -f "$INSTALL_DIR/.env" ]]; then
   die "render-only cannot replace an existing TXBoard deployment configuration; use a clean staging directory"
@@ -817,6 +862,7 @@ Install type:    $INSTALL_TYPE
 XBoard dump:     $(if [[ "$XBOARD_AUTO_DUMP" == true ]]; then printf 'automatically generated'; else printf '%s' "${XBOARD_DUMP:-none}"; fi)
 XBoard source:   $(if [[ "$XBOARD_AUTO_DUMP" == true ]]; then printf '%s/%s' "$XBOARD_SOURCE_CONTAINER" "$XBOARD_SOURCE_DATABASE"; else printf 'offline backup'; fi)
 Discard old audit: $DISCARD_LEGACY_AUDIT (isolated target only)
+Archive orphan dir: $ARCHIVE_ORPHAN_DIR (keep all prior files)
 Database mode:   $DB_MODE
 Database:        $DB_HOST:$DB_PORT/$DB_DATABASE
 EOF
@@ -835,7 +881,7 @@ fi
 # Repeat the non-destructive ownership guard after the final confirmation.
 # Docker/container identity could have changed during the interactive wizard.
 if [[ "$RENDER_ONLY" -eq 0 ]]; then
-  txboard_guard_install "$INSTALL_DIR" ||
+  txboard_guard_install "$INSTALL_DIR" "$ARCHIVE_ORPHAN_DIR" ||
     die "TXBoard appeared before installation; existing data is untouched"
 fi
 
@@ -845,6 +891,10 @@ if [[ "$INSTALL_TYPE" == xboard-import && "$XBOARD_AUTO_DUMP" == true && "$RENDE
   txboard_auto_backup_xboard_source "$XBOARD_SOURCE_CONTAINER" "$XBOARD_SOURCE_DATABASE"
 fi
 
+if [[ "$ARCHIVE_ORPHAN_DIR" == true &&
+      ( -f "$INSTALL_DIR/compose.yaml" || -f "$INSTALL_DIR/api.env" || -f "$INSTALL_DIR/.env" ) ]]; then
+  archive_orphan_install_dir
+fi
 if install_dir_has_content; then
   clean_existing_install_dir
 fi
