@@ -31,6 +31,31 @@ assert 'docker compose down --remove-orphans </dev/null' not in s
 print('installer ordering and deferred destructive actions: passed')
 PY
 
+# Exercise the progress wrapper without starting real Docker. A failing step
+# must fail closed and preserve diagnostics; completion never advances on error.
+(
+  export INSTALL_LOG_FILE="$tmp/progress.log" INSTALL_VERBOSE=true TERM=dumb
+  INSTALL_PROGRESS_TOTAL=2
+  INSTALL_PROGRESS_DONE=0
+  log() { printf '%s\n' "$*"; }
+  warn() { printf '%s\n' "$*" >&2; }
+  source <(awk '/^install_progress_step\(\) \{/{reading=1} reading{print} reading && /^\}$/ {exit}' "$repo/install.sh")
+  install_progress_step "testing successful stage" bash -c 'echo safe-output' >"$tmp/progress.out" 2>&1
+  [[ "$INSTALL_PROGRESS_DONE" == 1 ]]
+  grep -Fq 'safe-output' "$INSTALL_LOG_FILE"
+  grep -Fq '[1/2]' "$tmp/progress.out"
+  if install_progress_step "testing failed stage" bash -c 'echo intentional-error >&2; exit 23' >"$tmp/progress.failed" 2>&1; then
+    echo "progress wrapper masked a failed command" >&2
+    exit 1
+  else
+    [[ "$?" == 23 ]] || { echo "progress wrapper changed failing exit status" >&2; exit 1; }
+  fi
+  [[ "$INSTALL_PROGRESS_DONE" == 1 ]] || { echo "failed progress stage advanced the progress bar" >&2; exit 1; }
+  grep -Fq 'intentional-error' "$INSTALL_LOG_FILE"
+  grep -Fq '完整日志：' "$tmp/progress.failed"
+)
+echo 'installer stage progress and error log preservation: passed'
+
 mkdir -p "$tmp/bin"
 cat > "$tmp/bin/docker" <<'MOCK'
 #!/usr/bin/env bash
