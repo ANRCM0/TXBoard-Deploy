@@ -41,6 +41,20 @@ run_install() {
   fi
 }
 
+run_refresh_manager() {
+  need_install
+  local tmp status=0
+  tmp="$(mktemp "$TXBOARD_INSTALL_DIR/.safe-manager-update.XXXXXXXX")" || die "cannot create manager updater temporary file"
+  if ! fetch "$TXBOARD_DEPLOY_RAW_BASE/update.sh" > "$tmp" || ! bash -n "$tmp"; then
+    rm -f -- "$tmp"
+    die "cannot fetch/validate current toolkit refresh script"
+  fi
+  chmod 700 "$tmp"
+  bash "$tmp" --dir "$TXBOARD_INSTALL_DIR" --tools-only || status=$?
+  rm -f -- "$tmp"
+  return "$status"
+}
+
 run_update() {
   local -a args=(--dir "$TXBOARD_INSTALL_DIR")
   [[ -n "${1:-}" ]] && args+=(--tag "$1")
@@ -94,6 +108,7 @@ Quick commands:
   install-status       Check Laravel installation state
   clear-runtime-cache  Clear config/route/view caches (preserve Redis)
   restart-horizon      Gracefully restart Horizon queue workers
+  refresh-manager      Update scripts only (no image/database change)
   uninstall            Open the safe uninstall flow
   install              Run the installer when no deployment exists
   help                 Show this help
@@ -108,6 +123,7 @@ Examples:
   sudo txboard config
   sudo txboard admin-reset-password
   sudo txboard repair-command
+  sudo txboard refresh-manager
 EOF
 }
 
@@ -156,10 +172,11 @@ main_menu() {
  12) 卸载
  13) 重置管理员密码
  14) 运维工具
+ 15) 仅更新运维脚本
   0) 退出
 ========================================
 EOF
-    case "$(choose "请选择" "1" "14")" in
+    case "$(choose "请选择" "1" "15")" in
       1) service_status; pause ;;
       2) run_update; pause ;;
       3) service_start; pause ;;
@@ -174,6 +191,7 @@ EOF
       12) uninstall_menu ;;
       13) maintenance_reset_admin_password; pause ;;
       14) maintenance_menu ;;
+      15) run_refresh_manager; pause ;;
       0) return 0 ;;
     esac
   done
@@ -203,6 +221,7 @@ case "$CMD" in
   install-status) maintenance_install_status ;;
   clear-runtime-cache) maintenance_clear_runtime_cache ;;
   restart-horizon) maintenance_restart_horizon ;;
+  refresh-manager) run_refresh_manager ;;
   maintenance-menu) maintenance_menu ;;
   uninstall) uninstall_menu ;;
   help|-h|--help) show_help ;;

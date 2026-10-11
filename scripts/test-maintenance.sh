@@ -62,4 +62,23 @@ if TXBOARD_COMMAND_DIR="$tmp/commands" bash "$repo/txboard.sh" --dir "$tmp/insta
   echo 'repair-command overwrote regular file' >&2; exit 1
 fi
 grep -Fq 'refusing to overwrite a non-symlink' "$tmp/refuse.log"
+cat > "$tmp/bin/curl" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+url="" dest=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) dest="$2"; shift 2 ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+[[ "$url" == mock://deploy/* && -n "$dest" ]] || exit 99
+cp "$TEST_REPO/${url#mock://deploy/}" "$dest"
+MOCK
+chmod +x "$tmp/bin/curl"
+export TEST_REPO="$repo"
+TXBOARD_DEPLOY_RAW_BASE=mock://deploy bash "$repo/update.sh" --dir "$tmp/install" --tools-only
+bash "$tmp/install/txboard.sh" --dir "$tmp/install" help | grep -Fq 'refresh-manager'
+! grep -Eq 'compose (stop|up|down|run)| volume rm | pull ' "$MOCK_DOCKER_LOG"
 echo 'Administrator recovery and maintenance commands: passed'

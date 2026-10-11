@@ -325,10 +325,10 @@ txboard update 或旧的 --cutover-plan 原地迁移；应使用上述新环境�
 sudo txboard
 ```
 
-已有旧部署不需要重装。执行一次新版更新脚本即可在更新成功后自动安装/刷新管理命令：
+已有旧部署不需要重装，也不需要为了获取新管理命令而升级 TXBoard 镜像。可以只刷新管理脚本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/update.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/update.sh | sudo bash -s -- --tools-only
 ```
 
 直接运行 `sudo txboard` 会进入交互菜单。未发现部署时只显示安装入口；已安装时主菜单提供常用运维操作：
@@ -348,6 +348,7 @@ curl -fsSL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/update.s
 12) Uninstall
 13) Reset administrator password
 14) Maintenance tools
+15) Refresh manager scripts
  0) Exit
 ```
 
@@ -379,6 +380,7 @@ sudo txboard install-status             # 检查 Laravel 安装状态
 sudo txboard clear-runtime-cache       # 仅清理配置/路由/视图缓存
 sudo txboard restart-horizon           # 平滑重启 Horizon 队列
 sudo txboard maintenance-menu
+sudo txboard refresh-manager             # 仅刷新运维脚本，不更新镜像或数据库
 sudo txboard help
 ```
 
@@ -392,9 +394,9 @@ sudo txboard help
 sudo bash /opt/txboard/txboard.sh repair-command
 ```
 
-仅修复当前部署到 `/usr/local/bin/txboard` 的符号链接，不会覆盖已有普通文件或指向其他部署的链接。非默认路径使用 `sudo bash /实际目录/txboard.sh --dir /实际目录 repair-command`。旧版脚本尚无此子命令时，可通过前述安全更新流程刷新脚本，不要重新安装或重置数据库。
+仅修复当前部署到 `/usr/local/bin/txboard` 的符号链接，不会覆盖已有普通文件或指向其他部署的链接。非默认路径使用 `sudo bash /实际目录/txboard.sh --dir /实际目录 repair-command`。旧版脚本尚无此子命令时，可通过前述 `update.sh --tools-only` 入口刷新，不要重新安装、升级镜像或重置数据库。
 
-`install-status` 检查 Laravel 初始化状态；`clear-runtime-cache` 只清理配置、路由及视图缓存，**不运行 `cache:clear` 或 `optimize:clear`**，避免意外清空与队列、会话共用的 Redis；`restart-horizon` 请求 Horizon 平滑退出，由 Supervisor 自动重启。上述 Artisan 操作需要 TXBoard 容器处于运行状态。
+`refresh-manager` 将先下载最新安全更新器，再仅刷新运维脚本和模块，自动校验 Shell 语法；不触碰运行中的容器、业务数据库和镜像。下载或验证失败会保留旧脚本。`install-status` 检查 Laravel 初始化状态；`clear-runtime-cache` 只清理配置、路由及视图缓存，**不运行 `cache:clear` 或 `optimize:clear`**，避免意外清空与队列、会话共用的 Redis；`restart-horizon` 请求 Horizon 平滑退出，由 Supervisor 自动重启。上述 Artisan 操作需要 TXBoard 容器处于运行状态。
 
 备份管理支持创建、查看、恢复、删除和修改保留数量。内置 MySQL 模式下，恢复前会自动创建一次不参与保留数量裁剪的安全备份，并保留当前访问 URL / Cookie 安全设置；宿主机 / 外部 MySQL 模式仍支持备份，但自动整库恢复会被禁用。完整卸载前也会先备份，并把部署目录额外打包到用户 HOME 目录。
 

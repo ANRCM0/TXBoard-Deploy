@@ -1241,5 +1241,6 @@ Quick commands:
   sudo txboard diagnose
   sudo txboard admin-reset-password
   sudo txboard repair-command
+  sudo txboard refresh-manager
   sudo txboard help
 EOF

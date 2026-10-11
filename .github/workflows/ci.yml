@@ -62,6 +62,7 @@ jobs:
           bash txboard.sh help | grep -q 'backups'
           bash txboard.sh help | grep -q 'admin-reset-password'
           bash txboard.sh help | grep -q 'repair-command'
+          bash txboard.sh help | grep -q 'refresh-manager'
 
       - name: Test administrator recovery and maintenance commands
         run: bash scripts/test-maintenance.sh
