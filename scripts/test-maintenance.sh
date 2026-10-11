@@ -2,7 +2,7 @@
 set -euo pipefail
 repo="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+trap 'rc=$?; if [[ $rc -ne 0 && -f "$tmp/docker.log" ]]; then echo "Mock Docker calls before failure:" >&2; cat "$tmp/docker.log" >&2; fi; rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/install" "$tmp/commands"
 printf 'TXBOARD_ADMIN_EMAIL=admin@example.com\n' > "$tmp/install/.env"
 printf 'APP_URL=https://panel.example.com\n' > "$tmp/install/api.env"
@@ -12,15 +12,15 @@ cat > "$tmp/bin/docker" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "$*" >> "$MOCK_DOCKER_LOG"
-case " $* " in
-  *" compose version "*|*" info "*) exit 0 ;;
-  *" compose ps --status running -q txboard "*) echo fake-container ;;
-  *" compose exec -T txboard php artisan reset:password admin@example.com --no-interaction "*) printf '新密码为：mock-password\n' ;;
-  *" compose exec -T txboard php artisan txboard:install-status --no-interaction "*|
-  *" compose exec -T txboard php artisan config:clear --no-interaction "*|
-  *" compose exec -T txboard php artisan route:clear --no-interaction "*|
-  *" compose exec -T txboard php artisan view:clear --no-interaction "*|
-  *" compose exec -T txboard php artisan horizon:terminate --no-interaction "*) exit 0 ;;
+case "$*" in
+  "compose version"|"info") exit 0 ;;
+  "compose ps --status running -q txboard") echo fake-container ;;
+  "compose exec -T txboard php artisan reset:password admin@example.com --no-interaction") printf '新密码为：mock-password\n' ;;
+  "compose exec -T txboard php artisan txboard:install-status --no-interaction"|
+  "compose exec -T txboard php artisan config:clear --no-interaction"|
+  "compose exec -T txboard php artisan route:clear --no-interaction"|
+  "compose exec -T txboard php artisan view:clear --no-interaction"|
+  "compose exec -T txboard php artisan horizon:terminate --no-interaction") exit 0 ;;
   *) echo "unexpected docker call: $*" >&2; exit 99 ;;
 esac
 MOCK
