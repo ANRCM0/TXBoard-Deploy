@@ -104,6 +104,7 @@ Quick commands:
   config-show          Show current deployment configuration
   diagnose             Run diagnostics
   admin-reset-password [email]  Reset admin password interactively
+  admin-reset-path            Rotate the admin panel security path interactively
   repair-command       Restore /usr/local/bin/txboard command link (root)
   install-status       Check Laravel installation state
   clear-runtime-cache  Clear config/route/view caches (preserve Redis)
@@ -122,6 +123,7 @@ Examples:
   sudo txboard backup
   sudo txboard config
   sudo txboard admin-reset-password
+  sudo txboard admin-reset-path
   sudo txboard repair-command
   sudo txboard refresh-manager
 EOF
@@ -173,10 +175,11 @@ main_menu() {
  13) 重置管理员密码
  14) 运维工具
  15) 仅更新运维脚本
+ 16) 重置管理面板安全路径
   0) 退出
 ========================================
 EOF
-    case "$(choose "请选择" "1" "15")" in
+    case "$(choose "请选择" "1" "16")" in
       1) service_status; pause ;;
       2) run_update; pause ;;
       3) service_start; pause ;;
@@ -192,6 +195,7 @@ EOF
       13) maintenance_reset_admin_password; pause ;;
       14) maintenance_menu ;;
       15) run_refresh_manager; pause ;;
+      16) maintenance_reset_admin_path; pause ;;
       0) return 0 ;;
     esac
   done
@@ -217,6 +221,7 @@ case "$CMD" in
   config-show) config_show ;;
   diagnose) diagnose_run ;;
   admin-reset-password|reset-admin-password) [[ $# -le 2 ]] || die "usage: txboard admin-reset-password [email]"; maintenance_reset_admin_password "$ARG" ;;
+  admin-reset-path|reset-admin-path) [[ $# -eq 1 ]] || die "usage: txboard admin-reset-path"; maintenance_reset_admin_path ;;
   repair-command) maintenance_repair_command ;;
   install-status) maintenance_install_status ;;
   clear-runtime-cache) maintenance_clear_runtime_cache ;;
