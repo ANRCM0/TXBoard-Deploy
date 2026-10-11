@@ -46,16 +46,16 @@ class TestXBoardImport(unittest.TestCase):
     def test_legacy_audit_plugin_requires_explicit_discard(self):
         tables = TABLES + sorted(m.LEGACY_AUDIT_TABLES)
         history = HISTORY + sorted(m.LEGACY_AUDIT_MIGRATIONS) + [
-            "2026_03_28_050000_lowercase_existing_emails"
+            "2026_03_28_050000_lowercase_existing_emails",
+            "2025_11_29_000000_add_server_id_to_stat_user",
+            "2025_11_29_120000_update_stat_user_unique_constraint",
         ]
         with self.assertRaisesRegex(ValueError, "explicit --discard-legacy-audit"):
             m.make_plan(tables, history, NATIVE)
         plan = m.make_plan(tables, history, NATIVE, discard_legacy_audit=True)
         self.assertEqual(set(plan["discardedLegacyAuditTables"]), m.LEGACY_AUDIT_TABLES)
         self.assertEqual(set(plan["discardedLegacyAuditMigrations"]), m.LEGACY_AUDIT_MIGRATIONS)
-        self.assertEqual(plan["retainedRetiredMigrationHistory"], [
-            "2026_03_28_050000_lowercase_existing_emails"
-        ])
+        self.assertEqual(set(plan["retainedRetiredMigrationHistory"]), m.RETIRED_LEGACY_MIGRATIONS)
         output = m.sql(plan)
         self.assertIn("DROP TABLE", output)
         self.assertIn("DELETE FROM migrations WHERE migration IN", output)
