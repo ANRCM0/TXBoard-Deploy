@@ -15,7 +15,7 @@ fi
 
 LIB_DIR="${TXBOARD_MANAGER_LIB_DIR:-$SCRIPT_DIR/lib}"
 
-for module in common service backup config diagnose uninstall detect; do
+for module in common service backup config diagnose uninstall detect maintenance; do
   [[ -f "$LIB_DIR/$module.sh" ]] || {
     printf '[TXBoard] ERROR: missing module: %s/%s.sh\n' "$LIB_DIR" "$module" >&2
     exit 1
@@ -39,6 +39,20 @@ run_install() {
   else
     fetch "$TXBOARD_DEPLOY_RAW_BASE/install.sh" | bash -s -- --dir "$TXBOARD_INSTALL_DIR"
   fi
+}
+
+run_refresh_manager() {
+  need_install
+  local tmp status=0
+  tmp="$(mktemp "$TXBOARD_INSTALL_DIR/.safe-manager-update.XXXXXXXX")" || die "cannot create manager updater temporary file"
+  if ! fetch "$TXBOARD_DEPLOY_RAW_BASE/update.sh" > "$tmp" || ! bash -n "$tmp"; then
+    rm -f -- "$tmp"
+    die "cannot fetch/validate current toolkit refresh script"
+  fi
+  chmod 700 "$tmp"
+  bash "$tmp" --dir "$TXBOARD_INSTALL_DIR" --tools-only || status=$?
+  rm -f -- "$tmp"
+  return "$status"
 }
 
 run_update() {
@@ -73,6 +87,7 @@ Interactive:
   service-menu         Open service management
   backup-menu          Open backup management
   config               Open configuration menu
+  maintenance-menu     Open administrator and maintenance tools
 
 Quick commands:
   status | ps          Show deployment and container status
@@ -88,6 +103,12 @@ Quick commands:
   restore              Restore a managed-MySQL backup interactively (local mode only)
   config-show          Show current deployment configuration
   diagnose             Run diagnostics
+  admin-reset-password [email]  Reset admin password interactively
+  repair-command       Restore /usr/local/bin/txboard command link (root)
+  install-status       Check Laravel installation state
+  clear-runtime-cache  Clear config/route/view caches (preserve Redis)
+  restart-horizon      Gracefully restart Horizon queue workers
+  refresh-manager      Update scripts only (no image/database change)
   uninstall            Open the safe uninstall flow
   install              Run the installer when no deployment exists
   help                 Show this help
@@ -100,6 +121,9 @@ Examples:
   sudo txboard update latest
   sudo txboard backup
   sudo txboard config
+  sudo txboard admin-reset-password
+  sudo txboard repair-command
+  sudo txboard refresh-manager
 EOF
 }
 
@@ -146,10 +170,13 @@ main_menu() {
  10) 故障诊断
  11) 资源占用
  12) 卸载
+ 13) 重置管理员密码
+ 14) 运维工具
+ 15) 仅更新运维脚本
   0) 退出
 ========================================
 EOF
-    case "$(choose "请选择" "1" "12")" in
+    case "$(choose "请选择" "1" "15")" in
       1) service_status; pause ;;
       2) run_update; pause ;;
       3) service_start; pause ;;
@@ -162,6 +189,9 @@ EOF
       10) diagnose_run || true; pause ;;
       11) service_stats; pause ;;
       12) uninstall_menu ;;
+      13) maintenance_reset_admin_password; pause ;;
+      14) maintenance_menu ;;
+      15) run_refresh_manager; pause ;;
       0) return 0 ;;
     esac
   done
@@ -186,6 +216,13 @@ case "$CMD" in
   config) config_menu ;;
   config-show) config_show ;;
   diagnose) diagnose_run ;;
+  admin-reset-password|reset-admin-password) [[ $# -le 2 ]] || die "usage: txboard admin-reset-password [email]"; maintenance_reset_admin_password "$ARG" ;;
+  repair-command) maintenance_repair_command ;;
+  install-status) maintenance_install_status ;;
+  clear-runtime-cache) maintenance_clear_runtime_cache ;;
+  restart-horizon) maintenance_restart_horizon ;;
+  refresh-manager) run_refresh_manager ;;
+  maintenance-menu) maintenance_menu ;;
   uninstall) uninstall_menu ;;
   help|-h|--help) show_help ;;
   *) die "unknown command: $CMD. Run 'txboard help' for usage." ;;
