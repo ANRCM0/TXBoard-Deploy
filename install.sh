@@ -93,6 +93,8 @@ CLEAN_INSTALL_DIR="${TXBOARD_CLEAN_INSTALL_DIR:-false}"
 ARCHIVE_ORPHAN_DIR="${TXBOARD_ARCHIVE_ORPHAN_DIR:-false}"
 INSTALL_VERBOSE="${TXBOARD_INSTALL_VERBOSE:-false}"
 INSTALL_LOG_FILE=""
+INSTALL_PROGRESS_TOTAL=0
+INSTALL_PROGRESS_DONE=0
 COMPOSE_PROJECT_NAME="txboard"
 LOCAL_DB_VOLUME="${COMPOSE_PROJECT_NAME}_database-data"
 
@@ -103,15 +105,20 @@ die() { printf '[TXBoard Deploy] ERROR: %s\n' "$*" >&2; exit 1; }
 # Interactive stage spinner, never a simulated percentage. A private full log
 # preserves every underlying command's output for error diagnosis.
 install_progress_step() {
-  local title="$1" pid frame=0 status=0 log_file
+  local title="$1" pid frame=0 status=0 log_file step_no bar="" i
   shift
   log_file="${INSTALL_LOG_FILE:?installer log file not initialized}"
+  step_no=$((INSTALL_PROGRESS_DONE + 1))
+  for ((i = 0; i < INSTALL_PROGRESS_TOTAL; i++)); do
+    if ((i < INSTALL_PROGRESS_DONE)); then bar+="█"; else bar+="░"; fi
+  done
   printf '\n==> %s\n' "$title" >> "$log_file"
 
   if [[ "$INSTALL_VERBOSE" == true || ! -t 2 || "${TERM:-}" == dumb ]]; then
     log "$title..."
     if "$@" 2>&1 | tee -a "$log_file"; then
-      log "$title 已完成"
+      INSTALL_PROGRESS_DONE=$((INSTALL_PROGRESS_DONE + 1))
+      log "[$INSTALL_PROGRESS_DONE/$INSTALL_PROGRESS_TOTAL] $title 已完成"
       return 0
     else
       status=$?
@@ -124,17 +131,22 @@ install_progress_step() {
   pid=$!
   local frames=('|' '/' '-' '\')
   while kill -0 "$pid" 2>/dev/null; do
-    printf '\r\033[2K[TXBoard] [%s] %s（正在处理）' "${frames[$((frame % ${#frames[@]}))]}" "$title" > /dev/tty
+    printf '\r\033[2K[TXBoard] [%s] %d/%d [%s] %s' "${frames[$((frame % ${#frames[@]}))]}" "$step_no" "$INSTALL_PROGRESS_TOTAL" "$bar" "$title" > /dev/tty
     frame=$((frame + 1))
     sleep 0.15
   done
   if wait "$pid"; then
-    printf '\r\033[2K[TXBoard] [✓] %s\n' "$title" > /dev/tty
+    INSTALL_PROGRESS_DONE=$((INSTALL_PROGRESS_DONE + 1))
+    bar=""
+    for ((i = 0; i < INSTALL_PROGRESS_TOTAL; i++)); do
+      if ((i < INSTALL_PROGRESS_DONE)); then bar+="█"; else bar+="░"; fi
+    done
+    printf '\r\033[2K[TXBoard] [✓] %d/%d [%s] %s\n' "$INSTALL_PROGRESS_DONE" "$INSTALL_PROGRESS_TOTAL" "$bar" "$title" > /dev/tty
     return 0
   else
     status=$?
   fi
-  printf '\r\033[2K[TXBoard] [✗] %s（失败）\n' "$title" > /dev/tty
+  printf '\r\033[2K[TXBoard] [✗] %d/%d [%s] %s（失败）\n' "$step_no" "$INSTALL_PROGRESS_TOTAL" "$bar" "$title" > /dev/tty
   warn "$title failed (exit $status); latest diagnostic lines:"
   tail -n 24 "$log_file" >&2 || true
   warn "完整日志：$log_file"
@@ -1349,6 +1361,9 @@ if [[ "$RENDER_ONLY" -eq 1 ]]; then
   exit 0
 fi
 
+INSTALL_PROGRESS_TOTAL=5
+[[ "$INSTALL_TYPE" == xboard-import ]] && INSTALL_PROGRESS_TOTAL=7
+INSTALL_PROGRESS_DONE=0
 install_progress_step "拉取 TXBoard 与依赖镜像" docker compose pull ||
   die "unable to pull TXBoard images"
 
