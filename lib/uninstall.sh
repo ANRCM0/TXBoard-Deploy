@@ -6,7 +6,7 @@ uninstall_menu() {
   ui_header "卸载管理" "高风险操作 · 请先检查备份"
   ui_section "卸载选项"
   ui_item 1 "仅移除容器" "数据卷保留"
-  ui_item 2 "完整卸载" "删除文件和数据卷"
+  ui_danger_item 2 "完整卸载" "删除文件和数据卷"
   ui_footer
   ui_item 0 "取消并返回"
   choice="$(choose "请选择" "0" "2")"
