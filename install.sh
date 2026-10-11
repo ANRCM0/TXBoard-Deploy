@@ -972,6 +972,11 @@ cd "$INSTALL_DIR"
 umask 077
 
 mkdir -p data/storage/app data/plugins backups
+mkdir -p -m 700 backups/installer
+chmod 700 backups/installer
+INSTALL_LOG_FILE="$INSTALL_DIR/backups/installer/install.log"
+touch "$INSTALL_LOG_FILE"
+chmod 600 "$INSTALL_LOG_FILE"
 
 cat > .env <<EOF
 TXBOARD_IMAGE=$IMAGE
@@ -1344,8 +1349,8 @@ if [[ "$RENDER_ONLY" -eq 1 ]]; then
   exit 0
 fi
 
-log "pulling TXBoard and infrastructure images..."
-docker compose pull
+install_progress_step "拉取 TXBoard 与依赖镜像" docker compose pull ||
+  die "unable to pull TXBoard images"
 
 if [[ "$MCP_ENABLED" == "true" ]]; then
   log "verifying TXBoard image includes the embedded MCP Gateway..."
@@ -1381,32 +1386,34 @@ load_xboard_import_module() {
 }
 if [[ "$INSTALL_TYPE" == xboard-import ]]; then
   load_xboard_import_module
-  txboard_import_xboard "$XBOARD_DUMP" "$XBOARD_ENV_FILE"
-  log "Migrated administrator detected. Seeding TXBoard settings without creating a new user..."
-  docker compose run -T --rm --no-deps --entrypoint php txboard     /www/artisan txboard:install --no-interaction </dev/null ||
+  install_progress_step "导入 XBoard 数据并校验用户与订单" txboard_import_xboard "$XBOARD_DUMP" "$XBOARD_ENV_FILE" ||
+    die "XBoard import failed; see $INSTALL_LOG_FILE"
+  install_progress_step "完成迁移后的 TXBoard 初始化" docker compose run -T --rm --no-deps --entrypoint php txboard /www/artisan txboard:install --no-interaction ||
     die "TXBoard imported installation finalization failed"
 fi
 
 # Start the real application container before installation, but do not wait for
 # its health check yet. txboard:install relies on the normal container runtime.
-log "正在启动 TXBoard 服务……"
-docker compose up -d --remove-orphans txboard
+install_progress_step "启动 TXBoard 应用容器" docker compose up -d --remove-orphans txboard ||
+  die "failed to start TXBoard"
 
 if [[ "$INSTALL_TYPE" == fresh ]]; then
-  log "正在初始化全新 TXBoard 数据库与管理员……"
+  # Fresh installs may emit a one-time password; keep that output visible.
+  log "初始化管理员（请保存输出的一次性密码）..."
   docker compose exec -T txboard php artisan txboard:install </dev/null
 fi
 
-log "正在重启 TXBoard 并加载正式配置……"
-docker compose restart txboard >/dev/null
-docker compose up -d --wait txboard >/dev/null
+install_progress_step "重新加载 TXBoard 正式配置" docker compose restart txboard ||
+  die "TXBoard restart failed"
+install_progress_step "等待 TXBoard 服务健康检查" docker compose up -d --wait txboard ||
+  die "TXBoard readiness check failed"
 
 if ! docker compose exec -T txboard php artisan txboard:install-status --no-interaction </dev/null >/dev/null; then
   die "TXBoard installation state is incomplete. Inspect: cd $INSTALL_DIR && docker compose logs txboard"
 fi
 
-log "正在启动定时备份……"
-docker compose up -d backup
+install_progress_step "启动定时备份" docker compose up -d backup ||
+  die "failed to start backup service"
 
 log "正在安装 TXBoard 管理命令……"
 install_deploy_tools
@@ -1415,6 +1422,7 @@ cat <<EOF
 
 TXBoard 安装成功。
 
+安装日志：$INSTALL_LOG_FILE
 Panel:       $APP_URL/admin/
 Install dir: $INSTALL_DIR
 Image:       $IMAGE
