@@ -95,7 +95,7 @@ backup_menu() {
     ui_item 0 "返回主菜单"
     choice="$(choose "请选择" "1" "5")"
     case "$choice" in
-      1) backup_create; pause ;;
+      1) ui_run "生成 TXBoard 完整备份" backup_create || warn "备份失败"; pause ;;
       2) backup_list; pause ;;
       3) backup_restore; pause ;;
       4)
