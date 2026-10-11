@@ -5,6 +5,7 @@ INSTALL_DIR="${TXBOARD_INSTALL_DIR:-/opt/txboard}"
 IMAGE_TAG=""
 SKIP_BACKUP=0
 ASSUME_YES=0
+TOOLS_ONLY=0
 SCHEMA_KIND=""
 DEPLOY_RAW_BASE="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main}"
 
@@ -24,6 +25,7 @@ Options:
   --tag TAG        Switch ghcr.io/anrcm0/txboard to a different tag
   --skip-backup    Not permitted during schema-safe updates
   --yes            Unattended native TXBoard upgrade (rejects legacy v2_* schemas)
+  --tools-only     Refresh management scripts only; do not update images or databases
   --cutover-plan PATH  Retired (use the isolated XBoard import workflow)
   -h, --help       Show this help
 EOF
@@ -35,6 +37,7 @@ while [[ $# -gt 0 ]]; do
     --tag) IMAGE_TAG="${2:?missing value for --tag}"; shift 2 ;;
     --skip-backup) SKIP_BACKUP=1; shift ;;
     --yes) ASSUME_YES=1; shift ;;
+    --tools-only) TOOLS_ONLY=1; shift ;;
     --cutover-plan) die "legacy in-place cutover is retired; import into a separate empty TXBoard database instead" ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
@@ -55,10 +58,12 @@ get_env() {
 }
 
 refresh_tools() {
-  local manager_tmp="$INSTALL_DIR/.txboard.sh.tmp"
-  local updater_tmp="$INSTALL_DIR/.update.sh.tmp"
-  local module tmp
-  mkdir -p "$INSTALL_DIR/lib"
+  # Stage and syntax-check the entire toolkit before replacing any installed
+  # manager file. Network errors must not leave a partially refreshed toolkit.
+  local stage file module target
+  stage="$(mktemp -d "$INSTALL_DIR/.manager-refresh.XXXXXXXX")" ||
+    { warn "could not create manager staging directory"; return 1; }
+  mkdir -p "$stage/lib"
 
   download_file() {
     local url="$1" dest="$2"
@@ -71,31 +76,55 @@ refresh_tools() {
     fi
   }
 
-  if ! download_file "$DEPLOY_RAW_BASE/txboard.sh" "$manager_tmp" ||
-     ! download_file "$DEPLOY_RAW_BASE/update.sh" "$updater_tmp"; then
-    rm -f "$manager_tmp" "$updater_tmp"
-    warn "could not refresh TXBoard management tools"
-    return 0
-  fi
-
-  for module in common service backup config diagnose uninstall detect xboard-import maintenance; do
-    tmp="$INSTALL_DIR/lib/.$module.sh.tmp"
-    if ! download_file "$DEPLOY_RAW_BASE/lib/$module.sh" "$tmp"; then
-      rm -f "$manager_tmp" "$updater_tmp" "$INSTALL_DIR/lib/."*.tmp
-      warn "could not refresh manager module: $module"
-      return 0
+  for file in txboard.sh update.sh; do
+    if ! download_file "$DEPLOY_RAW_BASE/$file" "$stage/$file" ||
+       ! bash -n "$stage/$file"; then
+      warn "could not fetch/validate manager file: $file"
+      rm -rf -- "$stage"
+      return 1
     fi
-    mv "$tmp" "$INSTALL_DIR/lib/$module.sh"
+  done
+  for module in common service backup config diagnose uninstall detect xboard-import maintenance; do
+    if ! download_file "$DEPLOY_RAW_BASE/lib/$module.sh" "$stage/lib/$module.sh" ||
+       ! bash -n "$stage/lib/$module.sh"; then
+      warn "could not fetch/validate manager module: $module"
+      rm -rf -- "$stage"
+      return 1
+    fi
   done
 
-  mv "$manager_tmp" "$INSTALL_DIR/txboard.sh"
-  mv "$updater_tmp" "$INSTALL_DIR/update.sh"
+  mkdir -p "$INSTALL_DIR/lib"
+  for module in common service backup config diagnose uninstall detect xboard-import maintenance; do
+    mv -f -- "$stage/lib/$module.sh" "$INSTALL_DIR/lib/$module.sh"
+  done
+  for file in txboard.sh update.sh; do
+    mv -f -- "$stage/$file" "$INSTALL_DIR/$file"
+  done
+  rm -rf -- "$stage"
   chmod 755 "$INSTALL_DIR/txboard.sh" "$INSTALL_DIR/update.sh" "$INSTALL_DIR"/lib/*.sh
+
+  target=/usr/local/bin/txboard
   if [[ "${EUID:-$(id -u)}" -eq 0 && -d /usr/local/bin ]]; then
-    ln -sfn "$INSTALL_DIR/txboard.sh" /usr/local/bin/txboard
+    if [[ ! -e "$target" && ! -L "$target" ]] ||
+       { [[ -L "$target" ]] && [[ "$(readlink -- "$target")" == "$INSTALL_DIR/txboard.sh" ]]; }; then
+      ln -sfn -- "$INSTALL_DIR/txboard.sh" "$target"
+    else
+      warn "existing $target is unrelated; refusing to overwrite it"
+    fi
   fi
   log "management command refreshed"
 }
+
+if [[ "$TOOLS_ONLY" -eq 1 ]]; then
+  [[ -z "$IMAGE_TAG" && "$SKIP_BACKUP" -eq 0 ]] ||
+    die "--tools-only cannot be combined with --tag or --skip-backup"
+  umask 077
+  command -v flock >/dev/null 2>&1 || die "flock is required for management refresh"
+  exec 9>"$INSTALL_DIR/.upgrade.lock"
+  flock -n 9 || die "another TXBoard management or upgrade process holds the lock"
+  refresh_tools || die "management tools refresh failed; current deployment was not changed"
+  exit 0
+fi
 
 set_image() {
   local value="$1" tmp
@@ -341,5 +370,5 @@ docker compose exec -T txboard php artisan txboard:install-status --no-interacti
   die "new image install-state check failed"
 phase=complete
 log "升级完成：镜像=$new_image，数据库=native，备份=$backup_path"
-refresh_tools
+refresh_tools || warn "TXBoard was updated but the management toolkit could not be refreshed"
 docker compose ps txboard
