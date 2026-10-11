@@ -63,6 +63,10 @@ ui_item() {
     printf '  %b%2s%b  %s\n' "$(ui_color "$shade")" "$index" "$(ui_color reset)" "$caption" > /dev/tty
   fi
 }
+ui_danger_item() {
+  local index="$1" caption="$2" hint="${3:-}"
+  printf '  %b%2s  %s%b %b%s%b\n' "$(ui_color red)" "$index" "$caption" "$(ui_color reset)" "$(ui_color muted)" "$hint" "$(ui_color reset)" > /dev/tty
+}
 ui_footer() {
   printf '\n  %b──────────────────────────────────────────────%b\n' "$(ui_color muted)" "$(ui_color reset)" > /dev/tty
 }
