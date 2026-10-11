@@ -83,7 +83,17 @@ backup_restore() {
 backup_menu() {
   local choice name value
   while true; do
-    choice="$(choose "1 创建备份  2 查看列表  3 恢复  4 删除  5 保留数量  0 返回" "1" "5")"
+    ui_screen
+    ui_header "备份管理" "数据安全 · 恢复前自动创建安全备份"
+    ui_section "备份操作"
+    ui_item 1 "创建新备份"
+    ui_item 2 "查看备份列表"
+    ui_item 3 "恢复数据库" "需要再次确认"
+    ui_item 4 "删除备份" "不可撤销"
+    ui_item 5 "设置保留数量"
+    ui_footer
+    ui_item 0 "返回主菜单"
+    choice="$(choose "请选择" "1" "5")"
     case "$choice" in
       1) backup_create; pause ;;
       2) backup_list; pause ;;
