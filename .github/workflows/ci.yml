@@ -61,6 +61,7 @@ jobs:
           bash txboard.sh help | grep -q 'config-show'
           bash txboard.sh help | grep -q 'backups'
           bash txboard.sh help | grep -q 'admin-reset-password'
+          bash txboard.sh help | grep -q 'admin-reset-path'
           bash txboard.sh help | grep -q 'repair-command'
           bash txboard.sh help | grep -q 'refresh-manager'
 

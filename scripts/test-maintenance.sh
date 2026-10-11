@@ -16,6 +16,7 @@ case "$*" in
   "compose version"|"info") exit 0 ;;
   "compose ps --status running -q txboard") echo fake-container ;;
   "compose exec -T txboard php artisan reset:password admin@example.com --no-interaction") printf '新密码为：mock-password\n' ;;
+  "compose exec -T txboard php artisan txboard:admin-path-reset --no-interaction") printf '新管理入口路径：/0123456789abcdef0123456789abcdef/\n' ;;
   "compose exec -T txboard php artisan txboard:install-status --no-interaction") exit 0 ;;
   "compose exec -T txboard php artisan config:clear --no-interaction") exit 0 ;;
   "compose exec -T txboard php artisan route:clear --no-interaction") exit 0 ;;
@@ -31,6 +32,7 @@ export PATH="$tmp/bin:$PATH" MOCK_DOCKER_LOG="$tmp/docker.log"
 
 bash "$repo/txboard.sh" --dir "$tmp/install" help | grep -Fq 'admin-reset-password'
 bash "$repo/txboard.sh" --dir "$tmp/install" help | grep -Fq 'repair-command'
+bash "$repo/txboard.sh" --dir "$tmp/install" help | grep -Fq 'admin-reset-path'
 bash "$repo/txboard.sh" --dir "$tmp/install" install-status
 bash "$repo/txboard.sh" --dir "$tmp/install" clear-runtime-cache
 bash "$repo/txboard.sh" --dir "$tmp/install" restart-horizon
@@ -41,6 +43,16 @@ if bash "$repo/txboard.sh" --dir "$tmp/install" admin-reset-password > "$tmp/no-
   echo 'password reset accepted non-interactive execution' >&2; exit 1
 fi
 ! grep -Fq 'reset:password' "$MOCK_DOCKER_LOG"
+
+# Resetting the administrator path must be local, interactive and opt-in.
+if bash "$repo/txboard.sh" --dir "$tmp/install" admin-reset-path > "$tmp/no-path-tty" 2>&1; then
+  echo 'admin secure-path reset accepted non-interactive execution' >&2; exit 1
+fi
+! grep -Fq 'admin-path-reset' "$MOCK_DOCKER_LOG"
+if bash "$repo/txboard.sh" --dir "$tmp/install" admin-reset-path injected > "$tmp/path-extra-args" 2>&1; then
+  echo 'admin secure-path reset accepted injected argv' >&2; exit 1
+fi
+! grep -Fq 'admin-path-reset' "$MOCK_DOCKER_LOG"
 
 if command -v script >/dev/null 2>&1; then
   printf '\nY\n' | script -qec "bash '$repo/txboard.sh' --dir '$tmp/install' admin-reset-password" /dev/null > "$tmp/tty.log"
@@ -53,6 +65,13 @@ if command -v script >/dev/null 2>&1; then
     echo 'invalid email accepted' >&2; exit 1
   fi
   test "$(grep -c 'reset:password' "$MOCK_DOCKER_LOG")" = "$n"
+
+  printf 'N\n' | script -qec "bash '$repo/txboard.sh' --dir '$tmp/install' admin-reset-path" /dev/null > "$tmp/path-cancel.log"
+  ! grep -Fq 'admin-path-reset' "$MOCK_DOCKER_LOG"
+  printf 'Y\n' | script -qec "bash '$repo/txboard.sh' --dir '$tmp/install' admin-reset-path" /dev/null > "$tmp/path-rotate.log"
+  grep -Fq '新管理入口路径：/0123456789abcdef0123456789abcdef/' "$tmp/path-rotate.log"
+  test "$(grep -c 'txboard:admin-path-reset' "$MOCK_DOCKER_LOG")" = 1
+  ! grep -Fq '0123456789abcdef' "$MOCK_DOCKER_LOG"
 fi
 
 TXBOARD_COMMAND_DIR="$tmp/commands" bash "$repo/txboard.sh" --dir "$tmp/install" repair-command

@@ -150,7 +150,7 @@ config_mcp() {
 config_menu() {
   local choice value image tag
   while true; do
-    choice="$(choose "1 查看配置  2 域名与端口  3 镜像版本  4 备份保留  5 MCP 网关  0 返回" "1" "5")"
+    choice="$(choose "1 查看配置  2 域名与端口  3 镜像版本  4 备份保留  5 MCP 网关  6 重置管理面板安全路径  0 返回" "1" "6")"
     case "$choice" in
       1) config_show; pause ;;
       2) config_access; pause ;;
@@ -174,6 +174,10 @@ config_menu() {
         ;;
       5)
         config_mcp
+        pause
+        ;;
+      6)
+        maintenance_reset_admin_path
         pause
         ;;
       0) return 0 ;;

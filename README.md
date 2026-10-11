@@ -375,6 +375,7 @@ sudo txboard config-show         # 直接查看配置
 sudo txboard diagnose
 sudo txboard admin-reset-password       # 交互式重置管理员密码（自动生成）
 sudo txboard admin-reset-password admin@example.com
+sudo txboard admin-reset-path              # 交互式重置管理面板安全路径
 sudo txboard repair-command             # 修复 /usr/local/bin/txboard 命令
 sudo txboard install-status             # 检查 Laravel 安装状态
 sudo txboard clear-runtime-cache       # 仅清理配置/路由/视图缓存
@@ -385,6 +386,20 @@ sudo txboard help
 ```
 
 ### 管理员密码与运维命令恢复
+
+### 管理面板安全路径恢复
+
+如果忘记管理后台的安全路径，或需要轮换入口，可在具备服务器 Docker 权限的交互终端执行：
+
+```bash
+sudo txboard admin-reset-path
+# 或：sudo txboard -> 16) 重置管理面板安全路径
+# 也可在「9 配置管理」的第 6 项，或「14 运维工具」的第 6 项使用
+```
+
+工具会要求输入 `Y` 二次确认，并调用 TXBoard **镜像内**的 `php artisan txboard:admin-path-reset`。后端生成新的 128-bit 随机路径，写入数据库原生 `secure_path` 设置并使设置缓存失效，只在当前终端显示新入口；**旧管理入口立即失效**，应立即更新书签。不会重置管理员密码、订阅密钥、数据库或 Docker 数据卷。
+
+**版本依赖**：先更新 TXBoard 镜像到包含 `txboard:admin-path-reset` 的版本，再使用此菜单。只执行 `refresh-manager` 仅更新菜单，不能给旧镜像增加 Artisan 命令；旧镜像下操作会安全失败，并提示升级。非交互环境与未确认操作均不会修改路径。不要在共享日志、屏幕录制或 CI 中传播新的管理入口。
 
 忘记管理员密码时，执行 `sudo txboard admin-reset-password`，确认管理员邮箱并输入 `Y`。命令复用 TXBoard 已有的 `php artisan reset:password`，自动生成新密码并**只打印到当前终端**；旧密码立即失效，不会删除数据库、用户或 Docker 数据卷。请在安全的本地终端操作，避免录制会话输出。也可以传入当前管理员邮箱；安装时记录的邮箱可能已被修改。请勿通过命令行参数传递明文密码。注意：后端现有的重置命令按邮箱查找用户，请确保输入的是实际**管理员**邮箱，避免误修改普通用户。
 

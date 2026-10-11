@@ -40,6 +40,29 @@ maintenance_reset_admin_password() {
   log "请保存新密码并尽快登录修改。"
 }
 
+maintenance_reset_admin_path() {
+  # Rotates only the DB-backed secure_path through the application's own
+  # settings service. No SQL/tinker, no password or subscription-key change.
+  # The backend generates the random path, never a shell argument.
+  [[ -t 0 && -t 1 && -w /dev/tty ]] ||
+    die "admin path reset requires a local interactive terminal"
+  require_tty
+  need_install
+  warn "新安全路径将立即使旧管理入口失效，请先确保可以登录服务器控制台。"
+  if ! confirm "生成新的管理面板安全路径？（旧链接立即失效）" "N"; then
+    log "已取消安全路径重置"
+    return 0
+  fi
+  maintenance_require_running_app
+  # Redirect the sensitive result exclusively to the operator's TTY.
+  # Never capture it in shell variables, temporary files or service logs.
+  if ! compose exec -T txboard php artisan txboard:admin-path-reset --no-interaction </dev/null > /dev/tty; then
+    warn "安全路径重置失败：请确认 TXBoard 镜像已包含 txboard:admin-path-reset 命令、数据库连接正常。"
+    return 1
+  fi
+  log "请在本机终端保存新管理入口，并更新书签。"
+}
+
 maintenance_repair_command() {
   need_install
   [[ -f "$TXBOARD_INSTALL_DIR/txboard.sh" ]] ||
@@ -85,13 +108,14 @@ maintenance_menu() {
   require_tty
   local choice
   while true; do
-    choice="$(choose "1 重置管理员密码  2 修复 txboard 命令  3 安装状态  4 清理配置缓存  5 重启 Horizon  0 返回" "1" "5")"
+    choice="$(choose "1 重置管理员密码  2 修复 txboard 命令  3 安装状态  4 清理配置缓存  5 重启 Horizon  6 重置管理面板安全路径  0 返回" "1" "6")"
     case "$choice" in
       1) maintenance_reset_admin_password; pause ;;
       2) maintenance_repair_command; pause ;;
       3) maintenance_install_status; pause ;;
       4) maintenance_clear_runtime_cache; pause ;;
       5) maintenance_restart_horizon; pause ;;
+      6) maintenance_reset_admin_path; pause ;;
       0) return 0 ;;
     esac
   done
