@@ -19,6 +19,7 @@ maintenance_artisan() {
 maintenance_reset_admin_password() {
   # Built-in reset:password generates a new password and displays it.
   # Do not put new credentials in argv, a log, a pipe, or a temporary file.
+  [[ -t 0 && -t 1 && -w /dev/tty ]] || die "admin password reset requires a local interactive terminal"
   require_tty
   need_install
   local email="${1:-}" suggested
@@ -41,12 +42,13 @@ maintenance_reset_admin_password() {
 
 maintenance_repair_command() {
   need_install
-  [[ "${EUID:-$(id -u)}" -eq 0 ]] ||
-    die "repair-command requires root (use sudo)"
   [[ -f "$TXBOARD_INSTALL_DIR/txboard.sh" ]] ||
     die "missing manager script: $TXBOARD_INSTALL_DIR/txboard.sh"
 
   local command_dir="${TXBOARD_COMMAND_DIR:-/usr/local/bin}"
+  if [[ "$command_dir" == "/usr/local/bin" && "${EUID:-$(id -u)}" -ne 0 ]]; then
+    die "repair-command requires root (use sudo)"
+  fi
   local target="$command_dir/txboard" source="$TXBOARD_INSTALL_DIR/txboard.sh" existing
   [[ -d "$command_dir" ]] || die "command directory missing: $command_dir"
   if [[ -e "$target" && ! -L "$target" ]]; then
