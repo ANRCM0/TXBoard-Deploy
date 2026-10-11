@@ -2,7 +2,7 @@
 set -euo pipefail
 repo="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 tmp="$(mktemp -d)"
-trap 'rc=$?; if [[ $rc -ne 0 && -f "$tmp/docker.log" ]]; then echo "Mock Docker calls before failure:" >&2; cat "$tmp/docker.log" >&2; fi; rm -rf "$tmp"' EXIT
+trap 'rc=$?; if [[ $rc -ne 0 ]]; then for f in "$tmp"/tty.log "$tmp"/cancel.log "$tmp"/invalid.log "$tmp"/refuse.log; do [[ ! -f "$f" ]] || { echo "Test transcript $f:" >&2; cat "$f" >&2; }; done; if [[ -f "$tmp/docker.log" ]]; then echo "Mock Docker calls before failure:" >&2; cat "$tmp/docker.log" >&2; fi; fi; rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/install" "$tmp/commands"
 printf 'TXBOARD_ADMIN_EMAIL=admin@example.com\n' > "$tmp/install/.env"
 printf 'APP_URL=https://panel.example.com\n' > "$tmp/install/api.env"
@@ -43,11 +43,11 @@ fi
 ! grep -Fq 'reset:password' "$MOCK_DOCKER_LOG"
 
 if command -v script >/dev/null 2>&1; then
-  printf 'Y\n' | script -qec "bash '$repo/txboard.sh' --dir '$tmp/install' admin-reset-password" /dev/null > "$tmp/tty.log"
+  printf '\nY\n' | script -qec "bash '$repo/txboard.sh' --dir '$tmp/install' admin-reset-password" /dev/null > "$tmp/tty.log"
   grep -Fq '新密码为：mock-password' "$tmp/tty.log"
   grep -Fq 'compose exec -T txboard php artisan reset:password admin@example.com --no-interaction' "$MOCK_DOCKER_LOG"
   n="$(grep -c 'reset:password' "$MOCK_DOCKER_LOG")"
-  printf 'N\n' | script -qec "bash '$repo/txboard.sh' --dir '$tmp/install' admin-reset-password" /dev/null > "$tmp/cancel.log"
+  printf '\nN\n' | script -qec "bash '$repo/txboard.sh' --dir '$tmp/install' admin-reset-password" /dev/null > "$tmp/cancel.log"
   test "$(grep -c 'reset:password' "$MOCK_DOCKER_LOG")" = "$n"
   if printf 'Y\n' | script -qec "bash '$repo/txboard.sh' --dir '$tmp/install' admin-reset-password invalid" /dev/null > "$tmp/invalid.log" 2>&1; then
     echo 'invalid email accepted' >&2; exit 1
