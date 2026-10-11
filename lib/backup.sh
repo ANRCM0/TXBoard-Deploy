@@ -89,7 +89,7 @@ backup_menu() {
     ui_item 1 "创建新备份"
     ui_item 2 "查看备份列表"
     ui_item 3 "恢复数据库" "需要再次确认"
-    ui_item 4 "删除备份" "不可撤销"
+    ui_danger_item 4 "删除备份" "不可撤销"
     ui_item 5 "设置保留数量"
     ui_footer
     ui_item 0 "返回主菜单"
