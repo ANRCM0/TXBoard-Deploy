@@ -460,7 +460,7 @@ install_deploy_tools() {
     return 0
   fi
 
-  for module in common service backup config diagnose uninstall detect xboard-import; do
+  for module in common service backup config diagnose uninstall detect xboard-import maintenance; do
     tmp="$INSTALL_DIR/lib/.$module.sh.tmp"
     if ! download_file "$DEPLOY_RAW_BASE/lib/$module.sh" "$tmp"; then
       rm -f "$manager_tmp" "$updater_tmp" "$INSTALL_DIR/lib/."*.tmp
@@ -1239,5 +1239,7 @@ Quick commands:
   sudo txboard backup
   sudo txboard config
   sudo txboard diagnose
+  sudo txboard admin-reset-password
+  sudo txboard repair-command
   sudo txboard help
 EOF

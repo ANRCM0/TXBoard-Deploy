@@ -19,6 +19,7 @@ jobs:
           bash -n scripts/test-upgrade.sh
           bash -n scripts/test-detect.sh
           bash -n scripts/test-install-flow.sh
+          bash -n scripts/test-maintenance.sh
           bash -n txboard.sh
           for f in lib/*.sh; do bash -n "$f"; done
 
@@ -59,6 +60,11 @@ jobs:
           bash txboard.sh help | grep -q 'logs \[service\]'
           bash txboard.sh help | grep -q 'config-show'
           bash txboard.sh help | grep -q 'backups'
+          bash txboard.sh help | grep -q 'admin-reset-password'
+          bash txboard.sh help | grep -q 'repair-command'
+
+      - name: Test administrator recovery and maintenance commands
+        run: bash scripts/test-maintenance.sh
 
       - name: Test installer order and fresh-database protection
         run: bash scripts/test-install-flow.sh
