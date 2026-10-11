@@ -789,7 +789,10 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
 fi
 
 if [[ "$ASSUME_YES" -eq 0 && "$INSTALL_TYPE" == fresh && -z "$XBOARD_DUMP" ]]; then
-  install_choice="$(prompt "安装类型：1 全新空库 / 2 从 XBoard SQL 备份迁入" "1")"
+  install_ui_section "安装方式"
+  printf '  %b1%b  全新安装        %b创建新的空数据库%b\n' "$(install_ui_color yellow)" "$(install_ui_color reset)" "$(install_ui_color muted)" "$(install_ui_color reset)" > /dev/tty
+  printf '  %b2%b  从 XBoard 迁入  %b可自动备份原 MySQL%b\n' "$(install_ui_color yellow)" "$(install_ui_color reset)" "$(install_ui_color muted)" "$(install_ui_color reset)" > /dev/tty
+  install_choice="$(prompt "安装类型（1 / 2）" "1")"
   case "$install_choice" in
     1) INSTALL_TYPE=fresh ;;
     2) INSTALL_TYPE=xboard-import ;;
@@ -817,8 +820,13 @@ case "$INSTALL_TYPE" in
   xboard-import)
     if [[ "$ASSUME_YES" -eq 0 ]]; then
       if [[ -z "$XBOARD_DUMP" && "$XBOARD_AUTO_DUMP" == false ]]; then
-        source_choice="$(choose "XBoard 数据来源：1 自动备份本机 MySQL / 2 已有 SQL.gz" "1" "2")"
-        [[ "$source_choice" == 1 ]] && XBOARD_AUTO_DUMP=true
+        install_ui_section "XBoard 数据来源"
+        printf '  %b1%b  自动导出本机 MySQL     %b推荐 · 自动生成 SQL.gz%b\n' "$(install_ui_color yellow)" "$(install_ui_color reset)" "$(install_ui_color muted)" "$(install_ui_color reset)" > /dev/tty
+        printf '  %b2%b  使用已有 SQL.gz 文件\n' "$(install_ui_color yellow)" "$(install_ui_color reset)" > /dev/tty
+        source_choice="$(choose "数据来源" "1" "2")"
+        if [[ "$source_choice" == 1 ]]; then
+          XBOARD_AUTO_DUMP=true
+        fi
       fi
       if [[ "$XBOARD_AUTO_DUMP" == false ]]; then
         XBOARD_DUMP="$(prompt "XBoard 数据库 SQL.gz 备份的绝对路径" "$XBOARD_DUMP")"
@@ -873,6 +881,7 @@ case "$INSTALL_TYPE" in
   *) die "invalid installation type: $INSTALL_TYPE" ;;
 esac
 
+install_ui_section "数据库配置"
 configure_database
 
 # Fail closed even for external/host connection aliases. Different source and
