@@ -45,5 +45,5 @@ Deploy 仓库只依赖以下稳定运行接口：
 - 外部数据库探测和手动备份容器显式禁用 TTY，兼容 pipe / CI / 无交互输入
 - 生成的 Compose 配置
 - 生成的 Compose 不包含 `build:`
-- 默认 TXBoard 公共镜像 manifest 可被匿名读取
+- 新 Core 默认镜像渲染断言，与已发布固定历史 Core 镜像的匿名 manifest 检查分开（新 `latest` 未发布时不假设可用）
 - 签名 Manifest、真实 SQLite intent/cursor、子进程 kill 恢复、单调 fence、恢复备份边界和管理入口互锁

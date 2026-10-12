@@ -26,6 +26,7 @@ jobs:
           bash -n node/deploy.sh
           bash -n scripts/test-components.sh
           bash -n scripts/test-gateway.sh
+          bash -n scripts/test-gateway-docker.sh
           for f in node/tests/*.sh; do bash -n "$f"; done
 
       - name: Test unified component routing and Gateway lifecycle (synthetic Docker)
@@ -401,11 +402,14 @@ jobs:
           sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest$' "$TXBOARD_INSTALL_DIR/.env"
           sudo rm -rf "$TXBOARD_INSTALL_DIR"
 
-      - name: Check public image manifest
+      - name: Check fresh Core default and published compatibility manifest
         run: |
           image="$(sudo sed -n 's/^TXBOARD_IMAGE=//p' /tmp/txboard-deploy-ci/.env | tail -1)"
           test "$image" = 'ghcr.io/anrcm0/txboard-core:latest'
-          docker manifest inspect "$image" >/dev/null
+          # Rendering the new default does not imply a latest release exists.
+          # Keep this independent availability check on the published immutable
+          # historical smoke artifact until a reviewed new release is pinned.
+          docker manifest inspect ghcr.io/anrcm0/txboard:dev-sha-c8492dc2e120 >/dev/null
 
   smoke-install:
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
