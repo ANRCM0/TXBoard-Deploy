@@ -13,4 +13,6 @@
 
 **文档维护原则**：脚本是命令与选项的最终来源；不要再把详细安装、迁移和日常运维全文堆回根 README。新选项必须同步更新对应章节，涉及破坏性行为的选项应写明前置检查、备份及恢复限制。
 
+下一轮升级编排参考 [Core First v2 B0](https://github.com/ANRCM0/TXBoard/blob/main/docs/architecture/v2/README.md) 和 [Upgrade Manifest v1](https://github.com/ANRCM0/TXBoard/blob/main/contracts/v2/upgrade-manifest/README.md)（Target/Draft）。拟议 `upgrade plan/check/apply/status/recover` 尚未实现；现有安装、更新、备份命令仍以本仓脚本为准。
+
 [TXBoard 主应用](https://github.com/ANRCM0/TXBoard) · [主仓库文档中心](https://github.com/ANRCM0/TXBoard/blob/main/docs/README.md) · [原生数据库边界](https://github.com/ANRCM0/TXBoard/blob/main/docs/operations/native-schema.md)。
