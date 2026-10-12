@@ -50,6 +50,7 @@ sudo txboard admin-reset-path  # 轮换管理后台安全路径
 | 第一次部署、数据库/反代模式选型 | [安装指南](docs/installation.md) |
 | 已有 XBoard，需要迁移历史数据 | [隔离导入流程](docs/migration-from-xboard.md) |
 | 已有 TXBoard，升级、备份、恢复、诊断 | [运维与升级](docs/operations.md) |
+| 在隔离副本演练订阅回填、签名计划与中断恢复 | [持久升级影子演练](docs/durable-upgrade.md) |
 | 配置 AI Agent 的 MCP 接入 | [内置 MCP Gateway](docs/mcp-gateway.md) |
 | CI、自动化安装与参数说明 | [无人值守安装](docs/unattended-install.md) |
 | 部署层与应用仓库的职责边界 | [仓库边界与 CI](docs/architecture-and-ci.md) |

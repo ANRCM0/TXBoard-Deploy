@@ -22,9 +22,10 @@ service_status() {
   fi
 }
 
-service_start() { docker_ok; need_install; compose up -d --remove-orphans; }
+service_start() { docker_ok; need_install; upgrade_safe_mutation compose up -d --remove-orphans; }
 service_stop() { docker_ok; need_install; compose stop; }
-service_restart() { docker_ok; need_install; compose restart txboard; compose up -d --wait txboard; }
+service_restart_locked() { compose restart txboard; compose up -d --wait txboard; }
+service_restart() { docker_ok; need_install; upgrade_safe_mutation service_restart_locked; }
 
 service_stats() {
   docker_ok; need_install

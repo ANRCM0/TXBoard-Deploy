@@ -77,6 +77,11 @@ jobs:
       - name: Exercise database-aware updater fail-closed state machine
         run: bash scripts/test-upgrade.sh
 
+      - name: Exercise signed durable shadow upgrade and crash recovery
+        run: |
+          python3 -B scripts/test-upgrade-orchestrator.py
+          bash scripts/test-upgrade-management.sh
+
       - name: Check XBoard migration plan safety, legacy filenames and dump input
         run: python3 scripts/test-xboard-plan.py
 

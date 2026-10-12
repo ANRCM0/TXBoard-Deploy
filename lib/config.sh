@@ -41,7 +41,9 @@ MCP URL:           $(if [[ "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_ENABLE
 EOF
 }
 
-config_access() {
+config_access() { upgrade_safe_mutation config_access_locked; }
+
+config_access_locked() {
   require_tty; docker_ok; need_install
   local choice mode domain host http_port https_port url bind site secure publish_https tmp
   choice="$(choose "1 自动 HTTPS  2 外部 HTTPS  3 HTTP  0 返回" "1" "3")"
@@ -107,7 +109,9 @@ config_access() {
   log "public URL updated: $url"
 }
 
-config_mcp() {
+config_mcp() { upgrade_safe_mutation config_mcp_locked; }
+
+config_mcp_locked() {
   require_tty; docker_ok; need_install
   local current default target tmp
   current="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_ENABLE_MCP)"
@@ -168,8 +172,7 @@ config_menu() {
       4)
         value="$(prompt "备份保留数量（0 为全部保留）" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION)")"
         [[ "$value" =~ ^[0-9]+$ ]] || { warn "invalid retention"; continue; }
-        env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION "$value"
-        compose up -d --force-recreate backup
+        backup_set_retention "$value"
         pause
         ;;
       5)

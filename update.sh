@@ -122,6 +122,8 @@ if [[ "$TOOLS_ONLY" -eq 1 ]]; then
   command -v flock >/dev/null 2>&1 || die "flock is required for management refresh"
   exec 9>"$INSTALL_DIR/.upgrade.lock"
   flock -n 9 || die "another TXBoard management or upgrade process holds the lock"
+  [[ ! -e "$INSTALL_DIR/.upgrade-in-progress" && ! -L "$INSTALL_DIR/.upgrade-in-progress" ]] ||
+    die "unfinished durable upgrade; inspect upgrade status/recover before refreshing tools"
   refresh_tools || die "management tools refresh failed; current deployment was not changed"
   exit 0
 fi
@@ -188,6 +190,8 @@ umask 077
 command -v flock >/dev/null 2>&1 || die "flock is required for upgrade locking"
 exec 9>"$INSTALL_DIR/.upgrade.lock"
 flock -n 9 || die "another TXBoard upgrade is running"
+[[ ! -e "$INSTALL_DIR/.upgrade-in-progress" && ! -L "$INSTALL_DIR/.upgrade-in-progress" ]] ||
+  die "unfinished durable upgrade; use upgrade status/recover before changing an image"
 
 # The existing backup service supplies a MySQL client on the exact same network.
 # No application credentials or row data are printed.

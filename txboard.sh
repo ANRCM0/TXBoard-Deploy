@@ -73,6 +73,14 @@ run_update() {
   return "$status"
 }
 
+run_upgrade() {
+  local executable="$SCRIPT_DIR/scripts/upgrade.py"
+  [[ -f "$executable" && ! -L "$executable" ]] ||
+    die "signed upgrade runner missing; use a reviewed TXBoard-Deploy checkout (scripts/upgrade.py)"
+  command -v python3 >/dev/null 2>&1 || die "upgrade requires Python 3.10+ and OpenSSL"
+  python3 "$executable" "$@" --dir "$TXBOARD_INSTALL_DIR"
+}
+
 show_help() {
   cat <<'EOF'
 TXBoard 管理工具
@@ -98,6 +106,7 @@ Quick commands:
   stats                Show container resource usage
   logs [service]       Follow logs: all, txboard, database/mysql, backup
   update [tag]         Update the current image, or switch to a tag
+  upgrade <command>   Signed isolated shadow plan/check/apply/status/recover/restore-check
   backup               Create a backup now
   backups              List available backups
   restore              Restore a managed-MySQL backup interactively (local mode only)
@@ -205,6 +214,7 @@ case "$CMD" in
   menu) main_menu ;;
   install) run_install ;;
   update) run_update "$ARG" ;;
+  upgrade) shift; run_upgrade "$@" ;;
   detect) docker_ok; txboard_detect_scan "$TXBOARD_INSTALL_DIR"; txboard_detect_print ;;
   status|ps) service_status ;;
   start) service_start ;;

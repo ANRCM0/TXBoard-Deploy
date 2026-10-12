@@ -26,7 +26,28 @@ need_install() {
     die "no TXBoard deployment found in $TXBOARD_INSTALL_DIR"
 }
 
+# All image starts, restores and toolkit updates share the upgrader's lock.
+# A durable unfinished intent may mean DDL committed before the process died.
+# Do not infer compatibility from a healthy image or an absent shell process.
+upgrade_safe_mutation() (
+  need_install
+  command -v flock >/dev/null 2>&1 || die "flock is required for upgrade-safe management"
+  [[ ! -L "$TXBOARD_INSTALL_DIR/.upgrade.lock" ]] || die "unsafe upgrade lock path"
+  umask 077
+  exec 8>"$TXBOARD_INSTALL_DIR/.upgrade.lock"
+  flock -n 8 || die "another TXBoard management or upgrade process holds the lock"
+  [[ ! -e "$TXBOARD_INSTALL_DIR/.upgrade-in-progress" && ! -L "$TXBOARD_INSTALL_DIR/.upgrade-in-progress" ]] ||
+    die "unfinished durable upgrade; use upgrade status/recover before starting an image or restoring data"
+  "$@"
+)
+
 compose() {
+  case "${1:-}" in
+    up|restart|down|rm)
+      [[ ! -e "$TXBOARD_INSTALL_DIR/.upgrade-in-progress" && ! -L "$TXBOARD_INSTALL_DIR/.upgrade-in-progress" ]] ||
+        die "unfinished durable upgrade; image changes/deletion require upgrade recovery"
+      ;;
+  esac
   (cd "$TXBOARD_INSTALL_DIR" && docker compose "$@")
 }
 

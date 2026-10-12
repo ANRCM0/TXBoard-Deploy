@@ -157,16 +157,20 @@ sudo bash -s -- --tag latest
 ```text
 docker pull target-image
         ↓
+停止 TXBoard 写入并校验完整备份
+        ↓
+目标镜像执行 Laravel migrate + native schema/关键金额检查
+        ↓
 docker compose up -d --force-recreate --wait txboard
         ↓
 txboard:install-status
-        ↓
-失败时自动恢复旧镜像并重新拉起 TXBoard
 ```
 
-更新器会记录更新前正在运行容器的 image ID。即使使用的是会移动的 `latest` 标签，更新失败时也会尝试把旧 image ID 重新标记回原标签后启动，因此不是只做字符串级的 tag 回退。
+更新器会记录更新前正在运行容器的 image ID。仅当未尝试 migration 时，失败处理才可能将旧 ID 重新标记并启动。尝试 migration 后保持停止，禁止盲目启动旧镜像；`latest` 标签不能证明数据库兼容。
 
 数据库感知升级**不允许**跳过完整备份：`--skip-backup` 会被明确拒绝，避免在不可逆迁移之后无法恢复。
+
+订阅模型新编排采用独立的 [签名、持久升级影子演练](durable-upgrade.md)，只在明确停止的隔离副本运行。存在 `.upgrade-in-progress` 时，旧更新器、工具刷新、start/restart、配置重建、备份创建/恢复/删除、保留策略变更和卸载会拒绝绕过该恢复流程；不要删除标记或用旧镜像健康状态推断 migration 已完成。紧急停止服务仍可执行。
 
 ## 原生数据库升级保护
 

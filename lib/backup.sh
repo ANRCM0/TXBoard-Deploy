@@ -6,14 +6,28 @@ backup_list() {
     grep -E '^[0-9]{8}T[0-9]{6}Z$' | sort -r || true
 }
 
-backup_create() {
+backup_create() { upgrade_safe_mutation backup_create_locked; }
+
+backup_create_locked() {
   docker_ok; need_install
   compose run -T --rm -e BACKUP_INTERVAL=0 backup
 }
 
-backup_safety() {
+backup_safety() { upgrade_safe_mutation backup_safety_locked; }
+
+backup_safety_locked() {
   docker_ok; need_install
   compose run -T --rm -e BACKUP_INTERVAL=0 -e BACKUP_RETENTION=0 backup
+}
+
+backup_set_retention() { upgrade_safe_mutation backup_set_retention_locked "$@"; }
+
+backup_set_retention_locked() {
+  local value="${1:?missing backup retention}"
+  [[ "$value" =~ ^[0-9]+$ ]] || die "invalid retention"
+  docker_ok
+  env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION "$value"
+  compose up -d --force-recreate backup
 }
 
 backup_pick() {
@@ -29,7 +43,9 @@ backup_pick() {
   printf '%s' "${items[$((choice-1))]}"
 }
 
-backup_restore() {
+backup_restore() { upgrade_safe_mutation backup_restore_locked; }
+
+backup_restore_locked() {
   require_tty; docker_ok; need_install
   if [[ "$(database_mode)" != "local" ]]; then
     warn "automatic restore is disabled for host/external databases; backups remain available, but restore them with database admin tooling"
@@ -41,7 +57,7 @@ backup_restore() {
   gzip -t "$path/db.sql.gz" || die "corrupt database backup"
 
   confirm "确认恢复 $name？系统将先创建安全备份。" "N" || return 0
-  backup_safety
+  backup_safety_locked
 
   db="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_DATABASE)"; db="${db:-txboard}"
   user="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_DB_USERNAME)"; user="${user:-txboard}"
@@ -90,14 +106,12 @@ backup_menu() {
       3) backup_restore; pause ;;
       4)
         name="$(backup_pick)" || continue
-        confirm "确定删除备份 $name 吗？" "N" && rm -rf "$TXBOARD_INSTALL_DIR/backups/$name"
+        confirm "确定删除备份 $name 吗？" "N" && upgrade_safe_mutation rm -rf "$TXBOARD_INSTALL_DIR/backups/$name"
         ;;
       5)
         value="$(prompt "保留备份数量（0 为全部保留）" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION)")"
         [[ "$value" =~ ^[0-9]+$ ]] || { warn "invalid retention"; continue; }
-        env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION "$value"
-        docker_ok
-        compose up -d --force-recreate backup
+        backup_set_retention "$value"
         ;;
       0) return 0 ;;
     esac
