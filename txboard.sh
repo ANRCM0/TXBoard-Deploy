@@ -10,10 +10,29 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 
 if [[ "${1:-}" == "--dir" ]]; then
   export TXBOARD_INSTALL_DIR="${2:?missing path for --dir}"
+  export TXBOARD_COMPONENT_DIR="$TXBOARD_INSTALL_DIR"
   shift 2
 fi
 
 LIB_DIR="${TXBOARD_MANAGER_LIB_DIR:-$SCRIPT_DIR/lib}"
+
+# Components do not load Core modules or inherit Core's database/install dir.
+if [[ "${1:-}" == --component ]]; then
+  [[ $# -ge 2 ]] || { printf '[TXBoard] ERROR: missing component\n' >&2; exit 1; }
+  component="$2"; shift 2
+elif [[ "${1:-}" == core || "${1:-}" == gateway || "${1:-}" == node ]]; then
+  component="$1"; shift
+else
+  component=core
+fi
+case "$component" in
+  core) ;;
+  gateway|node)
+    [[ -f "$LIB_DIR/components.sh" ]] || { printf '[TXBoard] ERROR: components module missing; refresh the toolkit\n' >&2; exit 1; }
+    if (($#)); then exec bash "$LIB_DIR/components.sh" "$component" "$@";
+    else exec bash "$LIB_DIR/components.sh" "$component" help; fi ;;
+  *) printf '[TXBoard] ERROR: unknown component\n' >&2; exit 1 ;;
+esac
 
 for module in common service backup config diagnose uninstall detect maintenance; do
   [[ -f "$LIB_DIR/$module.sh" ]] || {
@@ -89,6 +108,9 @@ Usage:
   txboard
   txboard <command> [argument]
   txboard --dir /path/to/txboard <command>
+  txboard core <command>                 Existing Core commands
+  txboard gateway <command> [options]    Gateway install/status/logs/start/stop/restart/upgrade/recover/remove
+  txboard node <command> [options]       Delegate to the persistent txnode installer
 
 Interactive:
   menu                 Open the management menu

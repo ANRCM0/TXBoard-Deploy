@@ -22,6 +22,24 @@ jobs:
           bash -n scripts/test-maintenance.sh
           bash -n txboard.sh
           for f in lib/*.sh; do bash -n "$f"; done
+          bash -n gateway/deploy.sh
+          bash -n node/deploy.sh
+          bash -n scripts/test-components.sh
+          bash -n scripts/test-gateway.sh
+          for f in node/tests/*.sh; do bash -n "$f"; done
+
+      - name: Test unified component routing and Gateway lifecycle (synthetic Docker)
+        run: |
+          bash scripts/test-components.sh
+          bash scripts/test-gateway.sh
+
+      - name: Preserve Node Installer regression suites
+        run: |
+          bash node/tests/install_args_test.sh
+          bash node/tests/image_channel_test.sh
+          bash node/tests/remote_update_bridge_test.sh
+          bash node/tests/legacy_cleanup_test.sh
+          bash node/tests/deploy_multi_instance_test.sh
 
       - name: Check installer and manager regressions
         run: |
@@ -281,7 +299,7 @@ jobs:
       - name: Require image-only Compose
         run: |
           ! sudo grep -Eq '^[[:space:]]*build:' /tmp/txboard-deploy-ci/compose.yaml
-          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest$' /tmp/txboard-deploy-ci/.env
+          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard-core:latest$' /tmp/txboard-deploy-ci/.env
           sudo grep -q '^TXBOARD_MODE=http$' /tmp/txboard-deploy-ci/.env
           test "$(sudo stat -c '%a' /tmp/txboard-deploy-ci/.env)" = "600"
           test "$(sudo stat -c '%a' /tmp/txboard-deploy-ci/api.env)" = "600"
@@ -386,7 +404,7 @@ jobs:
       - name: Check public image manifest
         run: |
           image="$(sudo sed -n 's/^TXBOARD_IMAGE=//p' /tmp/txboard-deploy-ci/.env | tail -1)"
-          test "$image" = 'ghcr.io/anrcm0/txboard:latest'
+          test "$image" = 'ghcr.io/anrcm0/txboard-core:latest'
           docker manifest inspect "$image" >/dev/null
 
   smoke-install:
@@ -405,6 +423,9 @@ jobs:
           TXBOARD_PUBLIC_HOST: 127.0.0.1
           TXBOARD_HTTP_PORT: 18081
           TXBOARD_IMAGE_TAG: dev-sha-c8492dc2e120
+          # This pinned historical smoke release exists under the compatibility
+          # alias; default fresh installs and manifest checks use txboard-core.
+          TXBOARD_IMAGE_REPO: ghcr.io/anrcm0/txboard
           TXBOARD_BACKUP_RETENTION: 1
           TXBOARD_ENABLE_MCP: "true"
         run: |
@@ -465,6 +486,7 @@ jobs:
       - name: Exercise full isolated XBoard-style backup import
         env:
           TXBOARD_IMPORT_TEST_TAG: dev-sha-c8492dc2e120
+          TXBOARD_IMAGE_REPO: ghcr.io/anrcm0/txboard
         run: sudo -E bash scripts/test-import-roundtrip.sh
 
       - name: Cleanup

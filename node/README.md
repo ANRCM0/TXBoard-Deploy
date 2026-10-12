@@ -1,5 +1,7 @@
 # TX-Node Installer
 
+The complete installer history now lives under `node/` in [TXBoard-Deploy](https://github.com/ANRCM0/TXBoard-Deploy). This remains the same Docker installer and `txnode` command. The unified `install.sh --component node` entry delegates here; see [three-component installation](../docs/components.md). Existing data/config layouts and stable/dev channels are preserved.
+
 Public distribution entrypoint for TX-Node deployments.
 
 This repository intentionally contains only deployment/bootstrap material. The TX-Node application source is maintained separately, while production hosts pull the public runtime image from GHCR.
@@ -9,13 +11,13 @@ This repository intentionally contains only deployment/bootstrap material. The T
 Interactive install:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/ANRCM0/TX-Node-Installer/main/deploy.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/node/deploy.sh)
 ```
 
 Non-interactive machine install (used by TXBoard):
 
 ```bash
-curl -fsSL 'https://raw.githubusercontent.com/ANRCM0/TX-Node-Installer/main/deploy.sh' \
+curl -fsSL 'https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/node/deploy.sh' \
   | sudo bash -s -- install --mode machine --provider txboard \
       --panel-url 'https://panel.example.com' \
       --machine-id 12 \
@@ -131,7 +133,7 @@ Before adding an instance, the installer backs up the existing config. It valida
 ## Architecture
 
 ```text
-TX-Node source repository
+TXBoard / future tx-core runtime repository
         |
         | GitHub Actions / image publishing
         v
@@ -139,7 +141,7 @@ ghcr.io/anrcm0/tx-node (public)
         ^
         | docker pull / upgrade
         |
-TX-Node-Installer (public deploy.sh)
+TXBoard-Deploy (node/deploy.sh)
         ^
         | curl
         |

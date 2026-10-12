@@ -11,7 +11,9 @@ TXBoard
 TXBoard-Deploy
   ├── install.sh
   ├── txboard.sh
-  └── update.sh
+  ├── update.sh
+  ├── gateway/deploy.sh
+  └── node/deploy.sh
 ```
 
 Deploy 仓库只依赖以下稳定运行接口：
@@ -23,6 +25,8 @@ Deploy 仓库只依赖以下稳定运行接口：
 
 部署逻辑不应该依赖 TXBoard 源码目录结构。
 
+统一入口通过 `--component core|gateway|node` 选择组件，默认 Core。Gateway/Node 委托自包含脚本，分别使用 `txboard-gateway`/`tx-node` 预构建镜像；Core 新默认镜像为 `txboard-core`，旧 `txboard` 保存配置仍兼容。详情见 [三组件安装](components.md)。
+
 新增 [持久升级影子演练](durable-upgrade.md) 使用固定的 B1 Core CLI 与 migration ID，仅适配已声明的 `subscription-shadow/v1` 版本组合。未知命令、生产 authority 切换和集群模式会拒绝；这不是旧镜像通用迁移接口。
 
 ## CI
@@ -30,6 +34,9 @@ Deploy 仓库只依赖以下稳定运行接口：
 本仓库 CI 验证：
 
 - Bash 语法（install / update / manager）
+- 三组件 literal 参数透传、实际文件 materialization 与旧 Core/Node 入口兼容
+- Gateway 合成 Docker 生命周期、失败回滚/恢复、归属、锁及私密配置
+- 合并后的 Node Installer 五套原 shell 回归（不执行 Node binary）
 - 非交互 render-only 安装
 - 内置 / 宿主机 Docker / 外部数据库 Compose 渲染
 - 宿主机 MySQL 自动建库、建用户与 `txboard-db-link` 网络接入

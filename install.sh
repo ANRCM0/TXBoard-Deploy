@@ -7,7 +7,9 @@ bootstrap_piped_installer() {
   # same pipe. Slow network producers can expose races where Docker/Compose or
   # another child consumes bytes that Bash has not parsed yet. Re-run the
   # installer from a real file so runtime commands never share the source fd.
-  [[ -z "${BASH_SOURCE[0]:-}" ]] || return 0
+  # In a function defined on stdin Bash may report the shell executable as
+  # BASH_SOURCE[0]. Only the caller frame denotes a real installer file.
+  [[ -z "${BASH_SOURCE[1]:-}" ]] || return 0
 
   local raw_base="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main}"
   local tmp drain_pid status=0
@@ -46,7 +48,41 @@ bootstrap_piped_installer() {
 
 bootstrap_piped_installer "$@"
 
-IMAGE_REPO="${TXBOARD_IMAGE_REPO:-ghcr.io/anrcm0/txboard}"
+# Route before Core prompts, Docker discovery or database initialization.
+# All other arguments keep their original order and are passed literally.
+COMPONENT=core
+COMPONENT_SET=0
+component_args=()
+while (($#)); do
+  case "$1" in
+    --component)
+      [[ $# -ge 2 && "$COMPONENT_SET" == 0 ]] || { printf '[TXBoard Deploy] ERROR: missing/duplicate --component\n' >&2; exit 1; }
+      COMPONENT="$2"; COMPONENT_SET=1; shift 2 ;;
+    *) component_args+=("$1"); shift ;;
+  esac
+done
+set -- "${component_args[@]}"
+case "$COMPONENT" in core|gateway|node) ;; *) printf '[TXBoard Deploy] ERROR: component must be core, gateway or node\n' >&2; exit 1 ;; esac
+if [[ "$COMPONENT" != core ]]; then
+  component_module="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/components.sh"
+  component_tmp=''
+  if [[ ! -f "$component_module" ]]; then
+    component_tmp="$(mktemp -d /tmp/txboard-components.XXXXXXXX)"
+    mkdir "$component_tmp/lib"
+    component_module="$component_tmp/lib/components.sh"
+    component_url="${TXBOARD_DEPLOY_RAW_BASE:-https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main}/lib/components.sh"
+    if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 10 --max-time 60 "$component_url" -o "$component_module";
+    elif command -v wget >/dev/null 2>&1; then wget -q -T 60 -O "$component_module" "$component_url";
+    else printf '[TXBoard Deploy] ERROR: curl or wget is required\n' >&2; exit 1; fi
+  fi
+  bash -n "$component_module"
+  component_result=0
+  bash "$component_module" "$COMPONENT" install "$@" || component_result=$?
+  if [[ -n "$component_tmp" ]]; then rm -f -- "$component_module"; rmdir "$component_tmp/lib" "$component_tmp"; fi
+  exit "$component_result"
+fi
+
+IMAGE_REPO="${TXBOARD_IMAGE_REPO:-ghcr.io/anrcm0/txboard-core}"
 # Docker repository names must be lowercase, including operator-supplied overrides.
 IMAGE_REPO="${IMAGE_REPO,,}"
 IMAGE_TAG="${TXBOARD_IMAGE_TAG:-latest}"
@@ -160,6 +196,7 @@ TXBoard Docker 交互式安装向导
 
 Usage:
   install.sh [options]
+  install.sh --component core|gateway|node [component options]
 
 Options:
   --dir PATH          Install directory (default: /opt/txboard)
@@ -564,7 +601,7 @@ install_deploy_tools() {
     return 0
   fi
 
-  for module in common service backup config diagnose uninstall detect xboard-import maintenance; do
+  for module in common service backup config diagnose uninstall detect xboard-import maintenance components; do
     tmp="$INSTALL_DIR/lib/.$module.sh.tmp"
     if ! download_file "$DEPLOY_RAW_BASE/lib/$module.sh" "$tmp"; then
       rm -f "$manager_tmp" "$updater_tmp" "$INSTALL_DIR/lib/."*.tmp

@@ -5,6 +5,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [安装指南](installation.md) | 首次安装、访问方式、数据库模式、安装器目录安全保护与镜像结构 |
+| [三组件安装](components.md) | Core/Gateway/Node 统一入口、独立 Gateway 生命周期与旧 txnode 兼容 |
 | [XBoard 数据迁入](migration-from-xboard.md) | 独立目标库、备份、历史数据库兼容、旧插件表审查 |
 | [运维与升级](operations.md) | `txboard` 菜单、配置、备份、更新、恢复和数据安全红线 |
 | [持久升级影子演练](durable-upgrade.md) | 签名 Manifest、持久 intent/probe、单机隔离副本回填对账与恢复边界 |

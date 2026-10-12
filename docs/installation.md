@@ -198,7 +198,7 @@ TXBoard
 默认：
 
 ```text
-ghcr.io/anrcm0/txboard:latest
+ghcr.io/anrcm0/txboard-core:latest
 ```
 
 TXBoard 的 GitHub Actions 已将镜像发布分成三个独立通道。**正式版不会再随每次 main 提交自动更新**：
@@ -225,7 +225,7 @@ sudo txboard update v1.2.3
 
 ```yaml
 txboard:
-  image: ghcr.io/anrcm0/txboard:latest
+  image: ghcr.io/anrcm0/txboard-core:latest
 ```
 
 因此用户服务器不需要 TXBoard 源码。

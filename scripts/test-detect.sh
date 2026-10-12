@@ -87,6 +87,13 @@ fixture own "$temp/managed" running healthy txboard other-service ghcr.io/anrcm0
 if txboard_guard_update "$temp/managed" >/dev/null 2>&1; then echo "trusted image without service label" >&2; exit 1; fi
 
 reset
+fixture own "$temp/managed" running healthy txboard txboard ghcr.io/anrcm0/txboard-core:latest
+txboard_guard_update "$temp/managed" >/dev/null
+reset
+fixture orphan "$temp/foreign" running healthy unknown other-service ghcr.io/anrcm0/txboard-core:latest
+if txboard_guard_install "$temp/managed" >/dev/null 2>&1; then echo "ignored new Core image orphan" >&2; exit 1; fi
+
+reset
 fixture own "$temp/managed" running healthy
 export DETECT_TEST_COMPOSE_ID=different
 if txboard_guard_update "$temp/managed" >/dev/null 2>&1; then echo "ignored Compose instance mismatch" >&2; exit 1; fi

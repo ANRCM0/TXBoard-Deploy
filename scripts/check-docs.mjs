@@ -7,7 +7,7 @@ import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const inputs = ['README.md', 'docs'];
+const inputs = ['README.md', 'docs', 'node/README.md'];
 const files = [];
 const errors = [];
 let checked = 0;

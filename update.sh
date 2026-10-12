@@ -22,7 +22,7 @@ Usage:
 
 Options:
   --dir PATH       Install directory (default: /opt/txboard)
-  --tag TAG        Switch ghcr.io/anrcm0/txboard to a different tag
+  --tag TAG        Switch the installed Core image repository to a different tag
   --skip-backup    Not permitted during schema-safe updates
   --yes            Unattended native TXBoard upgrade (rejects legacy v2_* schemas)
   --tools-only     Refresh management scripts only; do not update images or databases
@@ -84,7 +84,7 @@ refresh_tools() {
       return 1
     fi
   done
-  for module in common service backup config diagnose uninstall detect xboard-import maintenance; do
+  for module in common service backup config diagnose uninstall detect xboard-import maintenance components; do
     if ! download_file "$DEPLOY_RAW_BASE/lib/$module.sh" "$stage/lib/$module.sh" ||
        ! bash -n "$stage/lib/$module.sh"; then
       warn "could not fetch/validate manager module: $module"
@@ -94,7 +94,7 @@ refresh_tools() {
   done
 
   mkdir -p "$INSTALL_DIR/lib"
-  for module in common service backup config diagnose uninstall detect xboard-import maintenance; do
+  for module in common service backup config diagnose uninstall detect xboard-import maintenance components; do
     mv -f -- "$stage/lib/$module.sh" "$INSTALL_DIR/lib/$module.sh"
   done
   for file in txboard.sh update.sh; do

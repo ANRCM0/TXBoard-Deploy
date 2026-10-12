@@ -1,6 +1,6 @@
 # TXBoard Deploy
 
-**TXBoard 的公开部署与服务器运维工具。** 通过预构建镜像安装、升级、备份及管理 TXBoard，不要求在目标服务器克隆 Laravel/React/Vue 源码、安装 Composer/npm 或自行构建主应用。
+**Core、Gateway、Node 的统一公开安装与服务器运维工具。** 通过预构建镜像安装和管理三个组件，不要求在目标服务器克隆应用源码、安装 Composer/npm 或自行构建应用。
 
 [TXBoard 主仓库](https://github.com/ANRCM0/TXBoard) · [部署详细指南](docs/README.md) · [升级与运维](docs/operations.md) · [迁移 XBoard](docs/migration-from-xboard.md)
 
@@ -26,9 +26,20 @@ sudo bash install.sh
 | 数据库 | 内置 MySQL、宿主机/1Panel Docker MySQL、外部 MySQL |
 | 对外访问 | Caddy 自动 HTTPS、外部 HTTPS 反向代理、HTTP（仅适合受控环境） |
 | MCP | 主 TXBoard 镜像内置的可选 MCP Gateway，默认关闭 |
-| 运行镜像 | `ghcr.io/anrcm0/txboard`，正式生产建议固定已验收版本/digest |
+| Core 镜像 | `ghcr.io/anrcm0/txboard-core`；已有 `txboard` 配置继续沿用原仓库 |
+| Gateway 镜像 | `ghcr.io/anrcm0/txboard-gateway`，独立 Native Gateway |
+| Node 镜像 | `ghcr.io/anrcm0/tx-node`，保留 stable/dev 渠道与 txnode 管理入口 |
 
-**TXBoard-Deploy 不是 TX-Node 安装器**。节点请使用独立 [TX-Node-Installer](https://github.com/ANRCM0/TX-Node-Installer)。
+无参数 `install.sh` 仍进入 Core 安装向导。独立 Gateway 和 Node 使用同一入口：
+
+```bash
+sudo bash install.sh --component gateway \
+  --upstream https://core.example.com --origins https://site.example.com
+sudo bash install.sh --component node --mode machine --provider txboard \
+  --panel-url https://core.example.com --machine-id 1 --token '<machine-token>'
+```
+
+Gateway 默认发布到 `127.0.0.1:8787`，需另外配置 TLS 反向代理。Node 的原安装器和完整历史已合入 [node/](node/README.md)，原 `txnode` 命令继续使用。配置、更新、回滚与边界见 [三组件安装](docs/components.md)。
 
 ## 安装后常用操作
 
@@ -48,6 +59,7 @@ sudo txboard admin-reset-path  # 轮换管理后台安全路径
 | 我要做什么 | 文档 |
 | --- | --- |
 | 第一次部署、数据库/反代模式选型 | [安装指南](docs/installation.md) |
+| 独立安装或管理 Gateway、Node | [三组件安装](docs/components.md) |
 | 已有 XBoard，需要迁移历史数据 | [隔离导入流程](docs/migration-from-xboard.md) |
 | 已有 TXBoard，升级、备份、恢复、诊断 | [运维与升级](docs/operations.md) |
 | 在隔离副本演练订阅回填、签名计划与中断恢复 | [持久升级影子演练](docs/durable-upgrade.md) |
