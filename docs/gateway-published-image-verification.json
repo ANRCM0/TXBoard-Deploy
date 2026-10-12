@@ -1,0 +1,233 @@
+{
+  "profile": "unified-installer-remote-ci/evidence-v1",
+  "deploy_commit": "5618dd587d3479e165cbfd3e59ffd7043380e680",
+  "repo": "https://github.com/ANRCM0/TXBoard-Deploy",
+  "read_only_collection": true,
+  "rerun_requested": false,
+  "workflows": [
+    {
+      "run_id": 38301662347,
+      "url": "https://github.com/ANRCM0/TXBoard-Deploy/actions/runs/38301662347",
+      "event": "push",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "verify",
+          "job_id": 114985776222,
+          "conclusion": "success",
+          "url": "https://github.com/ANRCM0/TXBoard-Deploy/actions/runs/38301662347/job/114985776222",
+          "started_at": "2026-10-12T20:02:58Z",
+          "completed_at": "2026-10-12T20:04:01Z"
+        },
+        {
+          "name": "gateway-docker",
+          "job_id": 114985776651,
+          "conclusion": "success",
+          "url": "https://github.com/ANRCM0/TXBoard-Deploy/actions/runs/38301662347/job/114985776651",
+          "started_at": "2026-10-12T20:02:58Z",
+          "completed_at": "2026-10-12T20:03:27Z"
+        },
+        {
+          "name": "smoke-install",
+          "job_id": 114985777734,
+          "conclusion": "skipped",
+          "url": "https://github.com/ANRCM0/TXBoard-Deploy/actions/runs/38301662347/job/114985777734",
+          "started_at": "2026-10-12T20:02:56Z",
+          "completed_at": "2026-10-12T20:02:56Z"
+        }
+      ]
+    },
+    {
+      "run_id": 38301661999,
+      "url": "https://github.com/ANRCM0/TXBoard-Deploy/actions/runs/38301661999",
+      "event": "push",
+      "conclusion": "success"
+    }
+  ],
+  "gateway_artifact": {
+    "index": "sha256:c14ca36e5b763d2f7e6415b277b5186cb44f69b262115f819be66effcae5fced",
+    "platform": "linux/amd64",
+    "manifest": "sha256:9e164150f0089a8cdf211382fd7bd44f7240d6d932f8425a2d20d335fee5c5ed",
+    "actual_ci_image_id": "sha256:3443d5163a65af559f4d137addc31c301ef41284acdf8189d2bb1ac5d7f41ada",
+    "revision": "f9b271451eb36438db946ae018ab55568d2f10d5",
+    "source": "https://github.com/ANRCM0/TXBoard",
+    "files": [
+      {
+        "path": "gateway-oci-index.json",
+        "sha256": "c14ca36e5b763d2f7e6415b277b5186cb44f69b262115f819be66effcae5fced",
+        "bytes": 647,
+        "oci_digest": "sha256:c14ca36e5b763d2f7e6415b277b5186cb44f69b262115f819be66effcae5fced"
+      },
+      {
+        "path": "gateway-oci-amd64-manifest.json",
+        "sha256": "9e164150f0089a8cdf211382fd7bd44f7240d6d932f8425a2d20d335fee5c5ed",
+        "bytes": 1624,
+        "oci_digest": "sha256:9e164150f0089a8cdf211382fd7bd44f7240d6d932f8425a2d20d335fee5c5ed"
+      },
+      {
+        "path": "gateway-oci-amd64-config.json",
+        "sha256": "3443d5163a65af559f4d137addc31c301ef41284acdf8189d2bb1ac5d7f41ada",
+        "bytes": 8284,
+        "oci_digest": "sha256:3443d5163a65af559f4d137addc31c301ef41284acdf8189d2bb1ac5d7f41ada"
+      }
+    ],
+    "read_only": true,
+    "anonymous_pull_token_saved": false
+  },
+  "source_evidence": [
+    {
+      "repository_path": ".github/workflows/ci.yml",
+      "commit": "5618dd587d3479e165cbfd3e59ffd7043380e680",
+      "path": "source-ci.yml",
+      "sha256": "a5454b3882e0773c2253f722343ee95e7b4ad0d2a82f8198796d6466a94c6de0",
+      "bytes": 24775
+    },
+    {
+      "repository_path": "scripts/test-gateway-docker.sh",
+      "commit": "5618dd587d3479e165cbfd3e59ffd7043380e680",
+      "path": "source-gateway-runner.sh",
+      "sha256": "c27a4d7f92600dd0efe69d8dde697bc09a50a54f83dda1e813af3a97c2f2d964",
+      "bytes": 6623
+    },
+    {
+      "repository_path": "gateway/deploy.sh",
+      "commit": "5618dd587d3479e165cbfd3e59ffd7043380e680",
+      "path": "source-gateway-installer.sh",
+      "sha256": "274c137966590e9c2fb410a333f0b5bea8a4e9290bf03acd49e9d267e3cf3e97",
+      "bytes": 18256
+    },
+    {
+      "repository_path": "install.sh",
+      "commit": "5618dd587d3479e165cbfd3e59ffd7043380e680",
+      "path": "source-install.sh",
+      "sha256": "5927865849174ae9e5d4151ea64d77b7b74ca6677461d5d03d6e758a3ced6a90",
+      "bytes": 59332
+    },
+    {
+      "repository_path": "lib/components.sh",
+      "commit": "5618dd587d3479e165cbfd3e59ffd7043380e680",
+      "path": "source-components.sh",
+      "sha256": "2e850a4396248ecaec5f08487ad2808a89ef84940d1a5fd3b5ac740664b7d9f8",
+      "bytes": 2504
+    }
+  ],
+  "raw_logs": [
+    {
+      "archive_entry": "0_gateway-docker.txt",
+      "path": "gateway-docker-raw-log.txt",
+      "sha256": "00435b6106be13acbb3e766c15c126aaf42abf1146a429f23eecf9c29dd39313",
+      "bytes": 14202
+    },
+    {
+      "archive_entry": "gateway-docker/3_Verify the fixed public Gateway artifact.txt",
+      "path": "gateway-artifact-raw-step.txt",
+      "sha256": "c2c9ae59bb625fe4c312762ab7f3ef516849fbe2595fb4ad9b0b1f35443fc136",
+      "bytes": 2518
+    },
+    {
+      "archive_entry": "gateway-docker/4_Test actual Gateway installation and failed-image rollback.txt",
+      "path": "gateway-lifecycle-raw-step.txt",
+      "sha256": "1b81bcbdf6e0da5c173438cc119cd079c4c7da90b5c84e91322de69b57f49cef",
+      "bytes": 1657
+    }
+  ],
+  "downloaded_files": [
+    {
+      "path": "deploy-ci-run.json",
+      "sha256": "20887cecafeae878b86a103b96d5b2443944e0413558e23e34140b8f500f1d83",
+      "bytes": 7782
+    },
+    {
+      "path": "deploy-ci-gh-log.txt",
+      "sha256": "0261a6dd50b3af357117479dfeebcb89b53de3741397ecb9477952d1140ee765",
+      "bytes": 107595
+    },
+    {
+      "path": "deploy-ci-raw-logs.zip",
+      "sha256": "f9d2ed30aade4115cbe60b12d77be001bec8218d7a946234eb434f549d0f82ac",
+      "bytes": 49265
+    },
+    {
+      "path": "deploy-ci-zip-index.json",
+      "sha256": "fa1659de4f4a96ec7b822337f97f2e9770ba4c30b53db1f8b91929ce4a3a6f83",
+      "bytes": 7241
+    },
+    {
+      "path": "gateway-docker-gh-log.txt",
+      "sha256": "6ebc5178cb37d3e228f1b056138e09c32751fc1cd0a7bd5ac5ac6b4a9eca4672",
+      "bytes": 21749
+    },
+    {
+      "path": "documentation-run.json",
+      "sha256": "f8211b7b80ed24356153643194a9c0bafddcb302daf43ea3eeeeb71c73855bf1",
+      "bytes": 1718
+    },
+    {
+      "path": "documentation-gh-log.txt",
+      "sha256": "0006bd53b66bad3b00c6236f47ccb6c1569d3151bbe6d556599ee37b77a4feec",
+      "bytes": 15559
+    },
+    {
+      "path": "documentation-raw-logs.zip",
+      "sha256": "51a6df1fe251cb60e70457ed7f6bd4bc57cbe57083b6bdef00d1da0aabdc7a8f",
+      "bytes": 9177
+    },
+    {
+      "path": "documentation-zip-index.json",
+      "sha256": "f94ec3fc1b467ee8c1e66e6c7ee6314a0b83140216f68b266322e6aa12f75953",
+      "bytes": 1397
+    }
+  ],
+  "gateway_results": {
+    "job_id": 114985776651,
+    "conclusion": "success",
+    "install": "Real Docker Compose installation through install.sh --component gateway in a unique /tmp directory/project.",
+    "health": "Container healthy and /healthz JSON status=ok; Core origin http://localhost:9 is deliberately unreachable.",
+    "loopback": "Saved TXGATEWAY_BIND=127.0.0.1 verified; random host port used.",
+    "private_files_mode": {
+      ".env": "0600",
+      "gateway.env": "0600",
+      "compose.yaml": "0600",
+      "diagnostic.log": "0600"
+    },
+    "literal_input": "Real container env exact-matches synthetic operator token containing a literal dollar sign; exact upstream origin also asserted.",
+    "runtime_hpke": "disabled asserted in actual container environment",
+    "runtime_flags_false_asserted": [
+      "GATEWAY_INTERNAL_USER_ENABLED",
+      "GATEWAY_INTERNAL_PUBLIC_READ_ENABLED",
+      "GATEWAY_INTERNAL_LOGIN_ENABLED",
+      "GATEWAY_INTERNAL_EMAIL_CODE_ENABLED",
+      "GATEWAY_ACCOUNT_WORKFLOWS_ENABLED",
+      "GATEWAY_ORDER_WRITE_ENABLED"
+    ],
+    "stop_start": "Actual container stopped (non-running state asserted), started again and /healthz succeeded.",
+    "failure_target": "Local FROM scratch image with missing entrypoint, built --network none; real Docker container create/start failure triggers rollback.",
+    "single_fixture_pull_exception": "Only pull of the locally built failure tag bypasses registry after exact local imageID check; creation, failure and original-image rollback use real Docker.",
+    "rollback": "Upgrade exits nonzero, previous-image-restored message asserted, recovery marker removed, runtime image equals original immutable ID, original fixed reference retained, /healthz succeeds and gateway.env SHA remains unchanged.",
+    "rollback_retained_image_id": "sha256:3443d5163a65af559f4d137addc31c301ef41284acdf8189d2bb1ac5d7f41ada",
+    "remove": "Actual Compose down; no gateway container remains; .env, gateway.env and gateway.sh remain before fixture cleanup.",
+    "observability": "Positive assertions are not individually echoed. Their evidence is the exact committed runner, fail-fast execution and final passed marker. Private rollback.log/diagnostic.log are not uploaded on success and are removed by fixture cleanup."
+  },
+  "verify_results": {
+    "conclusion": "success",
+    "node_original_five_suites": "passed in verify job with synthetic Docker/systemd",
+    "component_and_gateway_synthetic": "passed",
+    "durable_upgrade_python": {
+      "tests": 48,
+      "conclusion": "passed"
+    },
+    "xboard_plan_python": {
+      "tests": 9,
+      "conclusion": "passed"
+    },
+    "mysql_84_mapping": "passed",
+    "core_manager_installer_rendering_and_protection": "all configured verify steps passed",
+    "fresh_core_default": "txboard-core:latest rendering asserted separately from old fixed compatibility manifest availability"
+  },
+  "limitations": [
+    "smoke-install was skipped for the push event; this run does not execute full Core installation or full backup import.",
+    "Actual Gateway Docker exercise is linux/amd64 only; arm64 index membership is artifact evidence, not an arm64 runtime test.",
+    "No Core business connectivity, billing authorization, Node admission, production machines or TLS deployment was exercised.",
+    "The local bad-target tag is not a published release and only its pull is substituted; do not describe all pulls as network registry pulls."
+  ]
+}
