@@ -28,10 +28,13 @@ def main():
     args = parser.parse_args()
     upgrade.require(os.name == "posix", "real_docker_test_requires_linux")
     manifest, digest = upgrade.load_signed_manifest(args.manifest, args.signature, args.trust_dir)
+    catalog = manifest["profile"] == upgrade.CATALOG_PROFILE
+    backfill_step = "plan-catalog-shadow-backfill-v1" if catalog else "subscription-shadow-backfill-v1"
+    cursor_field = "cursor_plan_id" if catalog else "cursor_user_id"
     backend = upgrade.DockerShadowBackend(args.dir, args.backup, args.backup_evidence, digest, manifest, args.deploy_bundle)
     if args.fault_child:
         def hook(event, step):
-            if event == "after_side_effect" and step == "subscription-shadow-backfill-v1":
+            if event == "after_side_effect" and step == backfill_step:
                 print("committed-backfill-before-checkpoint-result", flush=True)
                 time.sleep(60)
                 raise AssertionError("controller did not kill executor")
@@ -62,13 +65,13 @@ def main():
     journal = upgrade.Journal(args.dir, readonly=True)
     try:
         before = journal.report(manifest["release_id"])
-        step = next(s for s in before["steps"] if s["step"] == "subscription-shadow-backfill-v1")
+        step = next(s for s in before["steps"] if s["step"] == backfill_step)
         upgrade.require(step["result"] is None, "missing_result_not_preserved")
         upgrade.require(before["status"] == "backfilling", "unexpected_interrupted_phase")
     finally:
         journal.close()
-    durable = backend.probe("subscription-shadow-backfill-v1")
-    upgrade.require(durable["status"] in ("partial", "applied") and int(durable["checkpoint"]["cursor_user_id"]) > 0, "core_batch_not_durable")
+    durable = backend.probe(backfill_step)
+    upgrade.require(durable["status"] in ("partial", "applied") and int(durable["checkpoint"][cursor_field]) > 0, "core_batch_not_durable")
     with upgrade.InstallLock(args.dir):
         journal = upgrade.Journal(args.dir)
         try:
@@ -77,10 +80,11 @@ def main():
             journal.close()
     upgrade.require(report["status"] == "completed", "recovery_not_completed")
     upgrade.require((args.dir / ".upgrade-in-progress").is_file(), "binary_guard_not_retained")
-    duplicate = backend.sql("SELECT COUNT(*) FROM (SELECT legacy_user_id FROM tx_legacy_subscription_map GROUP BY legacy_user_id HAVING COUNT(*)>1) duplicate_maps")
+    duplicate = backend.sql("SELECT COUNT(*) FROM (SELECT legacy_plan_id FROM tx_plan_catalog_shadow GROUP BY legacy_plan_id HAVING COUNT(*)>1) duplicate_maps" if catalog else
+        "SELECT COUNT(*) FROM (SELECT legacy_user_id FROM tx_legacy_subscription_map GROUP BY legacy_user_id HAVING COUNT(*)>1) duplicate_maps")
     upgrade.require(duplicate == "0", "duplicate_legacy_mapping")
-    print(json.dumps({"profile": upgrade.PROFILE, "result": "passed", "fault": "SIGKILL after Core batch commit before journal result",
-                      "core_cursor_after_kill": durable["checkpoint"]["cursor_user_id"], "manifest_sha256": digest,
+    print(json.dumps({"profile": manifest["profile"], "result": "passed", "fault": "SIGKILL after Core batch commit before journal result",
+                      "core_cursor_after_kill": durable["checkpoint"][cursor_field], "manifest_sha256": digest,
                       "authority": "legacy", "duplicate_maps": "0", "binary_guard_retained": True, "target_digest": report["source"]["target_digest"]}, indent=2))
 
 

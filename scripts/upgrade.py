@@ -23,6 +23,7 @@ from pathlib import Path
 
 VERSION = "txboard.upgrade-manifest/v1"
 PROFILE = "subscription-shadow/v1"
+CATALOG_PROFILE = "plan-catalog-shadow/v1"
 CHECKPOINT_VERSION = 1
 PHASES = ("expand", "backfill", "verify", "observe")
 MIGRATION_FILE = "2026_10_12_000001_create_subscription_shadow_tables"
@@ -32,6 +33,15 @@ MIGRATIONS = {
     "subscription-shadow-backfill-v1": ("backfill", "subscription-shadow-progress-v1", "resume_cursor", "legacy-user-id"),
     "subscription-shadow-verify-v1": ("verify", "subscription-shadow-reconcile-v1", "read_only_repeat", None),
 }
+CATALOG_MIGRATION_FILE = "2026_10_12_000002_create_plan_catalog_shadow_tables"
+CATALOG_MIGRATIONS = {
+    "plan-catalog-shadow-expand-v1": ("expand", "plan-catalog-shadow-shape-v1", "probe_then_continue", "ddl-step"),
+    "plan-catalog-shadow-backfill-v1": ("backfill", "plan-catalog-shadow-progress-v1", "resume_cursor", "legacy-plan-id"),
+    "plan-catalog-shadow-verify-v1": ("verify", "plan-catalog-shadow-reconcile-v1", "read_only_repeat", None),
+}
+PROFILES = {PROFILE: MIGRATIONS, CATALOG_PROFILE: CATALOG_MIGRATIONS}
+CATALOG_TABLES = ("tx_plan_revision", "tx_plan_offer", "tx_plan_offer_availability", "tx_plan_catalog_shadow", "tx_plan_catalog_checkpoint", "tx_plan_catalog_exception")
+CATALOG_INDEXES = ("tx_revision_number_uq", "tx_revision_owner_uq", "tx_offer_version_uq")
 IDENT = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}\Z")
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 OCI = re.compile(r"(?:[a-z0-9]+(?:[._-][a-z0-9]+)*\.)*[a-z0-9]+(?::[0-9]+)?/(?:[a-z0-9._-]+/)*[a-z0-9._-]+@sha256:[0-9a-f]{64}\Z")
@@ -106,7 +116,8 @@ def hash_regular(path):
 def validate_manifest(manifest):
     shape(manifest, ("manifest_version", "profile", "release_id", "created_at", "components", "compatibility", "schema", "migrations", "upgrade_policy", "backup_policy", "billing"))
     require(manifest["manifest_version"] == VERSION, "unsupported_manifest_version")
-    require(manifest["profile"] == PROFILE, "unsupported_upgrade_profile")
+    require(type(manifest["profile"]) is str and manifest["profile"] in PROFILES, "unsupported_upgrade_profile")
+    allowed_migrations = PROFILES[manifest["profile"]]
     identifier(manifest["release_id"])
     require(len(manifest["release_id"]) <= 64, "release_id_too_long_for_core")
     safe_int(manifest["created_at"])
@@ -140,10 +151,10 @@ def validate_manifest(manifest):
     shape(schema, ("family", "allowed_source_epochs", "expanded_epoch", "target_epoch"))
     require(schema == {"family": "native_tx", "allowed_source_epochs": [1], "expanded_epoch": 1, "target_epoch": 1}, "unsupported_schema_transition")
     migrations = manifest["migrations"]
-    require(type(migrations) is list and len(migrations) == len(MIGRATIONS), "unsupported_migration_list")
-    require([m.get("id") for m in migrations if type(m) is dict] == list(MIGRATIONS), "unsupported_migration_order")
+    require(type(migrations) is list and len(migrations) == len(allowed_migrations), "unsupported_migration_list")
+    require([m.get("id") for m in migrations if type(m) is dict] == list(allowed_migrations), "unsupported_migration_order")
     for migration in migrations:
-        phase, probe, recovery, checkpoint = MIGRATIONS[migration["id"]]
+        phase, probe, recovery, checkpoint = allowed_migrations[migration["id"]]
         shape(migration, ("id", "phase", "probe", "recovery"), ("checkpoint", "from_epoch", "to_epoch"))
         require((migration["phase"], migration["probe"], migration["recovery"], migration.get("checkpoint")) == (phase, probe, recovery, checkpoint), "unsupported_migration_semantics")
         if phase == "expand":
@@ -378,7 +389,7 @@ def validate_observation(value):
     require(value["status"] in ("not_started", "partial", "applied", "unknown", "failed"), "invalid_probe_result")
     require(value["checkpoint"] is None or type(value["checkpoint"]) is dict, "invalid_probe_checkpoint")
     if value["checkpoint"] is not None:
-        shape(value["checkpoint"], (), ("cursor_user_id", "high_water_user_id", "processed_count", "next_cursor", "checked_count", "authority", "migration", "backup_id"))
+        shape(value["checkpoint"], (), ("cursor_user_id", "high_water_user_id", "cursor_plan_id", "high_water_plan_id", "processed_count", "next_cursor", "checked_count", "authority", "migration", "backup_id"))
         for key, item in value["checkpoint"].items():
             require(type(item) is str and len(item) <= 128, "invalid_probe_checkpoint_value")
             if key.endswith("id") or key.endswith("count") or key == "next_cursor":
@@ -421,7 +432,8 @@ class Runner:
                 self.journal.status(self.release, {"expand": "expanding", "backfill": "backfilling", "verify": "verifying"}[migration["phase"]], next_step=index)
                 self.execute_step(migration)
             self.journal.status(self.release, "observing", next_step=3)
-            self.execute_step({"id": "subscription-shadow-observe-v1", "phase": "observe", "recovery": "read_only_repeat"})
+            observe = "plan-catalog-shadow-observe-v1" if self.manifest["profile"] == CATALOG_PROFILE else "subscription-shadow-observe-v1"
+            self.execute_step({"id": observe, "phase": "observe", "recovery": "read_only_repeat"})
             self.journal.status(self.release, "completed", next_step=4)
             self.journal.assert_fence()
             # The profile explicitly forbids starting an old image after DDL.
@@ -614,12 +626,13 @@ class DockerShadowBackend:
         config = parse_json(rendered.stdout)
         require(config.get("services", {}).get("txboard", {}).get("image") == artifact, "compose_does_not_use_pinned_target")
         commands = self.artisan("list", "--raw").decode()
-        require("core:subscriptions-backfill" in commands and "core:subscriptions-reconcile" in commands, "core_shadow_commands_missing")
+        required_commands = ("core:catalog-shadow",) if manifest["profile"] == CATALOG_PROFILE else ("core:subscriptions-backfill", "core:subscriptions-reconcile")
+        require(all(command in commands for command in required_commands), "core_shadow_commands_missing")
         self.backup = backup_check(self.backup_dir, self.evidence_path, self.digest)
         return {"installation_id": hashlib.sha256(str(self.install_dir).encode()).hexdigest(), "container_id": identity,
                 "source_image_id": info[0]["Image"], "target_image_id": target[0]["Id"], "target_digest": artifact,
                 "deployment_config_sha256": hashlib.sha256(b"\0".join(read_regular(self.install_dir / name) for name in ("api.env", ".env", "compose.yaml"))).hexdigest(),
-                "schema_epoch": "1", "authority": "legacy", "runtime_profile": PROFILE}, self.backup
+                "schema_epoch": "1", "authority": "legacy", "runtime_profile": manifest["profile"]}, self.backup
 
     def progress(self):
         # The reconciliation command is read-only. A missing run is an explicit
@@ -633,7 +646,22 @@ class DockerShadowBackend:
         require(all(DECIMAL.fullmatch(v) for v in (cursor, highwater, count)), "invalid_core_checkpoint")
         return phase, {"cursor_user_id": cursor, "high_water_user_id": highwater, "processed_count": count}
 
+    def catalog_progress(self):
+        conflicts = self.sql("SELECT COUNT(*) FROM tx_plan_catalog_exception WHERE legacy_plan_id <= (SELECT high_water_plan_id FROM tx_plan_catalog_checkpoint WHERE run_key='" + self.run_key + "') AND state='unresolved'")
+        require(conflicts == "0", "core_catalog_source_conflict")
+        rows = self.sql("SELECT phase,cursor_plan_id,high_water_plan_id,processed_count FROM tx_plan_catalog_checkpoint WHERE run_key='" + self.run_key + "'")
+        if not rows:
+            return None
+        phase, cursor, highwater, count = rows.split()
+        require(phase in ("processing", "complete") and all(DECIMAL.fullmatch(v) for v in (cursor, highwater, count)), "invalid_core_catalog_checkpoint")
+        require(int(cursor) <= int(highwater), "invalid_core_catalog_checkpoint")
+        return phase, {"cursor_plan_id": cursor, "high_water_plan_id": highwater, "processed_count": count}
+
     def probe(self, step):
+        if step in CATALOG_MIGRATIONS or step == "plan-catalog-shadow-observe-v1":
+            require(self.manifest["profile"] == CATALOG_PROFILE, "unknown_migration_id")
+            return self.catalog_probe(step)
+        require(self.manifest["profile"] == PROFILE, "unknown_migration_id")
         if step == "subscription-shadow-expand-v1":
             rows = self.sql("SELECT migration FROM migrations WHERE migration='" + MIGRATION_FILE + "'")
             if rows == MIGRATION_FILE:
@@ -661,7 +689,31 @@ class DockerShadowBackend:
                     "checkpoint": {"next_cursor": self.verify_cursor, "checked_count": str(self.verify_count), "authority": "legacy"}}
         raise UpgradeError("unknown_migration_id")
 
+    def catalog_probe(self, step):
+        if step == "plan-catalog-shadow-expand-v1":
+            tables = self.sql("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('" + "','".join(CATALOG_TABLES) + "')")
+            history = self.sql("SELECT migration FROM migrations WHERE migration='" + CATALOG_MIGRATION_FILE + "'")
+            if history == CATALOG_MIGRATION_FILE:
+                indexes = self.sql("SELECT COUNT(DISTINCT INDEX_NAME) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND INDEX_NAME IN ('" + "','".join(CATALOG_INDEXES) + "') AND NON_UNIQUE=0")
+                require(tables == str(len(CATALOG_TABLES)) and indexes == str(len(CATALOG_INDEXES)), "catalog_schema_shape_mismatch")
+                return {"status": "applied", "checkpoint": {"migration": CATALOG_MIGRATION_FILE}}
+            return {"status": "not_started" if tables == "0" else "unknown", "checkpoint": None}
+        if step == "plan-catalog-shadow-backfill-v1":
+            result = self.catalog_progress()
+            if result is None: return {"status": "not_started", "checkpoint": None}
+            phase, checkpoint = result
+            return {"status": "applied" if phase == "complete" else "partial", "checkpoint": checkpoint}
+        if step == "plan-catalog-shadow-observe-v1":
+            require(self.verified, "reconciliation_required")
+            return {"status": "applied", "checkpoint": {"authority": "legacy", "checked_count": str(self.verify_count)}}
+        return {"status": "applied" if self.verified else "partial" if self.verify_cursor != "0" else "not_started",
+                "checkpoint": {"next_cursor": self.verify_cursor, "checked_count": str(self.verify_count), "authority": "legacy"}}
+
     def perform(self, step, fence, checkpoint):
+        if step in CATALOG_MIGRATIONS:
+            require(self.manifest["profile"] == CATALOG_PROFILE, "unsupported_runtime_action")
+            return self.catalog_perform(step)
+        require(self.manifest["profile"] == PROFILE, "unsupported_runtime_action")
         if step == "subscription-shadow-expand-v1":
             self.artisan("migrate", "--force", "--path=database/migrations/" + MIGRATION_FILE + ".php")
         elif step == "subscription-shadow-backfill-v1":
@@ -682,6 +734,43 @@ class DockerShadowBackend:
         else:
             raise UpgradeError("unsupported_runtime_action")
 
+    def catalog_perform(self, step):
+        if step == "plan-catalog-shadow-expand-v1":
+            self.artisan("migrate", "--force", "--path=database/migrations/" + CATALOG_MIGRATION_FILE + ".php")
+        elif step == "plan-catalog-shadow-backfill-v1":
+            result = parse_json(self.artisan("core:catalog-shadow", "--run=" + self.run_key, "--limit=1000",
+                "--billing-timezone=" + self.manifest["billing"]["billing_timezone"], "--currency=" + self.manifest["billing"]["currency"], "--isolated-copy"))
+            require(type(result) is dict and result.get("run_key") == self.run_key and type(result.get("results")) is list, "invalid_core_catalog_response")
+            require(result.get("unresolved_count") == "0" and all(type(row) is dict and row.get("status") in ("mapped", "unchanged", "revised") for row in result["results"]), "core_catalog_source_conflict")
+        elif step == "plan-catalog-shadow-verify-v1":
+            result = parse_json(self.artisan("core:catalog-shadow", "--isolated-copy", "--reconcile", "--run=" + self.run_key, "--limit=1000", "--after-id=" + self.verify_cursor))
+            require(type(result) is dict and result.get("run_key") == self.run_key and result.get("scope") == "current-pointer-and-offers" and result.get("read_only") is True, "invalid_core_catalog_reconcile_response")
+            require(result.get("page_ok") is True and result.get("global_issues") == [] and result.get("mismatch_count") == "0" and result.get("unresolved_count") == "0", "reconciliation_failed")
+            require(type(result.get("has_more")) is bool and result.get("after_id") == self.verify_cursor
+                and type(result.get("next_after_id")) is str and DECIMAL.fullmatch(result["next_after_id"])
+                and type(result.get("checked_count")) is str and DECIMAL.fullmatch(result["checked_count"])
+                and type(result.get("high_water_plan_id")) is str and DECIMAL.fullmatch(result["high_water_plan_id"])
+                and type(result.get("source_high_water_plan_id")) is str and DECIMAL.fullmatch(result["source_high_water_plan_id"]), "invalid_core_reconcile_cursor")
+            require(int(result["next_after_id"]) >= int(self.verify_cursor)
+                and int(result["next_after_id"]) <= int(result["high_water_plan_id"])
+                and int(result["source_high_water_plan_id"]) <= int(result["high_water_plan_id"])
+                and int(result["checked_count"]) <= 1000
+                and (not result["has_more"] or int(result["next_after_id"]) > int(self.verify_cursor)), "invalid_core_reconcile_cursor")
+            require(type(result.get("results")) is list and len(result["results"]) == int(result["checked_count"])
+                and all(type(row) is dict and row.get("ok") is True and row.get("issues") == [] for row in result["results"]), "reconciliation_failed")
+            previous_id = int(self.verify_cursor)
+            for row in result["results"]:
+                row_id = row.get("legacy_plan_id")
+                require(type(row_id) is str and DECIMAL.fullmatch(row_id)
+                    and previous_id < int(row_id) <= int(result["next_after_id"]), "invalid_core_reconcile_cursor")
+                previous_id = int(row_id)
+            require(previous_id == int(result["next_after_id"]), "invalid_core_reconcile_cursor")
+            self.verify_cursor = result["next_after_id"]
+            self.verify_count += int(result["checked_count"])
+            self.verified = not result["has_more"]
+        else:
+            raise UpgradeError("unsupported_runtime_action")
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
@@ -699,7 +788,7 @@ def main(argv=None):
     require(args.dir.is_dir() and not args.dir.is_symlink(), "installation_directory_required")
     require(1 <= args.max_batches <= 100000, "invalid_batch_budget")
     if args.command == "plan":
-        return {"release_id": manifest["release_id"], "manifest_sha256": digest, "profile": PROFILE,
+        return {"release_id": manifest["release_id"], "manifest_sha256": digest, "profile": manifest["profile"],
                 "phases": list(PHASES), "authority": "legacy", "deployment_validation": "not_performed",
                 "requirements": ["stopped isolated Linux copy", "locally verified pinned Core image", "complete checksummed backup", "operator restore/receipt coverage attestations"],
                 "unsupported": ["production cutover", "cluster execution", "binary rollback", "automatic database restore", "contract deletion"]}

@@ -1,6 +1,6 @@
 # 持久升级编排：订阅影子演练
 
-`scripts/upgrade.py` 实现 `subscription-shadow/v1` 的单机隔离副本演练：签名计划、只读预检、持久意图、受控迁移、分批回填、逐户对账和崩溃恢复。它保留 `legacy` 权威，不切换生产 Writer，不启动新旧业务镜像，不删除旧表。完整 B2 的生产维护、共享集群租约、authority 切换和跨组件协议联调仍待实现和验收。
+`scripts/upgrade.py` 实现 `subscription-shadow/v1` 与 `plan-catalog-shadow/v1` 的单机隔离副本演练：签名计划、只读预检、持久意图、受控迁移、分批回填、逐对象对账和崩溃恢复。它保留 `legacy` 权威，不切换生产 Writer，不启动新旧业务镜像，不删除旧表。完整 B2 的生产维护、共享集群租约、authority 切换和跨组件协议联调仍待实现和验收。
 
 需要 Python 3.10+、OpenSSL、Linux、Docker Compose v2，以及包含 B1 影子命令的本地固定 digest Core 镜像。数据库必须是原生 `tx_*` 的隔离副本，`api.env` 同时包含 `APP_ENV=testing`（或 `local`）和 `CORE_SHADOW_ISOLATED_COPY=true`；所属 `txboard` 容器与滚动备份容器必须已停止。标记只是显式操作声明，不能自动证明连接的数据库与生产隔离，运维人员必须先核对复制目标与网络。未知数据库、`v2_*`、混合表、缺失 migration history、未知 migration/probe、生产/集群模式均拒绝。
 
@@ -103,5 +103,23 @@ Python 测试使用真实 SQLite 写入和真实子进程 kill：intent 后中�
 [真实故障脚本](../scripts/test-upgrade-docker-recovery.py) 在新副本执行 Core 批次，commit 后、journal result 写入前对 executor 发 SIGKILL。检查点仍为 `backfilling`、result 为空，Core cursor 已为 `1`；恢复后逐户对账通过、重复 mapping 为 `0`、authority 为 `legacy`、容器保持停止、旧 binary guard 保留。故障脚本需要与 `apply` 相同的显式 `--dir/--manifest/--signature/--trust-dir/--backup/--backup-evidence/--deploy-bundle` 参数，只用于全新的隔离演练副本。它不提供 fixture 删除或生产 restore。
 
 本地证据位于 `/opt/txboard-baseline/logs/upgrade-shadow-{check,apply,recover}.log` 与 `upgrade-shadow-docker-crash-recovery.log`；最后一次故障演练 Manifest SHA-256 为 `4bf03dc303cdfc5c89c40926a850d3bca880b29b5e225edc4dc88a6125c3c792`。备份、临时发布公钥和 checkpoint 位于 `/opt/txboard-baseline/upgrade-integration/`，不进入仓库。测试容器使用一个无套餐测试用户；这份证据不能代表真实匿名生产副本、所有业务例外或大规模回填验证。
+
+## B2.2：商品目录演练 profile
+
+`plan-catalog-shadow/v1` 使用相同签名、backup evidence、停止副本、互锁和持久 journal 门禁。它独立运行当前 Plan 目录捕获，不执行订阅 Terms 或财务权威切换。Manifest 的 billing context 仍必填；组件固定 digest，schema/read/write epoch 仍为 1。三个 migration 必须完整采用以下顺序，不能混用订阅 profile 的 ID：
+
+| ID | phase | checkpoint | probe | recovery |
+| --- | --- | --- | --- | --- |
+| `plan-catalog-shadow-expand-v1` | expand | ddl-step | plan-catalog-shadow-shape-v1 | probe_then_continue |
+| `plan-catalog-shadow-backfill-v1` | backfill | legacy-plan-id | plan-catalog-shadow-progress-v1 | resume_cursor |
+| `plan-catalog-shadow-verify-v1` | verify | 无 | plan-catalog-shadow-reconcile-v1 | read_only_repeat |
+
+expand 固定执行 `2026_10_12_000002_create_plan_catalog_shadow_tables.php`，检查 migration history、六张表和三个关键唯一索引；部分 DDL 仍进入 unknown，不能盲目重试。backfill 固定调用 `core:catalog-shadow --isolated-copy`，游标与证据由 Core 原子提交，未解决 exception 阻断。verify 固定调用同命令的 `--reconcile`：检查每页 read-only/current-pointer-and-offers 标记、上下文/源增长/漂移、整数游标、升序对象 ID、条数、所有对象无问题，直到 `has_more=false`。恢复每次从零对账，observe 只确认已完成核对，副本保持停止。
+
+该 report 只验证当前 revision/offers，不验证 superseded history 或部署后的实时写入追平。完整规则见 [Core 商品影子契约](https://github.com/ANRCM0/TXBoard/blob/main/contracts/v2/plan-catalog-shadow-v1.md)。本 profile 不宣称完整 B1/B2 完成。
+
+Windows/Linux 的升级测试均为 40 项通过。新增验证包括混合 profile 拒绝、部分 DDL、已提交异常、全部分页、无进展/伪清洁页拒绝，以及丢失结果后的恢复。真实 Docker/MariaDB 演练使用 committed Core `12e84357c5af2dcfba8f3f058f997aabd896d890` 的固定本地 OCI fixture；数据库 dump 在独立恢复库逐字一致。Core 批次提交后、journal result 前 SIGKILL，持久 cursor=2；恢复后重复映射为 0、全部当前商品对账通过、旧 binary guard 保留。最终严格分页 adapter 再用真实 Core 执行只读核对通过。
+
+演练 Manifest SHA-256：`a790eaf762dfa6d962e066142276aee254b37e3b26c5e5e1b416807885a0b388`；fixture OCI digest：`sha256:52c534dd4f97ca16999f2aa47a6f99828241206d1c91f83b7f41c440618ed849`。本地证据保留于 `/opt/txboard-baseline/catalog-upgrade-integration/`。它是合成数据和本地镜像演练，未使用生产发布签名、真实站点副本或 Oracle MySQL 8。
 
 MySQL 8.4 DDL/并发/恢复仍未验收，MariaDB 不替代该门禁。Redis drain、集群 fencing、生产 Writer switch、Gateway/Node 协议联调、Provider 备份/租约恢复、正式签名发行与真实生产数据副本仍缺证据；本次完成的是单机隔离影子编排切片，不能记为 B2 全阶段完成。

@@ -35,9 +35,9 @@ def connect(path):
         db.close()
 
 
-def manifest():
+def manifest(profile=upgrade.PROFILE):
     return {
-        "manifest_version": upgrade.VERSION, "profile": upgrade.PROFILE, "release_id": "fixture-shadow-1", "created_at": 1700000000,
+        "manifest_version": upgrade.VERSION, "profile": profile, "release_id": "fixture-shadow-1", "created_at": 1700000000,
         "components": {"core": {"version": "fixture-1", "artifact": "ghcr.io/anrcm0/txboard@sha256:" + "a" * 64, "required": True},
                        "deploy": {"version": "fixture-1", "archive_sha256": "b" * 64, "required": True}},
         "compatibility": {"tested_tuple": {"core": "fixture-1", "deploy": "fixture-1"}, "core_schema_read_epochs": [1], "core_schema_write_epochs": [1],
@@ -45,7 +45,7 @@ def manifest():
         "schema": {"family": "native_tx", "allowed_source_epochs": [1], "expanded_epoch": 1, "target_epoch": 1},
         "migrations": [{"id": identifier, "phase": phase, "probe": probe, "recovery": recovery,
                         **({"checkpoint": checkpoint} if checkpoint else {}), **({"from_epoch": 1, "to_epoch": 1} if phase == "expand" else {})}
-                       for identifier, (phase, probe, recovery, checkpoint) in upgrade.MIGRATIONS.items()],
+                       for identifier, (phase, probe, recovery, checkpoint) in upgrade.PROFILES[profile].items()],
         "upgrade_policy": {"mode": "isolated_shadow", "order": list(upgrade.PHASES), "old_image_allowed_after_migration": False, "contract_deferred": True},
         "backup_policy": {"required": sorted(upgrade.BACKUP_DATASETS), "checksum_required": True, "restore_rehearsal_required": True, "receipt_recovery_coverage_required": True},
         "billing": {"currency": "CNY", "billing_timezone": "Asia/Shanghai"},
@@ -449,6 +449,108 @@ class AdapterTests(unittest.TestCase):
         with patch.object(self.backend, "artisan", return_value=json.dumps(response).encode()):
             with self.assertRaisesRegex(upgrade.UpgradeError, "reconciliation_failed"):
                 self.backend.perform("subscription-shadow-verify-v1", 1, None)
+class CatalogAdapterTests(unittest.TestCase):
+    def setUp(self):
+        self.document = manifest(upgrade.CATALOG_PROFILE)
+        self.backend = upgrade.DockerShadowBackend(Path.cwd(), None, None, "c" * 64, self.document)
+
+    def test_profile_requires_its_exact_compiled_steps(self):
+        upgrade.validate_manifest(self.document)
+        mixed = copy.deepcopy(self.document)
+        mixed["migrations"] = manifest()["migrations"]
+        with self.assertRaisesRegex(upgrade.UpgradeError, "unsupported_migration_order"):
+            upgrade.validate_manifest(mixed)
+        for step in upgrade.MIGRATIONS:
+            with self.assertRaisesRegex(upgrade.UpgradeError, "unknown_migration_id"):
+                self.backend.probe(step)
+            with self.assertRaisesRegex(upgrade.UpgradeError, "unsupported_runtime_action"):
+                self.backend.perform(step, 1, None)
+
+    def test_catalog_ddl_probes_require_history_and_all_tables_and_indexes(self):
+        for tables, history, expected in [("0", "", "not_started"), ("2", "", "unknown")]:
+            with patch.object(self.backend, "sql", side_effect=[tables, history]):
+                self.assertEqual(self.backend.probe("plan-catalog-shadow-expand-v1")["status"], expected)
+        with patch.object(self.backend, "sql", side_effect=["6", upgrade.CATALOG_MIGRATION_FILE, "3"]):
+            self.assertEqual(self.backend.probe("plan-catalog-shadow-expand-v1")["status"], "applied")
+        with patch.object(self.backend, "sql", side_effect=["5", upgrade.CATALOG_MIGRATION_FILE, "3"]):
+            with self.assertRaisesRegex(upgrade.UpgradeError, "catalog_schema_shape_mismatch"):
+                self.backend.probe("plan-catalog-shadow-expand-v1")
+
+    def test_catalog_committed_exception_blocks_resume(self):
+        with patch.object(self.backend, "sql", return_value="1"):
+            with self.assertRaisesRegex(upgrade.UpgradeError, "core_catalog_source_conflict"):
+                self.backend.probe("plan-catalog-shadow-backfill-v1")
+        with patch.object(self.backend, "sql", side_effect=["0", "complete 3 3 3"]):
+            result = self.backend.probe("plan-catalog-shadow-backfill-v1")
+            self.assertEqual(result["status"], "applied")
+            self.assertEqual(result["checkpoint"]["cursor_plan_id"], "3")
+            upgrade.validate_observation(result)
+
+    def test_catalog_uses_fixed_migration_and_capture_argv(self):
+        with patch.object(self.backend, "artisan") as call:
+            self.backend.perform("plan-catalog-shadow-expand-v1", 1, None)
+            call.assert_called_once_with("migrate", "--force", "--path=database/migrations/" + upgrade.CATALOG_MIGRATION_FILE + ".php")
+        response = {"run_key": self.document["release_id"], "unresolved_count": "0", "results": [{"status": "mapped"}]}
+        with patch.object(self.backend, "artisan", return_value=json.dumps(response).encode()) as call:
+            self.backend.perform("plan-catalog-shadow-backfill-v1", 1, None)
+            self.assertEqual(call.call_args.args[0], "core:catalog-shadow")
+            self.assertIn("--isolated-copy", call.call_args.args)
+            self.assertIn("--currency=CNY", call.call_args.args)
+
+    def response(self, after="0", next_id="1", more=True):
+        return {"run_key": self.document["release_id"], "scope": "current-pointer-and-offers", "read_only": True,
+            "page_ok": True, "global_issues": [], "mismatch_count": "0", "unresolved_count": "0",
+            "after_id": after, "next_after_id": next_id, "checked_count": "1", "has_more": more,
+            "high_water_plan_id": "2", "source_high_water_plan_id": "2",
+            "results": [{"legacy_plan_id": next_id, "ok": True, "issues": []}]}
+
+    def test_catalog_reads_all_pages_and_recovery_starts_verification_at_zero(self):
+        for response in [self.response(), self.response("1", "2", False)]:
+            with patch.object(self.backend, "artisan", return_value=json.dumps(response).encode()) as call:
+                self.backend.perform("plan-catalog-shadow-verify-v1", 1, None)
+                self.assertIn("--after-id=" + response["after_id"], call.call_args.args)
+        self.assertTrue(self.backend.verified)
+        self.assertEqual(self.backend.verify_count, 2)
+        self.assertEqual(self.backend.probe("plan-catalog-shadow-observe-v1")["status"], "applied")
+        restarted = upgrade.DockerShadowBackend(Path.cwd(), None, None, "c" * 64, self.document)
+        self.assertEqual(restarted.verify_cursor, "0")
+        self.assertFalse(restarted.verified)
+
+    def test_catalog_refuses_false_clean_page_drift_and_nonadvancing_cursor(self):
+        for changes in [{"global_issues": ["CATALOG_HIGH_WATER_GROWTH"]}, {"page_ok": False},
+            {"scope": "historical"}, {"read_only": False}, {"after_id": "1"}, {"next_after_id": "0"},
+            {"checked_count": "2"}, {"high_water_plan_id": "0"}, {"source_high_water_plan_id": "3"},
+            {"results": [{"legacy_plan_id": "0", "ok": True, "issues": []}]},
+            {"results": [{"ok": False, "issues": ["CATALOG_OFFER_FIELDS_MISMATCH"]}]}]:
+            response = self.response() | changes
+            with patch.object(self.backend, "artisan", return_value=json.dumps(response).encode()):
+                with self.assertRaises(upgrade.UpgradeError):
+                    self.backend.perform("plan-catalog-shadow-verify-v1", 1, None)
+            self.assertFalse(self.backend.verified)
+
+    def test_catalog_runner_recovers_committed_batch_without_repeating_capture(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            def crash(event, step):
+                if event == "after_side_effect" and step == "plan-catalog-shadow-backfill-v1":
+                    raise RuntimeError("simulated lost result")
+            with upgrade.InstallLock(root):
+                journal = upgrade.Journal(root)
+                try:
+                    with self.assertRaisesRegex(RuntimeError, "simulated lost result"):
+                        upgrade.Runner(journal, FixtureBackend(root), self.document, "c" * 64, hook=crash).execute()
+                finally: journal.close()
+            with upgrade.InstallLock(root):
+                journal = upgrade.Journal(root)
+                try:
+                    report = upgrade.Runner(journal, FixtureBackend(root), self.document, "c" * 64).execute(recover=True)
+                finally: journal.close()
+            self.assertEqual(report["status"], "completed")
+            self.assertEqual(report["steps"][-1]["step"], "plan-catalog-shadow-observe-v1")
+            with connect(root / "fixture.sqlite3") as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM shadow").fetchone()[0], 3)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM calls WHERE step='plan-catalog-shadow-backfill-v1'").fetchone()[0], 3)
+
 class BackupTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
