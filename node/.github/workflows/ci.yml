@@ -1,0 +1,72 @@
+name: installer-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - deploy.sh
+      - tests/**
+      - .github/workflows/ci.yml
+  pull_request:
+    paths:
+      - deploy.sh
+      - tests/**
+      - .github/workflows/ci.yml
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Bash syntax
+        run: |
+          bash -n deploy.sh
+          bash -n tests/install_args_test.sh
+          bash -n tests/deploy_multi_instance_test.sh
+          bash -n tests/remote_update_bridge_test.sh
+          bash -n tests/legacy_cleanup_test.sh
+          bash -n tests/image_channel_test.sh
+      - name: Test non-interactive install arguments
+        run: bash tests/install_args_test.sh
+      - name: Smoke canonical mount against legacy-style image layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/legacy-layout.Dockerfile <<'EOF'
+          FROM alpine:3.20
+          RUN mkdir -p /etc/xboard-node
+          WORKDIR /etc/xboard-node
+          CMD ["cat", "/etc/xboard-node/config.yml"]
+          EOF
+          docker build -q -t txnode-legacy-layout-smoke -f /tmp/legacy-layout.Dockerfile /tmp
+          cfg="$(mktemp)"
+          printf 'canonical-mount-ok\n' > "$cfg"
+          output="$(docker run --rm -v "$cfg:/etc/txnode/config.yml:ro" txnode-legacy-layout-smoke cat /etc/txnode/config.yml)"
+          test "$output" = "canonical-mount-ok"
+          data_dir="$(mktemp -d)"
+          docker run --rm -v "$data_dir:/etc/txnode" -v "$cfg:/etc/txnode/config.yml:ro" \
+            txnode-legacy-layout-smoke sh -c 'cat /etc/txnode/config.yml; printf "pending-batch\n" > /etc/txnode/.traffic.pending.json' \
+            | grep -q "canonical-mount-ok"
+          test "$(cat "$data_dir/.traffic.pending.json")" = "pending-batch"
+          # A recreated container must see pending traffic even though the YAML stays read-only.
+          output="$(docker run --rm -v "$data_dir:/etc/txnode" -v "$cfg:/etc/txnode/config.yml:ro" \
+            txnode-legacy-layout-smoke cat /etc/txnode/.traffic.pending.json)"
+          test "$output" = "pending-batch"
+      - name: Test multi-panel and isolated installer flows
+        run: bash tests/deploy_multi_instance_test.sh
+      - name: Test runtime image channel switching and rollback
+        run: bash tests/image_channel_test.sh
+      - name: Test bounded remote runtime update bridge
+        run: bash tests/remote_update_bridge_test.sh
+      - name: Test legacy runtime cleanup
+        run: bash tests/legacy_cleanup_test.sh
+      - name: Enforce public distribution boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'ghcr.io/anrcm0/tx-node:latest' deploy.sh
+          grep -q 'ANRCM0/TX-Node-Installer' deploy.sh
+          if grep -q 'raw.githubusercontent.com/ANRCM0/TX-Node/main/deploy.sh' deploy.sh; then
+            echo "deploy.sh still depends on the source repository" >&2
+            exit 1
+          fi
