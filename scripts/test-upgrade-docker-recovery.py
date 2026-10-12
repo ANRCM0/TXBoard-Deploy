@@ -29,7 +29,8 @@ def main():
     upgrade.require(os.name == "posix", "real_docker_test_requires_linux")
     manifest, digest = upgrade.load_signed_manifest(args.manifest, args.signature, args.trust_dir)
     catalog = manifest["profile"] == upgrade.CATALOG_PROFILE
-    backfill_step = "plan-catalog-shadow-backfill-v1" if catalog else "subscription-shadow-backfill-v1"
+    commerce = manifest["profile"] == upgrade.COMMERCE_PROFILE
+    backfill_step = "commerce-shadow-backfill-v1" if commerce else "plan-catalog-shadow-backfill-v1" if catalog else "subscription-shadow-backfill-v1"
     cursor_field = "cursor_plan_id" if catalog else "cursor_user_id"
     backend = upgrade.DockerShadowBackend(args.dir, args.backup, args.backup_evidence, digest, manifest, args.deploy_bundle)
     if args.fault_child:
@@ -80,12 +81,24 @@ def main():
             journal.close()
     upgrade.require(report["status"] == "completed", "recovery_not_completed")
     upgrade.require((args.dir / ".upgrade-in-progress").is_file(), "binary_guard_not_retained")
-    duplicate = backend.sql("SELECT COUNT(*) FROM (SELECT legacy_plan_id FROM tx_plan_catalog_shadow GROUP BY legacy_plan_id HAVING COUNT(*)>1) duplicate_maps" if catalog else
-        "SELECT COUNT(*) FROM (SELECT legacy_user_id FROM tx_legacy_subscription_map GROUP BY legacy_user_id HAVING COUNT(*)>1) duplicate_maps")
+    duplicate_queries = {
+        upgrade.PROFILE: "SELECT COUNT(*) FROM (SELECT legacy_user_id FROM tx_legacy_subscription_map GROUP BY legacy_user_id HAVING COUNT(*)>1) duplicate_maps",
+        upgrade.CATALOG_PROFILE: "SELECT COUNT(*) FROM (SELECT legacy_plan_id FROM tx_plan_catalog_shadow GROUP BY legacy_plan_id HAVING COUNT(*)>1) duplicate_maps",
+        upgrade.COMMERCE_PROFILE: "SELECT COUNT(*) FROM (SELECT legacy_user_id,currency FROM tx_commerce_shadow_user_opening GROUP BY legacy_user_id,currency HAVING COUNT(*)>1) duplicate_maps",
+    }
+    duplicate = backend.sql(duplicate_queries[manifest["profile"]])
     upgrade.require(duplicate == "0", "duplicate_legacy_mapping")
+    financial_evidence = None
+    if commerce:
+        duplicate_journals = backend.sql("SELECT COUNT(*) FROM (SELECT business_type,business_ref,idempotency_key FROM tx_commerce_shadow_money_journal GROUP BY business_type,business_ref,idempotency_key HAVING COUNT(*)>1) duplicate_journals")
+        unbalanced = backend.sql("SELECT COUNT(*) FROM (SELECT journal_id,currency,SUM(CASE WHEN side='debit' THEN amount_minor ELSE -amount_minor END) net,COUNT(*) posting_count FROM tx_commerce_shadow_money_posting GROUP BY journal_id,currency HAVING net<>0 OR posting_count<2) unbalanced")
+        upgrade.require(duplicate_journals == "0" and unbalanced == "0", "commerce_journal_recovery_failed")
+        financial_evidence = {"duplicate_journals": duplicate_journals, "unbalanced_journals": unbalanced,
+            "checked_count": report["steps"][-1]["result"]["checkpoint"]["checked_count"]}
     print(json.dumps({"profile": manifest["profile"], "result": "passed", "fault": "SIGKILL after Core batch commit before journal result",
                       "core_cursor_after_kill": durable["checkpoint"][cursor_field], "manifest_sha256": digest,
-                      "authority": "legacy", "duplicate_maps": "0", "binary_guard_retained": True, "target_digest": report["source"]["target_digest"]}, indent=2))
+                      "authority": "legacy", "duplicate_maps": "0", "binary_guard_retained": True,
+                      "financial_evidence": financial_evidence, "target_digest": report["source"]["target_digest"]}, indent=2))
 
 
 if __name__ == "__main__":

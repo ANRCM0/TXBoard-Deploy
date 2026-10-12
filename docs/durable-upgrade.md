@@ -1,6 +1,6 @@
-# 持久升级编排：订阅影子演练
+# 持久升级编排：影子证据演练
 
-`scripts/upgrade.py` 实现 `subscription-shadow/v1` 与 `plan-catalog-shadow/v1` 的单机隔离副本演练：签名计划、只读预检、持久意图、受控迁移、分批回填、逐对象对账和崩溃恢复。它保留 `legacy` 权威，不切换生产 Writer，不启动新旧业务镜像，不删除旧表。完整 B2 的生产维护、共享集群租约、authority 切换和跨组件协议联调仍待实现和验收。
+`scripts/upgrade.py` 实现 `subscription-shadow/v1`、`plan-catalog-shadow/v1` 与 `commerce-shadow/v1` 的单机隔离副本演练：签名计划、只读预检、持久意图、受控迁移、分批回填、逐对象对账和崩溃恢复。它保留 `legacy` 权威，不切换生产 Writer，不启动新旧业务镜像，不删除旧表。完整 B2 的生产维护、共享集群租约、authority 切换和跨组件协议联调仍待实现和验收。
 
 需要 Python 3.10+、OpenSSL、Linux、Docker Compose v2，以及包含 B1 影子命令的本地固定 digest Core 镜像。数据库必须是原生 `tx_*` 的隔离副本，`api.env` 同时包含 `APP_ENV=testing`（或 `local`）和 `CORE_SHADOW_ISOLATED_COPY=true`；所属 `txboard` 容器与滚动备份容器必须已停止。标记只是显式操作声明，不能自动证明连接的数据库与生产隔离，运维人员必须先核对复制目标与网络。未知数据库、`v2_*`、混合表、缺失 migration history、未知 migration/probe、生产/集群模式均拒绝。
 
@@ -121,5 +121,23 @@ expand 固定执行 `2026_10_12_000002_create_plan_catalog_shadow_tables.php`，
 Windows/Linux 的升级测试均为 40 项通过。新增验证包括混合 profile 拒绝、部分 DDL、已提交异常、全部分页、无进展/伪清洁页拒绝，以及丢失结果后的恢复。真实 Docker/MariaDB 演练使用 committed Core `12e84357c5af2dcfba8f3f058f997aabd896d890` 的固定本地 OCI fixture；数据库 dump 在独立恢复库逐字一致。Core 批次提交后、journal result 前 SIGKILL，持久 cursor=2；恢复后重复映射为 0、全部当前商品对账通过、旧 binary guard 保留。最终严格分页 adapter 再用真实 Core 执行只读核对通过。
 
 演练 Manifest SHA-256：`a790eaf762dfa6d962e066142276aee254b37e3b26c5e5e1b416807885a0b388`；fixture OCI digest：`sha256:52c534dd4f97ca16999f2aa47a6f99828241206d1c91f83b7f41c440618ed849`。本地证据保留于 `/opt/txboard-baseline/catalog-upgrade-integration/`。它是合成数据和本地镜像演练，未使用生产发布签名、真实站点副本或 Oracle MySQL 8。
+
+## B2.3：期初余额与订单证据演练 profile
+
+`commerce-shadow/v1` 捕获当前用户的 wallet/commission 期初平衡分录及当前订单证据，使用同一签名、备份、停止副本与持久 journal 门禁。它消费 [Core 财务影子契约](https://github.com/ANRCM0/TXBoard/blob/main/contracts/v2/commerce-shadow-v1.md)，不发行付款、退款或真实 ledger 操作。三个 migration 必须采用以下顺序：
+
+| ID | phase | checkpoint | probe | recovery |
+| --- | --- | --- | --- | --- |
+| `commerce-shadow-expand-v1` | expand | ddl-step | commerce-shadow-shape-v1 | probe_then_continue |
+| `commerce-shadow-backfill-v1` | backfill | legacy-user-order-id | commerce-shadow-progress-v1 | resume_cursor |
+| `commerce-shadow-verify-v1` | verify | 无 | commerce-shadow-reconcile-v1 | read_only_repeat |
+
+expand 固定执行 `2026_10_12_000004_create_commerce_shadow_tables.php`，探测 history、七张表与七个关键唯一索引；部分 DDL 仍要求调查。backfill 仅调用 `core:commerce-shadow --isolated-copy`，`run` 与 `snapshot` 固定为本次 release ID，currency 来自签名 Manifest。两个 Core 游标及证据原子提交；任何未解决 exception 阻断恢复，不自动重试或覆盖变动证据。
+
+verify 先完整扫描 user，再从零扫描 order。每页检查只读范围、snapshot/currency、固定 context hash/checkpoint version、双 high-water、无源增长/全局异常、升序 ID、条数与整数游标，两个对象类型均结束才允许 observe。进程重启后重新执行全部只读页，成功演练也保留旧 binary guard。分批核对依赖 writer 已停止的隔离副本，不证明实时跨页快照一致性。
+
+Windows/Linux 最终升级套件均为 48 项通过。真实 Docker/Core `7622cab092a43fd07f901f6d3665d743f2146743`/MariaDB 演练使用一名有钱包和佣金余额的合成用户及一笔订单，独立恢复库 dump 字节相等。Core user 批次提交后、journal result 前 SIGKILL；恢复继续订单游标并完成两个对象类型核对，checked count 为 2，重复 opening、重复 journal、不平衡 journal 均为 0，旧 binary guard 保留。
+
+最终演练 Manifest SHA-256：`fd98d5b4efd09c62dd261d54040b8ba124b7653417094eb3d782d07cc045633c`；fixture OCI digest：`sha256:8f074bbaf7b2011a833b24ce2ff5fdae98b4971da2cb5a3aa3177990da43b310`。结果、签名、备份和 journal 保留在 `/opt/txboard-baseline/commerce-upgrade-rerun/`。首次演练恢复成功后，验证 SQL 使用 MariaDB 保留字导致结果脚本失败；修正别名后使用新的数据库/目录完整重跑，原证据保留于 `/opt/txboard-baseline/commerce-upgrade-integration/`。
 
 MySQL 8.4 DDL/并发/恢复仍未验收，MariaDB 不替代该门禁。Redis drain、集群 fencing、生产 Writer switch、Gateway/Node 协议联调、Provider 备份/租约恢复、正式签名发行与真实生产数据副本仍缺证据；本次完成的是单机隔离影子编排切片，不能记为 B2 全阶段完成。

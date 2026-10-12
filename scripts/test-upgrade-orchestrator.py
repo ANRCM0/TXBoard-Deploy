@@ -551,6 +551,124 @@ class CatalogAdapterTests(unittest.TestCase):
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM shadow").fetchone()[0], 3)
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM calls WHERE step='plan-catalog-shadow-backfill-v1'").fetchone()[0], 3)
 
+class CommerceAdapterTests(unittest.TestCase):
+    def setUp(self):
+        self.document = manifest(upgrade.COMMERCE_PROFILE)
+        self.backend = upgrade.DockerShadowBackend(Path.cwd(), None, None, "c" * 64, self.document)
+
+    def response(self, aggregate="user", after="0", cursor="1", more=False):
+        return {"run_key": self.document["release_id"], "mode": "isolated_shadow", "legacy_authority": "retained",
+            "read_only": True, "scope": "current-user-order-evidence", "aggregate_type": aggregate,
+            "snapshot_key": self.document["release_id"], "currency": "CNY", "page_ok": True,
+            "global_issues": [], "difference_count": "0", "unresolved_count": "0", "has_more": more,
+            "after_cursor": after, "cursor": cursor, "checked_count": "1", "high_water_id": "2",
+            "run_phase": "complete", "context_hash": "f" * 64, "checkpoint_version": "3",
+            "high_water_user_id": "2", "high_water_order_id": "2", "source_high_water_user_id": "2", "source_high_water_order_id": "2",
+            "results": [{"aggregate_type": aggregate, "legacy_id": cursor, "status": "match", "differences": []}]}
+
+    def test_commerce_profile_rejects_other_profile_steps_and_requires_full_ddl_probe(self):
+        upgrade.validate_manifest(self.document)
+        for profile in (upgrade.PROFILE, upgrade.CATALOG_PROFILE):
+            wrong = copy.deepcopy(self.document); wrong["migrations"] = manifest(profile)["migrations"]
+            with self.assertRaisesRegex(upgrade.UpgradeError, "unsupported_migration_order"):
+                upgrade.validate_manifest(wrong)
+            for step in upgrade.PROFILES[profile]:
+                with self.assertRaisesRegex(upgrade.UpgradeError, "unknown_migration_id"):
+                    self.backend.probe(step)
+        with patch.object(self.backend, "sql", side_effect=["3", ""]):
+            self.assertEqual(self.backend.probe("commerce-shadow-expand-v1")["status"], "unknown")
+        with patch.object(self.backend, "sql", side_effect=["7", upgrade.COMMERCE_MIGRATION_FILE, "7"]):
+            self.assertEqual(self.backend.probe("commerce-shadow-expand-v1")["status"], "applied")
+        with patch.object(self.backend, "sql", side_effect=["7", upgrade.COMMERCE_MIGRATION_FILE, "6"]):
+            with self.assertRaisesRegex(upgrade.UpgradeError, "commerce_schema_shape_mismatch"):
+                self.backend.probe("commerce-shadow-expand-v1")
+
+    def test_committed_financial_exception_or_invalid_two_cursors_block_resume(self):
+        with patch.object(self.backend, "sql", return_value="1"):
+            with self.assertRaisesRegex(upgrade.UpgradeError, "core_commerce_source_conflict"):
+                self.backend.probe("commerce-shadow-backfill-v1")
+        for progress in ("processing 3 0 2 2 3", "complete 2 3 2 2 4", "wrong 0 0 2 2 0"):
+            with patch.object(self.backend, "sql", side_effect=["0", progress]):
+                with self.assertRaisesRegex(upgrade.UpgradeError, "invalid_core_commerce_checkpoint"):
+                    self.backend.probe("commerce-shadow-backfill-v1")
+        with patch.object(self.backend, "sql", side_effect=["0", "processing 2 1 2 2 3"]):
+            progress = self.backend.probe("commerce-shadow-backfill-v1")
+            self.assertEqual(progress["status"], "partial"); upgrade.validate_observation(progress)
+            self.assertEqual(progress["checkpoint"]["cursor_order_id"], "1")
+
+    def test_capture_uses_release_bound_context_and_never_retries_an_exception(self):
+        result = {"run_key": self.document["release_id"], "mode": "isolated_shadow", "legacy_authority": "retained",
+            "unresolved_count": "0", "results": [{"status": "mapped"}]}
+        with patch.object(self.backend, "artisan", return_value=json.dumps(result).encode()) as call:
+            self.backend.perform("commerce-shadow-backfill-v1", 1, None)
+            self.assertIn("--snapshot=" + self.document["release_id"], call.call_args.args)
+            self.assertIn("--currency=CNY", call.call_args.args)
+        result["results"] = [{"status": "exception"}]
+        with patch.object(self.backend, "artisan", return_value=json.dumps(result).encode()):
+            with self.assertRaisesRegex(upgrade.UpgradeError, "core_commerce_source_conflict"):
+                self.backend.perform("commerce-shadow-backfill-v1", 1, None)
+
+    def test_both_user_and_order_pages_required_and_restart_discards_prior_verification(self):
+        pages = [self.response(more=True), self.response(after="1", cursor="2"), self.response("order")]
+        for i, page in enumerate(pages):
+            with patch.object(self.backend, "artisan", return_value=json.dumps(page).encode()) as call:
+                self.backend.perform("commerce-shadow-verify-v1", 1, None)
+                self.assertIn("--reconcile=" + page["aggregate_type"], call.call_args.args)
+                self.assertIn("--snapshot=" + self.document["release_id"], call.call_args.args)
+            self.assertEqual(self.backend.verified, i == 2)
+        self.assertEqual(self.backend.verify_count, 3)
+        self.assertEqual(self.backend.probe("commerce-shadow-observe-v1")["status"], "applied")
+        restarted = upgrade.DockerShadowBackend(Path.cwd(), None, None, "c" * 64, self.document)
+        self.assertEqual((restarted.verify_aggregate, restarted.verify_cursor), ("user", "0"))
+        with self.assertRaisesRegex(upgrade.UpgradeError, "reconciliation_required"):
+            restarted.probe("commerce-shadow-observe-v1")
+
+    def test_clean_empty_user_page_still_requires_order_verification(self):
+        for aggregate in ("user", "order"):
+            response = self.response(aggregate) | {"cursor": "0", "checked_count": "0", "results": []}
+            with patch.object(self.backend, "artisan", return_value=json.dumps(response).encode()):
+                self.backend.perform("commerce-shadow-verify-v1", 1, None)
+            self.assertEqual(self.backend.verified, aggregate == "order")
+
+    def test_partial_clean_pages_context_tampering_or_invalid_cursor_never_complete(self):
+        for changes in ({"global_issues": ["COMMERCE_SCAN_INCOMPLETE"]}, {"unresolved_count": "1"},
+            {"snapshot_key": "different-copy"}, {"currency": "USD"}, {"read_only": False}, {"aggregate_type": "order"},
+            {"page_ok": False}, {"after_cursor": "1"}, {"has_more": True, "cursor": "0"},
+            {"source_high_water_order_id": "3"}, {"run_phase": "processing"}, {"context_hash": "untrusted"},
+            {"checked_count": "2"}, {"results": [{"aggregate_type": "user", "legacy_id": "1", "status": "different", "differences": ["damage"]}]}):
+            with patch.object(self.backend, "artisan", return_value=json.dumps(self.response() | changes).encode()):
+                with self.assertRaises(upgrade.UpgradeError): self.backend.perform("commerce-shadow-verify-v1", 1, None)
+            self.assertFalse(self.backend.verified)
+
+    def test_run_context_or_checkpoint_changes_between_clean_pages_are_refused(self):
+        with patch.object(self.backend, "artisan", return_value=json.dumps(self.response(more=True)).encode()):
+            self.backend.perform("commerce-shadow-verify-v1", 1, None)
+        for change in ({"checkpoint_version": "4"}, {"context_hash": "a" * 64}, {"high_water_user_id": "3"}):
+            response = self.response(after="1", cursor="2") | change
+            with patch.object(self.backend, "artisan", return_value=json.dumps(response).encode()):
+                with self.assertRaisesRegex(upgrade.UpgradeError, "core_commerce_context_changed"):
+                    self.backend.perform("commerce-shadow-verify-v1", 1, None)
+        self.assertFalse(self.backend.verified)
+
+    def test_lost_result_recovers_committed_financial_capture_and_repeats_read_only_verification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            def crash(event, step):
+                if event == "after_side_effect" and step == "commerce-shadow-backfill-v1": raise RuntimeError("lost result")
+            for recover in (False, True):
+                with upgrade.InstallLock(root):
+                    journal = upgrade.Journal(root)
+                    try:
+                        runner = upgrade.Runner(journal, FixtureBackend(root), self.document, "c" * 64, hook=None if recover else crash)
+                        if recover: report = runner.execute(recover=True)
+                        else:
+                            with self.assertRaisesRegex(RuntimeError, "lost result"): runner.execute()
+                    finally: journal.close()
+            self.assertEqual(report["status"], "completed")
+            self.assertEqual(report["steps"][-1]["step"], "commerce-shadow-observe-v1")
+            with connect(root / "fixture.sqlite3") as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM calls WHERE step='commerce-shadow-backfill-v1'").fetchone()[0], 3)
+
 class BackupTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
