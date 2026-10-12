@@ -41,7 +41,7 @@ bash -c '
   grep -Fxq "  type: \"singbox\"" "$CONFIG_FILE"
   grep -Fxq "  enabled: false" "$CONFIG_FILE"
 
-  grep -Fxq "    image: ghcr.io/anrcm0/tx-node:dev" "$COMPOSE_FILE"
+  grep -Fxq "    image: ghcr.io/anrcm0/txboard-node:dev" "$COMPOSE_FILE"
   grep -Fxq "    network_mode: host" "$COMPOSE_FILE"
   grep -Fxq "    command: [\"-c\", \"/etc/txnode/config.yml\"]" "$COMPOSE_FILE"
   grep -Fxq "      - $INSTALL_DIR/data:/etc/txnode" "$COMPOSE_FILE"

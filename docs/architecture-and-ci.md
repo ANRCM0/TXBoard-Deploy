@@ -36,6 +36,7 @@ Deploy 仓库只依赖以下稳定运行接口：
 - Bash 语法（install / update / manager）
 - 三组件 literal 参数透传、实际文件 materialization 与旧 Core/Node 入口兼容
 - Gateway 合成 Docker 生命周期、失败回滚/恢复、归属、锁及私密配置
+- 独立 `gateway-docker` job 拉取固定发布 Gateway 镜像，核对 OCI revision 完整 SHA，再验证真实容器配置、health、启停和本地坏镜像触发的 image-ID 回滚（不连 Core 业务）
 - 合并后的 Node Installer 五套原 shell 回归（不执行 Node binary）
 - 非交互 render-only 安装
 - 内置 / 宿主机 Docker / 外部数据库 Compose 渲染

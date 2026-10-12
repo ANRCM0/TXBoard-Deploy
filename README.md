@@ -28,7 +28,7 @@ sudo bash install.sh
 | MCP | 主 TXBoard 镜像内置的可选 MCP Gateway，默认关闭 |
 | Core 镜像 | `ghcr.io/anrcm0/txboard-core`；已有 `txboard` 配置继续沿用原仓库 |
 | Gateway 镜像 | `ghcr.io/anrcm0/txboard-gateway`，独立 Native Gateway |
-| Node 镜像 | `ghcr.io/anrcm0/tx-node`，保留 stable/dev 渠道与 txnode 管理入口 |
+| Node 镜像 | `ghcr.io/anrcm0/txboard-node`，保留 stable/dev 渠道与 txnode 管理入口 |
 
 无参数 `install.sh` 仍进入 Core 安装向导。独立 Gateway 和 Node 使用同一入口：
 

@@ -8,7 +8,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 export APP_NAME="tx-node-test"
 export INSTALL_DIR="$TMP_ROOT/txnode"
 export CLI_LINK="$TMP_ROOT/txnode-cli"
-export IMAGE="ghcr.io/anrcm0/tx-node:latest"
+export IMAGE="ghcr.io/anrcm0/txboard-node:latest"
 
 # shellcheck source=../deploy.sh
 source "$ROOT_DIR/deploy.sh"
@@ -25,7 +25,7 @@ YAML
 cat > "$COMPOSE_FILE" <<EOF
 services:
   tx-node:
-    image: ghcr.io/anrcm0/tx-node:latest
+    image: ghcr.io/anrcm0/txboard-node:latest
     container_name: $APP_NAME
     restart: unless-stopped
     network_mode: host
@@ -51,7 +51,7 @@ echo "[test] old Compose config target remains repairable"
 cat > "$COMPOSE_FILE" <<EOF
 services:
   tx-node:
-    image: ghcr.io/anrcm0/tx-node:latest
+    image: ghcr.io/anrcm0/txboard-node:latest
     container_name: $APP_NAME
     restart: unless-stopped
     network_mode: host
@@ -128,7 +128,7 @@ fi
 [ "$(grep -c '^message=' "$REMOTE_UPDATE_STATUS")" -eq 1 ]
 
 echo "[test] custom compose image disables remote updater"
-sed -i 's#ghcr.io/anrcm0/tx-node:latest#example.invalid/custom:latest#' "$COMPOSE_FILE"
+sed -i 's#ghcr.io/anrcm0/txboard-node:latest#example.invalid/custom:latest#' "$COMPOSE_FILE"
 if remote_update_compose_supported; then
   echo "custom image unexpectedly eligible" >&2
   exit 1

@@ -6,9 +6,11 @@ set -Eeuo pipefail
 umask 077
 repo="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 image="${TXBOARD_GATEWAY_TEST_IMAGE:?explicit fixed published Gateway image is required}"
-[[ "$image" =~ ^ghcr\.io/anrcm0/txboard-gateway:dev-sha-[a-f0-9]{12,40}$ ||
-   "$image" =~ ^ghcr\.io/anrcm0/txboard-gateway@sha256:[a-f0-9]{64}$ ]] ||
-  { printf 'Use an explicit immutable release identity, not latest/dev\n' >&2; exit 1; }
+[[ "$image" =~ ^ghcr\.io/anrcm0/txboard-gateway:dev-sha-[a-f0-9]{12,40}$ ]] ||
+  { printf 'This tag-changing rollback test requires a fixed dev-sha tag, not latest/dev/digest\n' >&2; exit 1; }
+expected_revision="${TXBOARD_GATEWAY_TEST_REVISION:-}"
+[[ -z "$expected_revision" || "$expected_revision" =~ ^[a-f0-9]{40}$ ]] ||
+  { printf 'Expected OCI revision must be a complete lowercase commit SHA\n' >&2; exit 1; }
 real_docker="$(command -v docker)"
 [[ -x "$real_docker" ]] || exit 1
 "$real_docker" compose version >/dev/null
@@ -57,6 +59,11 @@ PY
 dc() { "$real_docker" compose --project-directory "$dir" -p "$project" --env-file "$dir/.env" -f "$dir/compose.yaml" "$@"; }
 id="$(dc ps -a -q gateway)"
 old_id="$("$real_docker" inspect --format '{{.Image}}' "$id")"
+if [[ -n "$expected_revision" ]]; then
+  installed_revision="$("$real_docker" image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$old_id")"
+  [[ "$installed_revision" == "$expected_revision" ]] ||
+    { printf 'Installed Gateway image OCI revision mismatch\n' >&2; exit 1; }
+fi
 "$real_docker" inspect --format '{{json .Config.Env}}' "$id" | python3 -c '
 import json,sys
 env=dict(x.split("=",1) for x in json.load(sys.stdin) if "=" in x)
@@ -112,4 +119,6 @@ bash "$dir/gateway.sh" remove --dir "$dir" --yes
 [[ -z "$(dc ps -a -q gateway)" ]]
 [[ -f "$dir/.env" && -f "$dir/gateway.env" && -f "$dir/gateway.sh" ]]
 printf 'Actual fixed Gateway image: environment/health/stop/start/failure rollback/remove passed\n'
+printf 'Gateway tested reference: %s\nRetained runtime image ID: %s\n' "$image" "$old_id"
+[[ -z "$expected_revision" ]] || printf 'Verified installed OCI revision: %s\n' "$expected_revision"
 printf 'Upstream deliberately unavailable; no Core business, Node, TLS or production acceptance claim\n'

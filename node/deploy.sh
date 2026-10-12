@@ -42,7 +42,7 @@ BACKUP_DIR="$INSTALL_DIR/backups"
 # Persist default kernel.config_dir (/etc/txnode) independently of the read-only YAML mount.
 DATA_DIR="$INSTALL_DIR/data"
 DATA_CONTAINER_DIR="/etc/txnode"
-IMAGE="${IMAGE:-ghcr.io/anrcm0/tx-node:latest}"
+IMAGE="${IMAGE:-ghcr.io/anrcm0/txboard-node:latest}"
 CLI_LINK="${CLI_LINK:-/usr/local/bin/txnode}"
 TXNODE_HEALTH_PORT="${TXNODE_HEALTH_PORT:-}"
 ISOLATED_ROOT_BASE="${TXNODE_ISOLATED_ROOT_BASE:-/etc/txnode}"
@@ -91,7 +91,9 @@ REMOTE_UPDATE_REQUEST="$REMOTE_UPDATE_DIR/request.env"
 REMOTE_UPDATE_STATUS="$REMOTE_UPDATE_DIR/status.env"
 REMOTE_UPDATE_CAPABILITIES="$REMOTE_UPDATE_DIR/capabilities.env"
 REMOTE_UPDATE_CONTAINER_DIR="/run/txnode-update"
-REMOTE_UPDATE_IMAGE_PREFIX="ghcr.io/anrcm0/tx-node"
+# Canonical OCI package only. A pre-existing Compose image is never rewritten
+# merely by loading this script; old/custom repositories need operator review.
+REMOTE_UPDATE_IMAGE_PREFIX="ghcr.io/anrcm0/txboard-node"
 
 
 # 运行模式：docker | legacy | none，由 detect_deploy_mode 填充
@@ -3246,7 +3248,7 @@ do_purge() {
 
   echo
   ok "彻底清除完成，系统已恢复干净状态"
-  hint "如需重新部署: bash <(curl -fsSL https://raw.githubusercontent.com/ANRCM0/TX-Node-Installer/main/deploy.sh)"
+  hint "如需重新部署: bash <(curl -fsSL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/node/deploy.sh)"
 }
 
 # ════════════════════════════════════════════════════════════════════

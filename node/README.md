@@ -50,7 +50,7 @@ TXBoard
   -> this Installer's existing upgrade runtime
 ```
 
-The TX-Node container does **not** receive the Docker socket and TXBoard does not receive SSH or shell access. The bridge accepts only the fixed `latest` target for the official `ghcr.io/anrcm0/tx-node:latest` deployment.
+The TX-Node container does **not** receive the Docker socket and TXBoard does not receive SSH or shell access. The bridge accepts only the bounded `latest` / `dev` targets for official `ghcr.io/anrcm0/txboard-node:latest` / `:dev` deployments.
 
 Manual upgrades remain supported:
 
@@ -65,16 +65,18 @@ Older installs remain compatible; if the bridge is unavailable, TXBoard should s
 The runtime image defaults to:
 
 ```text
-ghcr.io/anrcm0/tx-node:latest
+ghcr.io/anrcm0/txboard-node:latest
 ```
 
 
 ## 镜像渠道（Stable / Dev）
 
-本安装器只允许使用官方镜像：
+官方 stable/dev 渠道使用以下镜像：
 
-- **稳定版**：`ghcr.io/anrcm0/tx-node:latest`，默认安装和生产升级渠道。
-- **开发版**：`ghcr.io/anrcm0/tx-node:dev`，仅用于测试联调。
+- **稳定版**：`ghcr.io/anrcm0/txboard-node:latest`，默认安装和生产升级渠道。
+- **开发版**：`ghcr.io/anrcm0/txboard-node:dev`，仅用于测试联调。
+
+Only the OCI package changes to `txboard-node`: the executable remains `tx-node`, the management command remains `txnode`, and existing `/etc/txnode` paths and Compose service names remain unchanged. The installer does not rewrite an explicitly saved old/custom image. Old `ghcr.io/anrcm0/tx-node` Compose files can still be operated with status/start/stop, but the new canonical channel and remote-update allowlist reject that package instead of silently migrating it; an operator must review the image change separately. The old package is not the new release source. Until the first stable release is published, use `--channel dev` for isolated testing; a configured `latest` does not imply that tag exists.
 - 使用 `--channel stable|dev` 安装。例如 `txnode install --mode machine --provider txboard --channel dev ...`。
 - 查看当前部署渠道：`txnode channel`；切换到开发版：`txnode channel dev`；切回稳定版：`txnode channel stable`。
 - `txnode upgrade` 升级当前渠道；`txnode upgrade dev` 与 `txnode channel dev` 等效。命令会拉取镜像、重建容器并验证健康，失败时尝试恢复旧 Compose 文件和旧镜像。
@@ -137,7 +139,7 @@ TXBoard / future tx-core runtime repository
         |
         | GitHub Actions / image publishing
         v
-ghcr.io/anrcm0/tx-node (public)
+ghcr.io/anrcm0/txboard-node (public)
         ^
         | docker pull / upgrade
         |

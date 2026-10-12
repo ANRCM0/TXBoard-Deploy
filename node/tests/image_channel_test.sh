@@ -11,12 +11,12 @@ mkdir -p "$INSTALL_DIR"
 cat > "$COMPOSE_FILE" <<EOF
 services:
   tx-node:
-    image: ghcr.io/anrcm0/tx-node:latest
+    image: ghcr.io/anrcm0/txboard-node:latest
     volumes:
       - $INSTALL_DIR/data:/etc/txnode
 EOF
-[ "$(official_image_for_channel stable)" = 'ghcr.io/anrcm0/tx-node:latest' ]
-[ "$(official_image_for_channel dev)" = 'ghcr.io/anrcm0/tx-node:dev' ]
+[ "$(official_image_for_channel stable)" = 'ghcr.io/anrcm0/txboard-node:latest' ]
+[ "$(official_image_for_channel dev)" = 'ghcr.io/anrcm0/txboard-node:dev' ]
 if official_image_for_channel 'other/image:latest' >/dev/null; then exit 1; fi
 [ "$(current_compose_channel)" = stable ]
 set_compose_channel dev
@@ -50,4 +50,16 @@ if perform_docker_upgrade stable; then echo "bad health accepted" >&2; exit 1; f
 [ "$(current_compose_channel)" = dev ]
 if set_compose_channel 'ghcr.io/evil/test:latest'; then echo "arbitrary image accepted" >&2; exit 1; fi
 grep -Fq "$INSTALL_DIR/data:/etc/txnode" "$COMPOSE_FILE"
+
+# The package name changes, not the runtime/CLI/config names. Loading the new
+# script preserves an explicit IMAGE and existing old-package Compose bytes.
+[ "$(IMAGE=ghcr.io/anrcm0/tx-node:dev bash -c 'source "$1"; printf "%s" "$IMAGE"' _ "$ROOT/deploy.sh")" = 'ghcr.io/anrcm0/tx-node:dev' ]
+sed -i 's#ghcr.io/anrcm0/txboard-node:dev#ghcr.io/anrcm0/tx-node:dev#' "$COMPOSE_FILE"
+cp "$COMPOSE_FILE" "$TMP/legacy-compose"
+if current_compose_channel >/dev/null; then echo "old package unexpectedly became canonical" >&2; exit 1; fi
+if set_compose_channel stable; then echo "old package silently migrated" >&2; exit 1; fi
+if perform_docker_upgrade dev; then echo "old package silently upgraded" >&2; exit 1; fi
+cmp "$TMP/legacy-compose" "$COMPOSE_FILE"
+[ "$CLI_LINK" = "$TMP/txnode-cli" ]
+[ "$CONTAINER_CONFIG_FILE" = '/etc/txnode/config.yml' ]
 echo "image channel and rollback tests passed"
