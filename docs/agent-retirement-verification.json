@@ -1,6 +1,6 @@
 {
   "phase": "B7.1-installer",
-  "status": "verified-local-retirement",
+  "status": "verified-local-and-remote-retirement",
   "base_commit": "8106fa541b9abc036017a2ced4c1bb3a4a7589f2",
   "scope": "Remove MCP installer switches, generated environment, management menu and active CI; fixed historical smoke now checks 404.",
   "destructive_database_actions": false,
@@ -138,6 +138,12 @@
     "log_sha256": "64b56c18fca8d5f5815b1dd29caa786a45ff76cc28bd6b6dcb9f7833ec9e677a",
     "snapshot": "/opt/txboard-baseline/deploy-agent-retirement-r2"
   },
-  "remote_ci": "pending",
+  "remote_ci": {
+    "commit": "aaacd5413c729c61d0fd320caf1d64da2f28c912",
+    "deploy": 38349237512,
+    "documentation": 38349237474,
+    "result": "success",
+    "historical_image_smoke": "PR/dispatch-only smoke job skipped on this main push; fixed historical image remains a distinct gate."
+  },
   "limits": "Shell suites use synthetic Docker/systemd boundaries. Historical image installation and real MySQL render jobs remain remote CI gates."
 }
