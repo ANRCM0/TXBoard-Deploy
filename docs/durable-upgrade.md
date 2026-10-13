@@ -1,6 +1,6 @@
 # 持久升级编排：影子证据演练
 
-`scripts/upgrade.py` 实现 `subscription-shadow/v1`、`plan-catalog-shadow/v1` 与 `commerce-shadow/v1` 的单机隔离副本演练：签名计划、只读预检、持久意图、受控迁移、分批回填、逐对象对账和崩溃恢复。它保留 `legacy` 权威，不切换生产 Writer，不启动新旧业务镜像，不删除旧表。完整 B2 的生产维护、共享集群租约、authority 切换和跨组件协议联调仍待实现和验收。
+`scripts/upgrade.py` 实现 `subscription-shadow/v1`、`plan-catalog-shadow/v1`、`commerce-shadow/v1` 与 `captured-money-shadow/v1` 的单机隔离副本演练：签名计划、只读预检、持久意图、受控迁移、分批回填、逐对象对账和崩溃恢复。它保留 `legacy` 权威，不切换生产 Writer，不启动新旧业务镜像，不删除旧表。完整 B2 的生产维护、共享集群租约、authority 切换和跨组件协议联调仍待实现和验收。
 
 需要 Python 3.10+、OpenSSL、Linux、Docker Compose v2，以及包含 B1 影子命令的本地固定 digest Core 镜像。数据库必须是原生 `tx_*` 的隔离副本，`api.env` 同时包含 `APP_ENV=testing`（或 `local`）和 `CORE_SHADOW_ISOLATED_COPY=true`；所属 `txboard` 容器与滚动备份容器必须已停止。标记只是显式操作声明，不能自动证明连接的数据库与生产隔离，运维人员必须先核对复制目标与网络。未知数据库、`v2_*`、混合表、缺失 migration history、未知 migration/probe、生产/集群模式均拒绝。
 
@@ -139,5 +139,33 @@ verify 先完整扫描 user，再从零扫描 order。每页检查只读范围�
 Windows/Linux 最终升级套件均为 48 项通过。真实 Docker/Core `7622cab092a43fd07f901f6d3665d743f2146743`/MariaDB 演练使用一名有钱包和佣金余额的合成用户及一笔订单，独立恢复库 dump 字节相等。Core user 批次提交后、journal result 前 SIGKILL；恢复继续订单游标并完成两个对象类型核对，checked count 为 2，重复 opening、重复 journal、不平衡 journal 均为 0，旧 binary guard 保留。
 
 最终演练 Manifest SHA-256：`fd98d5b4efd09c62dd261d54040b8ba124b7653417094eb3d782d07cc045633c`；fixture OCI digest：`sha256:8f074bbaf7b2011a833b24ce2ff5fdae98b4971da2cb5a3aa3177990da43b310`。结果、签名、备份和 journal 保留在 `/opt/txboard-baseline/commerce-upgrade-rerun/`。首次演练恢复成功后，验证 SQL 使用 MariaDB 保留字导致结果脚本失败；修正别名后使用新的数据库/目录完整重跑，原证据保留于 `/opt/txboard-baseline/commerce-upgrade-integration/`。
+
+## B2.4 单User捕获余额影子profile
+
+`captured-money-shadow/v1` 接入主仓B1.19，仅处理签名计划指定的一位User。
+计划必须额外包含封闭 `capture` 字段：`legacy_user_id`、`run_key`、`stream_id`、
+`high_water`、`last_event_hash`。ID/上限是正十进制字符串，run_key使用原捕获上下文，
+hash是该固定高水位的原事件摘要；billing也须与原捕获一致。其他profile拒绝capture字段。
+来源stream ID/上限/尾hash/context hash每次检查，变化或不相符投影检查点拒绝，
+不自行extend、重锚定或重写源。
+
+固定迁移 `2026_10_13_000001_create_legacy_money_shadow_tables.php` 只扩展三表；
+捕获表和原有完整migrations须事先存在。编排步骤限定为
+`captured-money-shadow-expand/backfill/verify-v1`，对应shape/progress/reconcile probe，
+backfill checkpoint为 `capture-sequence`。计划不能提供SQL、命令、文件路径或环境变量名。
+Core容器临时使用内置money/capture开关及已签名run/currency/timezone，不修改api.env。
+
+回填每次仅 `core:legacy-money-shadow --isolated-copy --user=<signed ID> --limit=100`。
+Core事件/分录/余额端点/游标原子提交，丢失编排result后从SQL检查点恢复；已完成回填不重复。
+verify从0扫描全部页，要求当前Core返回正确User/currency/high-water、闭合否认门禁、
+read_only/page_ok、准确计数/分页和不变checkpoint hash。重启丢弃先前内存验收，
+从0再读；最后observe保留legacy权威与旧binary保护标记。
+
+Windows/Linux各58项编排测试和Linux管理互锁通过。固定Core `63f99cf` 的本地工程
+演练镜像使用真实RepoDigest，205个合成捕获事件；首100条提交后强杀执行器，
+恢复最终逐页核对205条，duplicate steps/unbalanced steps均0，停机标记保留。
+源数据库dump→新测试库restore逐字节相同。真实Docker/MariaDB与日志/制品hash见
+[验证记录](captured-money-upgrade-verification.json)。这不是官方生产镜像或生产发布签名验收；
+它不开放全站writer fence、资金权威、集群租约或自动整库恢复。
 
 MySQL 8.4 DDL/并发/恢复仍未验收，MariaDB 不替代该门禁。Redis drain、集群 fencing、生产 Writer switch、Gateway/Node 协议联调、Provider 备份/租约恢复、正式签名发行与真实生产数据副本仍缺证据；本次完成的是单机隔离影子编排切片，不能记为 B2 全阶段完成。

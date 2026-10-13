@@ -52,6 +52,13 @@ def manifest(profile=upgrade.PROFILE):
     }
 
 
+def money_manifest():
+    document = manifest(upgrade.MONEY_PROFILE)
+    document['capture'] = {'legacy_user_id': '7', 'run_key': 'fixture-capture', 'stream_id': '2',
+        'high_water': '3', 'last_event_hash': 'd' * 64}
+    return document
+
+
 class FixtureBackend:
     """SQLite is actual durable external state, independent of the runner journal.
 
@@ -668,6 +675,120 @@ class CommerceAdapterTests(unittest.TestCase):
             self.assertEqual(report["steps"][-1]["step"], "commerce-shadow-observe-v1")
             with connect(root / "fixture.sqlite3") as db:
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM calls WHERE step='commerce-shadow-backfill-v1'").fetchone()[0], 3)
+
+class MoneyAdapterTests(unittest.TestCase):
+    def setUp(self):
+        self.document = money_manifest()
+        self.backend = upgrade.DockerShadowBackend(Path.cwd(), None, None, 'c' * 64, self.document)
+        context = {'version': 'legacy-user-capture/v1', 'run_key': 'fixture-capture', 'billing_timezone': 'Asia/Shanghai', 'currency': 'CNY'}
+        self.context_hash = hashlib.sha256(json.dumps(context, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        self.source = '2 3 ' + 'd' * 64 + ' ' + self.context_hash
+
+    def response(self, verify=False, after='0', cursor='3', more=False):
+        return {'scope': 'captured-money-endpoints/v1', 'legacy_user_id': '7', 'currency': 'CNY', 'high_water': '3',
+            'stream_high_water': '3', 'cursor': '3', 'complete': True, 'needs_extension': False,
+            'wallet_minor': '110', 'commission_minor': '50', 'checkpoint_hash': 'e' * 64,
+            'global_coverage_complete': False, 'migration_gate_open': False, 'read_only': verify,
+            **({'page_ok': True, 'after_cursor': after, 'next_cursor': cursor, 'has_more': more, 'verified': int(cursor)-int(after)}
+                if verify else {'processed': 3, 'after_cursor': '0'})}
+
+    def test_signed_scope_is_mandatory_closed_bounded_and_exclusive_to_profile(self):
+        upgrade.validate_manifest(self.document)
+        for change in ({'legacy_user_id': '01'}, {'legacy_user_id': '2147483648'}, {'high_water': '0'},
+            {'run_key': "x' OR 1=1"}, {'last_event_hash': 'wrong'}, {'command': 'arbitrary'}):
+            doc = copy.deepcopy(self.document); doc['capture'].update(change)
+            with self.assertRaises(upgrade.UpgradeError): upgrade.validate_manifest(doc)
+        doc = copy.deepcopy(self.document); del doc['capture']
+        with self.assertRaises(upgrade.UpgradeError): upgrade.validate_manifest(doc)
+        doc = manifest(); doc['capture'] = self.document['capture']
+        with self.assertRaisesRegex(upgrade.UpgradeError, 'unexpected_capture_scope'): upgrade.validate_manifest(doc)
+
+    def test_manifest_steps_cannot_select_other_profile_or_arbitrary_command(self):
+        doc = copy.deepcopy(self.document); doc['migrations'] = manifest()['migrations']
+        with self.assertRaisesRegex(upgrade.UpgradeError, 'unsupported_migration_order'): upgrade.validate_manifest(doc)
+        for step in upgrade.COMMERCE_MIGRATIONS:
+            with self.assertRaises(upgrade.UpgradeError): self.backend.probe(step)
+            with self.assertRaises(upgrade.UpgradeError): self.backend.perform(step, 1, None)
+
+    def test_expansion_requires_history_all_tables_and_unique_indexes(self):
+        for tables, history, status in [('0', '', 'not_started'), ('1', '', 'unknown')]:
+            with patch.object(self.backend, 'sql', side_effect=[tables, history]):
+                self.assertEqual(self.backend.probe('captured-money-shadow-expand-v1')['status'], status)
+        with patch.object(self.backend, 'sql', side_effect=['3', upgrade.MONEY_MIGRATION_FILE, '5']):
+            self.assertEqual(self.backend.probe('captured-money-shadow-expand-v1')['status'], 'applied')
+        with patch.object(self.backend, 'sql', side_effect=['3', upgrade.MONEY_MIGRATION_FILE, '4']):
+            with self.assertRaisesRegex(upgrade.UpgradeError, 'captured_money_schema_shape_mismatch'):
+                self.backend.probe('captured-money-shadow-expand-v1')
+
+    def test_source_scope_hash_and_high_water_drift_block_progress(self):
+        for value in ['', self.source.replace('2 3', '2 4'), self.source.replace('2 3', '3 3'), self.source.replace('d' * 64, 'a' * 64), self.source.replace(self.context_hash, '0' * 64)]:
+            with patch.object(self.backend, 'sql', return_value=value):
+                with self.assertRaisesRegex(upgrade.UpgradeError, 'captured_money_source_drift'):
+                    self.backend.probe('captured-money-shadow-backfill-v1')
+
+    def test_progress_recovers_only_exact_frozen_core_cursor(self):
+        with patch.object(self.backend, 'sql', side_effect=[self.source, '']):
+            self.assertEqual(self.backend.probe('captured-money-shadow-backfill-v1')['status'], 'not_started')
+        for cursor, status in [('1', 'partial'), ('3', 'applied')]:
+            with patch.object(self.backend, 'sql', side_effect=[self.source, cursor + ' 3 ' + 'd' * 64 + ' 2 ' + self.context_hash + ' CNY']):
+                obs = self.backend.probe('captured-money-shadow-backfill-v1'); upgrade.validate_observation(obs)
+                self.assertEqual(obs['status'], status); self.assertEqual(obs['checkpoint']['cursor_sequence'], cursor)
+        with patch.object(self.backend, 'sql', side_effect=[self.source, '4 3 ' + 'd' * 64 + ' 2 ' + self.context_hash + ' CNY']):
+            with self.assertRaisesRegex(upgrade.UpgradeError, 'invalid_captured_money_checkpoint'):
+                self.backend.probe('captured-money-shadow-backfill-v1')
+
+    def test_fixed_argv_projects_only_signed_user_and_never_extends(self):
+        with patch.object(self.backend, 'sql', return_value=self.source), patch.object(self.backend, 'artisan', return_value=json.dumps(self.response()).encode()) as call:
+            self.backend.perform('captured-money-shadow-backfill-v1', 1, None)
+            call.assert_called_once_with('core:legacy-money-shadow', '--isolated-copy', '--user=7', '--limit=100')
+        with patch.object(self.backend, 'sql', return_value=self.source), patch.object(self.backend, 'artisan') as call:
+            self.backend.perform('captured-money-shadow-expand-v1', 1, None)
+            call.assert_called_once_with('migrate', '--force', '--path=database/migrations/' + upgrade.MONEY_MIGRATION_FILE + '.php')
+
+    def test_full_reconciliation_pages_bind_exact_checkpoint_and_restart_at_zero(self):
+        for after, cursor, more in [('0', '2', True), ('2', '3', False)]:
+            with patch.object(self.backend, 'sql', return_value=self.source), patch.object(self.backend, 'artisan', return_value=json.dumps(self.response(True, after, cursor, more)).encode()) as call:
+                self.backend.perform('captured-money-shadow-verify-v1', 1, None)
+                self.assertIn('--after=' + after, call.call_args.args)
+        self.assertTrue(self.backend.verified); self.assertEqual(self.backend.verify_count, 3)
+        with patch.object(self.backend, 'sql', return_value=self.source):
+            self.assertEqual(self.backend.probe('captured-money-shadow-observe-v1')['status'], 'applied')
+        restarted = upgrade.DockerShadowBackend(Path.cwd(), None, None, 'c'*64, self.document)
+        self.assertEqual(restarted.verify_cursor, '0'); self.assertFalse(restarted.verified)
+
+    def test_invalid_success_flags_missing_metadata_and_nonprogress_refuse(self):
+        for change in ({'migration_gate_open': True}, {'global_coverage_complete': True}, {'needs_extension': True},
+            {'currency': 'USD'}, {'high_water': '4'}, {'stream_high_water': '4'}, {'legacy_user_id': '8'},
+            {'checkpoint_hash': 'invalid'}, {'read_only': False}, {'page_ok': False}, {'verified': 4}, {'has_more': True},
+            {'next_cursor': '0'}, {'after_cursor': '1'}, {'complete': False}):
+            with patch.object(self.backend, 'sql', return_value=self.source), patch.object(self.backend, 'artisan', return_value=json.dumps(self.response(True) | change).encode()):
+                with self.assertRaises(upgrade.UpgradeError): self.backend.perform('captured-money-shadow-verify-v1', 1, None)
+            self.assertFalse(self.backend.verified)
+
+    def test_changed_checkpoint_between_pages_cannot_complete(self):
+        with patch.object(self.backend, 'sql', return_value=self.source), patch.object(self.backend, 'artisan', return_value=json.dumps(self.response(True, '0', '2', True)).encode()):
+            self.backend.perform('captured-money-shadow-verify-v1', 1, None)
+        with patch.object(self.backend, 'sql', return_value=self.source), patch.object(self.backend, 'artisan', return_value=json.dumps(self.response(True, '2', '3') | {'checkpoint_hash': 'f'*64}).encode()):
+            with self.assertRaisesRegex(upgrade.UpgradeError, 'captured_money_checkpoint_changed'):
+                self.backend.perform('captured-money-shadow-verify-v1', 1, None)
+
+    def test_journal_recovers_committed_page_without_duplicate_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            def crash(event, step):
+                if event == 'after_side_effect' and step == 'captured-money-shadow-backfill-v1': raise RuntimeError('lost response')
+            with upgrade.InstallLock(root):
+                journal = upgrade.Journal(root)
+                try:
+                    with self.assertRaisesRegex(RuntimeError, 'lost response'):
+                        upgrade.Runner(journal, FixtureBackend(root), self.document, 'c'*64, hook=crash).execute()
+                finally: journal.close()
+            with upgrade.InstallLock(root):
+                journal = upgrade.Journal(root)
+                try: result = upgrade.Runner(journal, FixtureBackend(root), self.document, 'c'*64).execute(recover=True)
+                finally: journal.close()
+            self.assertEqual(result['status'], 'completed'); self.assertTrue((root/'.upgrade-in-progress').exists())
+
 
 class BackupTests(unittest.TestCase):
     def setUp(self):

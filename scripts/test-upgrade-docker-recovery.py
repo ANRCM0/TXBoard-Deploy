@@ -30,8 +30,9 @@ def main():
     manifest, digest = upgrade.load_signed_manifest(args.manifest, args.signature, args.trust_dir)
     catalog = manifest["profile"] == upgrade.CATALOG_PROFILE
     commerce = manifest["profile"] == upgrade.COMMERCE_PROFILE
-    backfill_step = "commerce-shadow-backfill-v1" if commerce else "plan-catalog-shadow-backfill-v1" if catalog else "subscription-shadow-backfill-v1"
-    cursor_field = "cursor_plan_id" if catalog else "cursor_user_id"
+    money = manifest["profile"] == upgrade.MONEY_PROFILE
+    backfill_step = "captured-money-shadow-backfill-v1" if money else "commerce-shadow-backfill-v1" if commerce else "plan-catalog-shadow-backfill-v1" if catalog else "subscription-shadow-backfill-v1"
+    cursor_field = "cursor_sequence" if money else "cursor_plan_id" if catalog else "cursor_user_id"
     backend = upgrade.DockerShadowBackend(args.dir, args.backup, args.backup_evidence, digest, manifest, args.deploy_bundle)
     if args.fault_child:
         def hook(event, step):
@@ -85,10 +86,16 @@ def main():
         upgrade.PROFILE: "SELECT COUNT(*) FROM (SELECT legacy_user_id FROM tx_legacy_subscription_map GROUP BY legacy_user_id HAVING COUNT(*)>1) duplicate_maps",
         upgrade.CATALOG_PROFILE: "SELECT COUNT(*) FROM (SELECT legacy_plan_id FROM tx_plan_catalog_shadow GROUP BY legacy_plan_id HAVING COUNT(*)>1) duplicate_maps",
         upgrade.COMMERCE_PROFILE: "SELECT COUNT(*) FROM (SELECT legacy_user_id,currency FROM tx_commerce_shadow_user_opening GROUP BY legacy_user_id,currency HAVING COUNT(*)>1) duplicate_maps",
+        upgrade.MONEY_PROFILE: "SELECT COUNT(*) FROM (SELECT capture_event_id FROM tx_legacy_money_shadow_step GROUP BY capture_event_id HAVING COUNT(*)>1) duplicate_steps",
     }
     duplicate = backend.sql(duplicate_queries[manifest["profile"]])
     upgrade.require(duplicate == "0", "duplicate_legacy_mapping")
     financial_evidence = None
+    if money:
+        unbalanced = backend.sql("SELECT COUNT(*) FROM (SELECT step_id,SUM(CASE WHEN side='debit' THEN amount_minor ELSE -amount_minor END) net FROM tx_legacy_money_shadow_posting GROUP BY step_id HAVING net<>0) unbalanced")
+        upgrade.require(unbalanced == "0", "captured_money_recovery_unbalanced")
+        financial_evidence = {"duplicate_steps": duplicate, "unbalanced_steps": unbalanced,
+            "checked_count": report["steps"][-1]["result"]["checkpoint"]["checked_count"]}
     if commerce:
         duplicate_journals = backend.sql("SELECT COUNT(*) FROM (SELECT business_type,business_ref,idempotency_key FROM tx_commerce_shadow_money_journal GROUP BY business_type,business_ref,idempotency_key HAVING COUNT(*)>1) duplicate_journals")
         unbalanced = backend.sql("SELECT COUNT(*) FROM (SELECT journal_id,currency,SUM(CASE WHEN side='debit' THEN amount_minor ELSE -amount_minor END) net,COUNT(*) posting_count FROM tx_commerce_shadow_money_posting GROUP BY journal_id,currency HAVING net<>0 OR posting_count<2) unbalanced")

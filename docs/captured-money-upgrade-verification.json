@@ -1,0 +1,72 @@
+{
+  "phase": "B2.4",
+  "status": "verified-isolated-current",
+  "production_acceptance": false,
+  "deploy_base": "fcb8d29b2d734223abff681aa055a44462d26cc7",
+  "core_commit": "63f99cf0d090e8b50c626ac5dac457f4ea5bcf7c",
+  "normalized_source_sha256": {
+    "scripts/upgrade.py": "96db0d57c70ddca7569dd7e6b1fa46ae7ce6fc3cd41c78a288188d598e5544ee",
+    "scripts/test-upgrade-orchestrator.py": "d515b7bbec47e24798c0d2933c1a81f15f0a3c398f33be537e73fa768b995e6b",
+    "scripts/test-upgrade-docker-recovery.py": "d9cebf6a070c01b67823706fd932504682f68261fd5c0472ea3ec13bc8602066",
+    "lib/detect.sh": "20ac566e4406df5c77c56705d0902ae7c6f57dfae1345df3e6437da67d4e00c6"
+  },
+  "windows_tests": {
+    "passed": 58,
+    "exit_code": 0,
+    "log_sha256": "37820601dd70dda0fac610374d8eb8a9d5b5f39778b824c0872b4880f8a95b13"
+  },
+  "linux_tests": {
+    "python": {
+      "exit_code": 0,
+      "log_sha256": "d4292201cf10072fb757515b73816896bde0c7d508337dacc1d2c45755c80eec"
+    },
+    "management": {
+      "exit_code": 0,
+      "log_sha256": "517bdcc0bbe0e4851e5a11a654525ab8fa84a26ac078120fa0f9dc9dd55d77d0"
+    }
+  },
+  "docker_core_mariadb_recovery": {
+    "profile": "captured-money-shadow/v1",
+    "result": "passed",
+    "fault": "SIGKILL after Core batch commit before journal result",
+    "core_cursor_after_kill": "100",
+    "manifest_sha256": "59f202c98fc41ad4b2a0ab323b9992ed8a6bf582b905358c8de6779a46c8f467",
+    "authority": "legacy",
+    "duplicate_maps": "0",
+    "binary_guard_retained": true,
+    "financial_evidence": {
+      "duplicate_steps": "0",
+      "unbalanced_steps": "0",
+      "checked_count": "205"
+    },
+    "target_digest": "127.0.0.1:15004/txboard-shadow@sha256:c2dbac57735f370d4eba8bffaafa036daf29e73c81435cf440b58f7511e94106"
+  },
+  "source_artifact_and_roundtrip": {
+    "core_commit": "63f99cf0d090e8b50c626ac5dac457f4ea5bcf7c",
+    "core_archive_sha256": "27aa1e82b5117f5a95b3fdd813c55de8360cd7033bb1b63a304bbe0567b2b596",
+    "deploy_normalized_source_sha256": {
+      "scripts/upgrade.py": "96db0d57c70ddca7569dd7e6b1fa46ae7ce6fc3cd41c78a288188d598e5544ee",
+      "scripts/test-upgrade-orchestrator.py": "d515b7bbec47e24798c0d2933c1a81f15f0a3c398f33be537e73fa768b995e6b",
+      "scripts/test-upgrade-docker-recovery.py": "d9cebf6a070c01b67823706fd932504682f68261fd5c0472ea3ec13bc8602066",
+      "lib/detect.sh": "20ac566e4406df5c77c56705d0902ae7c6f57dfae1345df3e6437da67d4e00c6"
+    },
+    "artifact": "127.0.0.1:15004/txboard-shadow@sha256:c2dbac57735f370d4eba8bffaafa036daf29e73c81435cf440b58f7511e94106",
+    "manifest_sha256": "59f202c98fc41ad4b2a0ab323b9992ed8a6bf582b905358c8de6779a46c8f467",
+    "dump_roundtrip_sha256": "3e679c9ab3e1e871ededb1ba102bd5b263095afbcbe82a1d2177c23c8abbacc0"
+  },
+  "fixture_root": "/opt/txboard-baseline/money-upgrade-r1",
+  "local_docker": "28.3.3",
+  "local_database": "MariaDB11.4.12",
+  "signed_scope": "one synthetic User, capture run/currency/timezone/stream/high-water/hash",
+  "limitations": [
+    "Local fixture OCI image built from exact committed API plus locked vendor, not official production image build acceptance",
+    "RSA2048 detached signature uses generated test-only release key, never production release trust",
+    "Standalone single-User profile; no whole-site migration or production writer authority switch",
+    "Partial DDL requires investigation; no cluster lease or automated full database restoration",
+    "Backup rehearsal and coverage remain explicit operator evidence; this fixture performed a real identical synthetic dump/restore"
+  ],
+  "ci": {
+    "status": "pending push and remote verification",
+    "workflow": ".github/workflows/ci.yml"
+  }
+}

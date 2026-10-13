@@ -25,6 +25,7 @@ VERSION = "txboard.upgrade-manifest/v1"
 PROFILE = "subscription-shadow/v1"
 CATALOG_PROFILE = "plan-catalog-shadow/v1"
 COMMERCE_PROFILE = "commerce-shadow/v1"
+MONEY_PROFILE = "captured-money-shadow/v1"
 CHECKPOINT_VERSION = 1
 PHASES = ("expand", "backfill", "verify", "observe")
 MIGRATION_FILE = "2026_10_12_000001_create_subscription_shadow_tables"
@@ -46,7 +47,15 @@ COMMERCE_MIGRATIONS = {
     "commerce-shadow-backfill-v1": ("backfill", "commerce-shadow-progress-v1", "resume_cursor", "legacy-user-order-id"),
     "commerce-shadow-verify-v1": ("verify", "commerce-shadow-reconcile-v1", "read_only_repeat", None),
 }
-PROFILES = {PROFILE: MIGRATIONS, CATALOG_PROFILE: CATALOG_MIGRATIONS, COMMERCE_PROFILE: COMMERCE_MIGRATIONS}
+MONEY_MIGRATION_FILE = "2026_10_13_000001_create_legacy_money_shadow_tables"
+MONEY_MIGRATIONS = {
+    "captured-money-shadow-expand-v1": ("expand", "captured-money-shadow-shape-v1", "probe_then_continue", "ddl-step"),
+    "captured-money-shadow-backfill-v1": ("backfill", "captured-money-shadow-progress-v1", "resume_cursor", "capture-sequence"),
+    "captured-money-shadow-verify-v1": ("verify", "captured-money-shadow-reconcile-v1", "read_only_repeat", None),
+}
+MONEY_TABLES = tuple("tx_legacy_money_shadow_" + suffix for suffix in ("checkpoint", "step", "posting"))
+MONEY_INDEXES = ("tx_money_shadow_stream_uq", "tx_money_shadow_user_uq", "tx_money_shadow_event_uq", "tx_money_shadow_sequence_uq", "tx_money_shadow_line_uq")
+PROFILES = {PROFILE: MIGRATIONS, CATALOG_PROFILE: CATALOG_MIGRATIONS, COMMERCE_PROFILE: COMMERCE_MIGRATIONS, MONEY_PROFILE: MONEY_MIGRATIONS}
 COMMERCE_TABLES = tuple("tx_commerce_shadow_" + suffix for suffix in
     ("money_account", "money_journal", "money_posting", "user_opening", "order", "checkpoint", "exception"))
 COMMERCE_INDEXES = ("tx_commerce_shadow_money_account_business_uq", "tx_commerce_shadow_money_journal_business_uq",
@@ -127,10 +136,19 @@ def hash_regular(path):
 
 
 def validate_manifest(manifest):
-    shape(manifest, ("manifest_version", "profile", "release_id", "created_at", "components", "compatibility", "schema", "migrations", "upgrade_policy", "backup_policy", "billing"))
+    shape(manifest, ("manifest_version", "profile", "release_id", "created_at", "components", "compatibility", "schema", "migrations", "upgrade_policy", "backup_policy", "billing"), ("capture",))
     require(manifest["manifest_version"] == VERSION, "unsupported_manifest_version")
     require(type(manifest["profile"]) is str and manifest["profile"] in PROFILES, "unsupported_upgrade_profile")
     allowed_migrations = PROFILES[manifest["profile"]]
+    if manifest["profile"] == MONEY_PROFILE:
+        capture = manifest.get("capture")
+        shape(capture, ("legacy_user_id", "run_key", "stream_id", "high_water", "last_event_hash"))
+        for name, maximum in (("legacy_user_id", 2147483647), ("stream_id", 9223372036854775807), ("high_water", 9223372036854775807)):
+            require(type(capture[name]) is str and len(capture[name]) <= 19 and DECIMAL.fullmatch(capture[name]) and 0 < int(capture[name]) <= maximum, "invalid_capture_scope")
+        require(type(capture["run_key"]) is str and re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,63}", capture["run_key"]), "invalid_capture_scope")
+        require(type(capture["last_event_hash"]) is str and SHA.fullmatch(capture["last_event_hash"]), "invalid_capture_scope")
+    else:
+        require("capture" not in manifest, "unexpected_capture_scope")
     identifier(manifest["release_id"])
     require(len(manifest["release_id"]) <= 64, "release_id_too_long_for_core")
     safe_int(manifest["created_at"])
@@ -402,10 +420,10 @@ def validate_observation(value):
     require(value["status"] in ("not_started", "partial", "applied", "unknown", "failed"), "invalid_probe_result")
     require(value["checkpoint"] is None or type(value["checkpoint"]) is dict, "invalid_probe_checkpoint")
     if value["checkpoint"] is not None:
-        shape(value["checkpoint"], (), ("cursor_user_id", "high_water_user_id", "cursor_order_id", "high_water_order_id", "cursor_plan_id", "high_water_plan_id", "processed_count", "next_cursor", "aggregate_type", "checked_count", "authority", "migration", "backup_id"))
+        shape(value["checkpoint"], (), ("cursor_user_id", "high_water_user_id", "cursor_order_id", "high_water_order_id", "cursor_plan_id", "high_water_plan_id", "processed_count", "next_cursor", "aggregate_type", "checked_count", "authority", "migration", "backup_id", "cursor_sequence", "high_water_sequence", "stream_id", "legacy_user_id"))
         for key, item in value["checkpoint"].items():
             require(type(item) is str and len(item) <= 128, "invalid_probe_checkpoint_value")
-            if key.endswith("id") or key.endswith("count") or key == "next_cursor":
+            if key.endswith("id") or key.endswith("count") or key in ("next_cursor", "cursor_sequence", "high_water_sequence"):
                 if key != "backup_id":
                     require(DECIMAL.fullmatch(item), "invalid_probe_decimal")
     if "error_code" in value:
@@ -446,7 +464,7 @@ class Runner:
                 self.execute_step(migration)
             self.journal.status(self.release, "observing", next_step=3)
             observe = {PROFILE: "subscription-shadow-observe-v1", CATALOG_PROFILE: "plan-catalog-shadow-observe-v1",
-                COMMERCE_PROFILE: "commerce-shadow-observe-v1"}[self.manifest["profile"]]
+                COMMERCE_PROFILE: "commerce-shadow-observe-v1", MONEY_PROFILE: "captured-money-shadow-observe-v1"}[self.manifest["profile"]]
             self.execute_step({"id": observe, "phase": "observe", "recovery": "read_only_repeat"})
             self.journal.status(self.release, "completed", next_step=4)
             self.journal.assert_fence()
@@ -598,6 +616,14 @@ class DockerShadowBackend:
         env["TXBOARD_IMAGE"] = artifact
         command = ["docker", "compose", "run", "-T", "--rm", "--no-deps", "-e", "CACHE_DRIVER=array", "-e", "SETTING_CACHE_STORE=array",
                    "-e", "QUEUE_CONNECTION=sync", "-e", "SESSION_DRIVER=array", "--entrypoint", "php", "txboard", "/www/artisan", *args, "--no-interaction"]
+        if self.manifest["profile"] == MONEY_PROFILE:
+            # Only fixed env names and signed, validated values; never edit config.
+            overrides = {"LEGACY_MONEY_SHADOW_ENABLED": "true", "LEGACY_CAPTURE_SHADOW_ENABLED": "true",
+                "LEGACY_CAPTURE_SHADOW_RUN": self.manifest["capture"]["run_key"],
+                "LEGACY_CAPTURE_SHADOW_CURRENCY": self.manifest["billing"]["currency"],
+                "LEGACY_CAPTURE_SHADOW_TIMEZONE": self.manifest["billing"]["billing_timezone"]}
+            insert = command.index("--entrypoint")
+            command[insert:insert] = [item for name, value in overrides.items() for item in ("-e", name + "=" + value)]
         try:
             result = subprocess.run(command, cwd=self.install_dir, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                     stderr=subprocess.DEVNULL, timeout=120, check=False)
@@ -643,8 +669,11 @@ class DockerShadowBackend:
         require(config.get("services", {}).get("txboard", {}).get("image") == artifact, "compose_does_not_use_pinned_target")
         commands = self.artisan("list", "--raw").decode()
         required_commands = {PROFILE: ("core:subscriptions-backfill", "core:subscriptions-reconcile"),
-            CATALOG_PROFILE: ("core:catalog-shadow",), COMMERCE_PROFILE: ("core:commerce-shadow",)}[manifest["profile"]]
+            CATALOG_PROFILE: ("core:catalog-shadow",), COMMERCE_PROFILE: ("core:commerce-shadow",),
+            MONEY_PROFILE: ("core:legacy-money-shadow",)}[manifest["profile"]]
         require(all(command in commands for command in required_commands), "core_shadow_commands_missing")
+        if manifest["profile"] == MONEY_PROFILE:
+            self.money_source()
         self.backup = backup_check(self.backup_dir, self.evidence_path, self.digest)
         return {"installation_id": hashlib.sha256(str(self.install_dir).encode()).hexdigest(), "container_id": identity,
                 "source_image_id": info[0]["Image"], "target_image_id": target[0]["Id"], "target_digest": artifact,
@@ -675,6 +704,9 @@ class DockerShadowBackend:
         return phase, {"cursor_plan_id": cursor, "high_water_plan_id": highwater, "processed_count": count}
 
     def probe(self, step):
+        if step in MONEY_MIGRATIONS or step == "captured-money-shadow-observe-v1":
+            require(self.manifest["profile"] == MONEY_PROFILE, "unknown_migration_id")
+            return self.money_probe(step)
         if step in COMMERCE_MIGRATIONS or step == "commerce-shadow-observe-v1":
             require(self.manifest["profile"] == COMMERCE_PROFILE, "unknown_migration_id")
             return self.commerce_probe(step)
@@ -730,6 +762,9 @@ class DockerShadowBackend:
                 "checkpoint": {"next_cursor": self.verify_cursor, "checked_count": str(self.verify_count), "authority": "legacy"}}
 
     def perform(self, step, fence, checkpoint):
+        if step in MONEY_MIGRATIONS:
+            require(self.manifest["profile"] == MONEY_PROFILE, "unsupported_runtime_action")
+            return self.money_perform(step)
         if step in COMMERCE_MIGRATIONS:
             require(self.manifest["profile"] == COMMERCE_PROFILE, "unsupported_runtime_action")
             return self.commerce_perform(step)
@@ -756,6 +791,92 @@ class DockerShadowBackend:
             self.verified = result["complete"]
         else:
             raise UpgradeError("unsupported_runtime_action")
+
+    def money_source(self):
+        capture = self.manifest["capture"]
+        context = {"version": "legacy-user-capture/v1", "run_key": capture["run_key"],
+            "billing_timezone": self.manifest["billing"]["billing_timezone"], "currency": self.manifest["billing"]["currency"]}
+        context_hash = hashlib.sha256(json.dumps(context, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        row = self.sql("SELECT id,last_sequence,last_event_hash,context_hash FROM tx_legacy_capture_shadow_stream WHERE legacy_user_id=" + capture["legacy_user_id"])
+        require(row.split() == [capture["stream_id"], capture["high_water"], capture["last_event_hash"], context_hash], "captured_money_source_drift")
+        return context_hash
+
+    def money_progress(self):
+        context_hash = self.money_source()
+        capture = self.manifest["capture"]
+        row = self.sql("SELECT last_sequence,high_water,high_event_hash,stream_id,context_hash,currency FROM tx_legacy_money_shadow_checkpoint WHERE legacy_user_id=" + capture["legacy_user_id"])
+        if not row: return None
+        fields = row.split()
+        require(len(fields) == 6 and DECIMAL.fullmatch(fields[0]) and 0 < int(fields[0]) <= int(capture["high_water"])
+            and fields[1:] == [capture["high_water"], capture["last_event_hash"], capture["stream_id"], context_hash, self.manifest["billing"]["currency"]], "invalid_captured_money_checkpoint")
+        return {"cursor_sequence": fields[0], "high_water_sequence": capture["high_water"],
+            "legacy_user_id": capture["legacy_user_id"], "stream_id": capture["stream_id"], "authority": "legacy"}
+
+    def money_probe(self, step):
+        if step == "captured-money-shadow-expand-v1":
+            tables = self.sql("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('" + "','".join(MONEY_TABLES) + "')")
+            history = self.sql("SELECT migration FROM migrations WHERE migration='" + MONEY_MIGRATION_FILE + "'")
+            if history == MONEY_MIGRATION_FILE:
+                indexes = self.sql("SELECT COUNT(DISTINCT INDEX_NAME) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND INDEX_NAME IN ('" + "','".join(MONEY_INDEXES) + "') AND NON_UNIQUE=0")
+                require(tables == "3" and indexes == "5", "captured_money_schema_shape_mismatch")
+                return {"status": "applied", "checkpoint": {"migration": MONEY_MIGRATION_FILE}}
+            return {"status": "not_started" if tables == "0" else "unknown", "checkpoint": None}
+        if step == "captured-money-shadow-backfill-v1":
+            progress = self.money_progress()
+            if progress is None: return {"status": "not_started", "checkpoint": None}
+            return {"status": "applied" if progress["cursor_sequence"] == progress["high_water_sequence"] else "partial", "checkpoint": progress}
+        self.money_source()
+        if step == "captured-money-shadow-observe-v1":
+            require(self.verified, "reconciliation_required")
+            return {"status": "applied", "checkpoint": {"authority": "legacy", "checked_count": str(self.verify_count), "legacy_user_id": self.manifest["capture"]["legacy_user_id"]}}
+        require(step == "captured-money-shadow-verify-v1", "unknown_migration_id")
+        return {"status": "applied" if self.verified else "partial" if self.verify_count else "not_started",
+            "checkpoint": {"next_cursor": self.verify_cursor, "checked_count": str(self.verify_count), "authority": "legacy"}}
+
+    def money_response(self, result):
+        c = self.manifest["capture"]
+        require(type(result) is dict and result.get("scope") == "captured-money-endpoints/v1"
+            and result.get("legacy_user_id") == c["legacy_user_id"] and result.get("currency") == self.manifest["billing"]["currency"]
+            and result.get("high_water") == c["high_water"] and result.get("stream_high_water") == c["high_water"]
+            and result.get("needs_extension") is False and result.get("migration_gate_open") is False
+            and result.get("global_coverage_complete") is False, "invalid_captured_money_response")
+        for name in ("cursor", "wallet_minor", "commission_minor"):
+            require(type(result.get(name)) is str and len(result[name]) <= 19 and DECIMAL.fullmatch(result[name]), "invalid_captured_money_response")
+        require(0 < int(result["cursor"]) <= int(c["high_water"]) and int(result["wallet_minor"]) <= 2147483647
+            and int(result["commission_minor"]) <= 2147483647
+            and result.get("complete") is (result["cursor"] == c["high_water"])
+            and type(result.get("checkpoint_hash")) is str and SHA.fullmatch(result["checkpoint_hash"]), "invalid_captured_money_response")
+
+    def money_perform(self, step):
+        if step == "captured-money-shadow-expand-v1":
+            self.money_source()
+            self.artisan("migrate", "--force", "--path=database/migrations/" + MONEY_MIGRATION_FILE + ".php")
+            return
+        self.money_source()
+        args = ["core:legacy-money-shadow", "--isolated-copy", "--user=" + self.manifest["capture"]["legacy_user_id"], "--limit=100"]
+        if step == "captured-money-shadow-verify-v1": args += ["--verify", "--after=" + self.verify_cursor]
+        result = parse_json(self.artisan(*args))
+        shape(result, ('scope', 'legacy_user_id', 'currency', 'high_water', 'stream_high_water', 'cursor', 'complete', 'needs_extension',
+            'wallet_minor', 'commission_minor', 'checkpoint_hash', 'global_coverage_complete', 'migration_gate_open', 'read_only', 'after_cursor'),
+            ('processed',) if step == 'captured-money-shadow-backfill-v1' else ('page_ok', 'next_cursor', 'has_more', 'verified'))
+        self.money_response(result)
+        if step == "captured-money-shadow-backfill-v1":
+            require(result.get("read_only") is False and type(result.get("processed")) is int and 0 <= result["processed"] <= 100, "invalid_captured_money_response")
+            return
+        require(step == "captured-money-shadow-verify-v1" and result.get("read_only") is True
+            and result.get("page_ok") is True and result.get("complete") is True
+            and result.get("after_cursor") == self.verify_cursor and type(result.get("next_cursor")) is str
+            and DECIMAL.fullmatch(result["next_cursor"]) and type(result.get("verified")) is int
+            and type(result.get("has_more")) is bool, "captured_money_reconciliation_failed")
+        next_cursor, high = int(result["next_cursor"]), int(result["high_water"])
+        require(int(self.verify_cursor) <= next_cursor <= high and result["verified"] == next_cursor - int(self.verify_cursor)
+            and 0 <= result["verified"] <= 100 and result["has_more"] is (next_cursor < high)
+            and (not result["has_more"] or next_cursor > int(self.verify_cursor)), "captured_money_reconciliation_failed")
+        frozen = (result["checkpoint_hash"], result["wallet_minor"], result["commission_minor"])
+        require(self.verify_context is None or self.verify_context == frozen, "captured_money_checkpoint_changed")
+        self.verify_context = frozen
+        self.verify_cursor = result["next_cursor"]; self.verify_count += result["verified"]
+        self.verified = not result["has_more"]
 
     def commerce_progress(self):
         require(self.sql("SELECT COUNT(*) FROM tx_commerce_shadow_exception WHERE state='unresolved'") == "0", "core_commerce_source_conflict")
