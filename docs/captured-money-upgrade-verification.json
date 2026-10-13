@@ -68,5 +68,36 @@
   "ci": {
     "status": "pending push and remote verification",
     "workflow": ".github/workflows/ci.yml"
+  },
+  "remote_ci_initial": {
+    "commit": "71cb340ae537ab2ff26f585038a3d85171e7377c",
+    "run_url": "https://github.com/ANRCM0/TXBoard-Deploy/actions/runs/38337445075",
+    "overall": "failure",
+    "signed_orchestrator": "success",
+    "gateway_actual_install_and_rollback": "success",
+    "host_mysql_render": "failure",
+    "cause": "socket-only bootstrap readiness race"
+  },
+  "host_mysql_readiness_correction": {
+    "base_commit": "71cb340ae537ab2ff26f585038a3d85171e7377c",
+    "normalized_source_sha256": {
+      "lib/install-database.sh": "ddc708a2b213f8376d657295318779e485c328893f8ced09cd593391d2b18010",
+      "scripts/test-install-flow.sh": "23b79c225d7139f0580c109f23f94851757f65d8af062bd1baf9bff0c41058b1",
+      ".github/workflows/ci.yml": "bfdaf5dab98a95b22adc256cafe9b927452a3e9859ae5b77ea512a4bf3ebff7b"
+    },
+    "checks": {
+      "test-install-flow.sh": {
+        "exit_code": 0,
+        "log_sha256": "dc30b1748c3b2b519ca4c715092d914ead6a724f289ebd30b6029fdc2b4801c9"
+      },
+      "test-detect.sh": {
+        "exit_code": 0,
+        "log_sha256": "8cb6dfd3b91ccacec952c9657c2e7063d502612454d9b3fe452fd76efccbd497"
+      },
+      "test-upgrade-management.sh": {
+        "exit_code": 0,
+        "log_sha256": "517bdcc0bbe0e4851e5a11a654525ab8fa84a26ac078120fa0f9dc9dd55d77d0"
+      }
+    }
   }
 }

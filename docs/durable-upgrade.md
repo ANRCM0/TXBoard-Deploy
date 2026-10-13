@@ -169,3 +169,9 @@ Windows/Linux各58项编排测试和Linux管理互锁通过。固定Core `63f99c
 它不开放全站writer fence、资金权威、集群租约或自动整库恢复。
 
 MySQL 8.4 DDL/并发/恢复仍未验收，MariaDB 不替代该门禁。Redis drain、集群 fencing、生产 Writer switch、Gateway/Node 协议联调、Provider 备份/租约恢复、正式签名发行与真实生产数据副本仍缺证据；本次完成的是单机隔离影子编排切片，不能记为 B2 全阶段完成。
+
+提交 `71cb340` 的远端58项编排回归和真实Gateway安装/失败镜像回退通过；
+同一CI在host MySQL渲染时命中初始化临时socket服务的就绪竞争，整体失败。
+安装器现在等待 `skip_networking=0` 的正式服务，CI通过TCP执行真实inventory查询；
+原保护查询和遇到未知状态拒绝安装的行为保留。Linux启动/重启/超时拒绝、安装顺序、
+服务发现及升级互锁回归通过，修正提交的远端结果另行记录。

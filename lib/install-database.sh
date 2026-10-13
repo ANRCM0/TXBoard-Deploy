@@ -133,9 +133,14 @@ mysql_container_exec_root() {
 }
 
 wait_mysql_container_admin() {
-  local container="$1" root_password="$2" i
+  local container="$1" root_password="$2" i ready
   for i in $(seq 1 30); do
-    if mysql_container_exec_root "$container" "$root_password" "SELECT 1;" >/dev/null 2>&1; then
+    # Official images start a socket-only bootstrap server before restarting
+    # with the final credentials and network listener. SELECT 1 can succeed on
+    # that temporary server, then the inventory query loses its connection.
+    if ready="$(mysql_container_exec_root "$container" "$root_password" \
+      "SELECT IF(@@GLOBAL.skip_networking = 0, 'txboard_mysql_ready', 'txboard_mysql_bootstrap');" \
+      2>/dev/null | tail -n1 | tr -d '[:space:]')" && [[ "$ready" == txboard_mysql_ready ]]; then
       return 0
     fi
     sleep 2
