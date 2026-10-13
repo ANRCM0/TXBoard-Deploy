@@ -175,3 +175,7 @@ MySQL 8.4 DDL/并发/恢复仍未验收，MariaDB 不替代该门禁。Redis dra
 安装器现在等待 `skip_networking=0` 的正式服务，CI通过TCP执行真实inventory查询；
 原保护查询和遇到未知状态拒绝安装的行为保留。Linux启动/重启/超时拒绝、安装顺序、
 服务发现及升级互锁回归通过，修正提交的远端结果另行记录。
+
+修正 `34fd467` 的[完整部署CI](https://github.com/ANRCM0/TXBoard-Deploy/actions/runs/38338365530)
+已通过：58项编排、真实MySQL8.4.11清单/安装渲染/历史转换及固定Gateway安装回退。
+该CI没有重跑上面的实际Core205事件SIGKILL演练；保留两类验收的不同范围。
