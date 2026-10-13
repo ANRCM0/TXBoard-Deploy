@@ -111,7 +111,7 @@ sudo bash /opt/txboard/txboard.sh repair-command
 
 备份管理支持创建、查看、恢复、删除和修改保留数量。内置 MySQL 模式下，恢复前会自动创建一次不参与保留数量裁剪的安全备份，并保留当前访问 URL / Cookie 安全设置；宿主机 / 外部 MySQL 模式仍支持备份，但自动整库恢复会被禁用。完整卸载前也会先备份，并把部署目录额外打包到用户 HOME 目录。
 
-配置菜单可以切换 Caddy 自动 HTTPS、外部 HTTPS 反向代理和 HTTP 模式，并同步修改 Docker 端口映射、`APP_URL` 与安全 Cookie 配置。也可以交互式启用/关闭主镜像内置的 MCP Gateway；配置应用失败时会恢复修改前的配置文件。
+配置菜单可以切换 Caddy 自动 HTTPS、外部 HTTPS 反向代理和 HTTP 模式，并同步修改 Docker 端口映射、`APP_URL` 与安全 Cookie 配置。Agent/MCP 已退役，配置菜单不再提供 MCP 开关。配置应用失败时会恢复修改前的配置文件。
 
 ## 启动前服务发现（安装 / 更新 / 管理）
 

@@ -96,7 +96,6 @@ HTTPS_PORT="${TXBOARD_HTTPS_PORT:-}"
 BACKUP_RETENTION="${TXBOARD_BACKUP_RETENTION:-7}"
 TEST_MODE="${TXBOARD_TEST_MODE:-false}"
 AUTO_INSTALL_DOCKER="${TXBOARD_AUTO_INSTALL_DOCKER:-false}"
-MCP_ENABLED="${TXBOARD_ENABLE_MCP:-false}"
 DB_MODE="${TXBOARD_DB_MODE:-}"
 DB_HOST="${TXBOARD_DB_HOST:-}"
 DB_PORT="${TXBOARD_DB_PORT:-3306}"
@@ -210,8 +209,6 @@ Options:
   --backup-retention N
                       Number of backup archives to retain (default: 7)
   --test-mode         Enable test deployment mode; permits wildcard public hosts
-  --enable-mcp        Enable embedded MCP Gateway for AI Agents
-  --disable-mcp       Disable embedded MCP Gateway (default)
   --db-mode MODE      local | host | external (default: local)
   --db-host HOST      External MySQL host
   --db-container NAME  Host MySQL/MariaDB Docker container (host mode)
@@ -250,7 +247,6 @@ Environment variables:
   TXBOARD_BACKUP_RETENTION
   TXBOARD_TEST_MODE
   TXBOARD_AUTO_INSTALL_DOCKER
-  TXBOARD_ENABLE_MCP
   TXBOARD_DB_MODE
   TXBOARD_DB_HOST
   TXBOARD_DB_PORT
@@ -289,8 +285,7 @@ while [[ $# -gt 0 ]]; do
     --https-port) HTTPS_PORT="${2:?missing value for --https-port}"; shift 2 ;;
     --backup-retention) BACKUP_RETENTION="${2:?missing value for --backup-retention}"; shift 2 ;;
     --test-mode) TEST_MODE=true; shift ;;
-    --enable-mcp) MCP_ENABLED=true; shift ;;
-    --disable-mcp) MCP_ENABLED=false; shift ;;
+    --enable-mcp|--disable-mcp) die "MCP has been retired; remove the MCP option" ;;
     --db-mode) DB_MODE="${2:?missing value for --db-mode}"; shift 2 ;;
     --db-host) DB_HOST="${2:?missing value for --db-host}"; shift 2 ;;
     --db-container) DB_CONTAINER="${2:?missing value for --db-container}"; shift 2 ;;
@@ -773,12 +768,6 @@ case "${TEST_MODE,,}" in
   *) die "invalid TXBOARD_TEST_MODE value: $TEST_MODE (use true/false)" ;;
 esac
 
-case "${MCP_ENABLED,,}" in
-  1|true|yes|y|on) MCP_ENABLED=true ;;
-  0|false|no|n|off|"") MCP_ENABLED=false ;;
-  *) die "invalid TXBOARD_ENABLE_MCP value: $MCP_ENABLED (use true/false)" ;;
-esac
-
 if [[ "$ASSUME_YES" -eq 0 ]]; then
   test_default="N"
   [[ "$TEST_MODE" == "true" ]] && test_default="Y"
@@ -788,13 +777,6 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
     TEST_MODE=false
   fi
 
-  mcp_default="N"
-  [[ "$MCP_ENABLED" == "true" ]] && mcp_default="Y"
-  if confirm "启用 MCP 网关？" "$mcp_default"; then
-    MCP_ENABLED=true
-  else
-    MCP_ENABLED=false
-  fi
 fi
 
 if [[ "$ASSUME_YES" -eq 0 && "$INSTALL_TYPE" == fresh && -z "$XBOARD_DUMP" ]]; then
@@ -962,7 +944,6 @@ Install dir:    $INSTALL_DIR
 Test mode:      $TEST_MODE
 HTTP mapping:   $HTTP_BIND:$HTTP_PORT -> container:80
 Backup retain:  $BACKUP_RETENTION
-MCP Gateway:    $MCP_ENABLED
 Install type:    $INSTALL_TYPE
 XBoard dump:     $(if [[ "$XBOARD_AUTO_DUMP" == true ]]; then printf 'automatically generated'; else printf '%s' "${XBOARD_DUMP:-none}"; fi)
 XBoard source:   $(if [[ "$XBOARD_AUTO_DUMP" == true ]]; then printf '%s/%s' "$XBOARD_SOURCE_CONTAINER" "$XBOARD_SOURCE_DATABASE"; else printf 'offline backup'; fi)
@@ -1031,7 +1012,6 @@ cat > .env <<EOF
 TXBOARD_IMAGE=$IMAGE
 TXBOARD_ADMIN_EMAIL=$ADMIN_EMAIL
 TXBOARD_TEST_MODE=$TEST_MODE
-TXBOARD_ENABLE_MCP=$MCP_ENABLED
 TXBOARD_MODE=$MODE
 TXBOARD_DOMAIN=$DOMAIN
 TXBOARD_PUBLIC_HOST=$PUBLIC_HOST
@@ -1343,11 +1323,6 @@ $DB_NETWORKS_BLOCK
       ENABLE_HORIZON: "true"
       ENABLE_REDIS: "true"
       ENABLE_WS_SERVER: "true"
-      ENABLE_MCP: \${TXBOARD_ENABLE_MCP:-false}
-      MCP_HOST: 127.0.0.1
-      MCP_PORT: 3000
-      MCP_ALLOWED_HOSTS: localhost,127.0.0.1
-      MCP_ALLOWED_ORIGINS: ""
     ports:
 $PORTS_BLOCK
     healthcheck:
@@ -1403,14 +1378,6 @@ INSTALL_PROGRESS_TOTAL=5
 INSTALL_PROGRESS_DONE=0
 install_progress_step "拉取 TXBoard 与依赖镜像" docker compose pull ||
   die "unable to pull TXBoard images"
-
-if [[ "$MCP_ENABLED" == "true" ]]; then
-  log "verifying TXBoard image includes the embedded MCP Gateway..."
-  if ! docker compose run -T --rm --no-deps --entrypoint sh txboard -lc \
-      'test -f /opt/txboard-mcp/dist/index.js' </dev/null >/dev/null; then
-    die "selected TXBoard image does not include the embedded MCP Gateway; use a newer image tag or disable MCP"
-  fi
-fi
 
 verify_database_connectivity
 verify_database_empty_for_install
@@ -1478,8 +1445,6 @@ TXBoard 安装成功。
 Panel:       $APP_URL/admin/
 Install dir: $INSTALL_DIR
 Image:       $IMAGE
-MCP Gateway: $MCP_ENABLED
-MCP URL:     $([[ "$MCP_ENABLED" == "true" ]] && printf '%s/mcp' "$APP_URL" || printf 'disabled')
 
 $([[ "$INSTALL_TYPE" == fresh ]] && printf '%s' 'Fresh install: save the administrator password printed above.' || printf '%s' 'Imported users and administrators keep their original accounts and password hashes.')
 

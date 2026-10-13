@@ -74,6 +74,16 @@ chmod +x "$tmp/bin/docker"
 export PATH="$tmp/bin:$PATH" MOCK_DOCKER_LOG="$tmp/docker.log"
 : > "$MOCK_DOCKER_LOG"
 
+# Retired switches fail before service discovery or installation side effects.
+for retired_option in --enable-mcp --disable-mcp; do
+  if bash "$repo/install.sh" "$retired_option" >"$tmp/retired-option.log" 2>&1; then
+    echo "retired MCP option was accepted" >&2; exit 1
+  fi
+  grep -Fq 'MCP has been retired' "$tmp/retired-option.log"
+  [[ ! -s "$MOCK_DOCKER_LOG" ]] || { echo 'retired option called Docker' >&2; exit 1; }
+done
+echo 'retired MCP switches rejected before service discovery: passed'
+
 # DB local old-volume removal must be approved/scheduled, not immediate.
 (
   set -e

@@ -16,7 +16,7 @@
 curl -fsSL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/install.sh | sudo bash
 ```
 
-即使脚本通过 pipe 执行，交互输入仍从 `/dev/tty` 读取。安装器检测到 `curl | bash` / stdin 执行时，会先从同一 `TXBOARD_DEPLOY_RAW_BASE` 将完整安装器物化到临时文件，再从文件执行；原始 pipe 仅被排空，不再与 Docker、MySQL、MCP 等子进程共享“脚本源码 stdin”。这避免网络慢速流下子进程意外截断尚未被 Bash 解析的后续安装步骤。
+即使脚本通过 pipe 执行，交互输入仍从 `/dev/tty` 读取。安装器检测到 `curl | bash` / stdin 执行时，会先从同一 `TXBOARD_DEPLOY_RAW_BASE` 将完整安装器物化到临时文件，再从文件执行；原始 pipe 仅被排空，不再与 Docker、MySQL 等子进程共享“脚本源码 stdin”。这避免网络慢速流下子进程意外截断尚未被 Bash 解析的后续安装步骤。
 
 安装向导会询问：
 
@@ -25,7 +25,6 @@ curl -fsSL https://raw.githubusercontent.com/ANRCM0/TXBoard-Deploy/main/install.
 - 安装目录
 - 如果目标安装目录已经存在旧文件或旧 TXBoard 部署，是否清理后继续
 - 是否启用测试部署模式
-- 是否启用内置 MCP Gateway（Hermes / OpenClaw 等 AI Agent）
 - 公网访问模式
 - 域名或 IP
 - HTTP / HTTPS 端口

@@ -1,0 +1,143 @@
+{
+  "phase": "B7.1-installer",
+  "status": "verified-local-retirement",
+  "base_commit": "8106fa541b9abc036017a2ced4c1bb3a4a7589f2",
+  "scope": "Remove MCP installer switches, generated environment, management menu and active CI; fixed historical smoke now checks 404.",
+  "destructive_database_actions": false,
+  "source_sha256": {
+    "install.sh": "148be83d5b97ed232a78ba78bea92e16dc00429b570db22c4222674208881fdd",
+    "lib/config.sh": "ede935d1979ec80220edd54039e2ff20b0abbad62d5e6ec254d35ddbbceed6ee"
+  },
+  "checks": [
+    {
+      "command": [
+        "bash",
+        "-n",
+        "install.sh"
+      ],
+      "exit_code": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "bash",
+        "-n",
+        "lib/config.sh"
+      ],
+      "exit_code": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "node",
+        "scripts/check-docs.mjs"
+      ],
+      "exit_code": 0,
+      "log_sha256": "d223e79d078e08deb7b53fd6c1fc96a03a32cfa03c88e95ce90ab2fb3bbf4ebf"
+    },
+    {
+      "command": [
+        "bash",
+        "scripts/test-install-flow.sh"
+      ],
+      "exit_code": 0,
+      "log_sha256": "dc30b1748c3b2b519ca4c715092d914ead6a724f289ebd30b6029fdc2b4801c9"
+    },
+    {
+      "command": [
+        "bash",
+        "scripts/test-detect.sh"
+      ],
+      "exit_code": 0,
+      "log_sha256": "f917fdbf4e5303bdaaf7fb2a4f5bd8eb484b6d04bcee6e7f8c1b8d0ee159b667"
+    },
+    {
+      "command": [
+        "bash",
+        "scripts/test-maintenance.sh"
+      ],
+      "exit_code": 0,
+      "log_sha256": "216b1a186faae80c941f6e64e2efa7472524a776efd9a6560f4dbde8799fa48c"
+    },
+    {
+      "command": [
+        "bash",
+        "scripts/test-upgrade.sh"
+      ],
+      "exit_code": 0,
+      "log_sha256": "8d60534650266368ccb5857a8b2c9dac8098beb8ef80c8a6a8ebe3103eeeba74"
+    },
+    {
+      "command": [
+        "bash",
+        "scripts/test-upgrade-management.sh"
+      ],
+      "exit_code": 0,
+      "log_sha256": "517bdcc0bbe0e4851e5a11a654525ab8fa84a26ac078120fa0f9dc9dd55d77d0"
+    },
+    {
+      "command": [
+        "bash",
+        "scripts/test-components.sh"
+      ],
+      "exit_code": 0,
+      "log_sha256": "eb932285e569283a15d17ee3ca1038df6c3208fbfe22f539c7222e95f5789bb5"
+    },
+    {
+      "command": [
+        "bash",
+        "scripts/test-gateway.sh"
+      ],
+      "exit_code": 0,
+      "log_sha256": "2175e69c99fa269008ad6cf773a28fb4e26fc4147dd0c230a9c5970cf6d6adb5"
+    },
+    {
+      "command": [
+        "bash",
+        "node/tests/install_args_test.sh"
+      ],
+      "exit_code": 0,
+      "log_sha256": "f8af069c6fd1d87bd2bbd439e684c11032eab8e07204deda98a9c5aa8c2ffd75"
+    },
+    {
+      "command": [
+        "bash",
+        "node/tests/image_channel_test.sh"
+      ],
+      "exit_code": 0,
+      "log_sha256": "a85d4ce3084ebe2ed9685b6498d1509e05e7abe7d885662459d5b9565a73867c"
+    },
+    {
+      "command": [
+        "bash",
+        "node/tests/remote_update_bridge_test.sh"
+      ],
+      "exit_code": 0,
+      "log_sha256": "8e74b918f053b0307906145ab14c9be8a34ba39f170404084899497e55eb7411"
+    },
+    {
+      "command": [
+        "bash",
+        "node/tests/legacy_cleanup_test.sh"
+      ],
+      "exit_code": 0,
+      "log_sha256": "54528857df4d4a29bc2c9206bf7b2630d91b404f0a8cd47b9fb1f75260d2bf56"
+    },
+    {
+      "command": [
+        "bash",
+        "node/tests/deploy_multi_instance_test.sh"
+      ],
+      "exit_code": 0,
+      "log_sha256": "9ed2ea3273d201bba31d97ca5451a96a3204dc7ca9e251580a026b6266714bfc"
+    }
+  ],
+  "retired_option_regression": {
+    "exit_code": 0,
+    "source_sha256": "57ef31130bef9625d42d090deb30cd987e2679db006e4f5c7c4f9aa291f8e8a8",
+    "log_sha256": "64b56c18fca8d5f5815b1dd29caa786a45ff76cc28bd6b6dcb9f7833ec9e677a",
+    "snapshot": "/opt/txboard-baseline/deploy-agent-retirement-r2"
+  },
+  "remote_ci": "pending",
+  "limits": "Shell suites use synthetic Docker/systemd boundaries. Historical image installation and real MySQL render jobs remain remote CI gates."
+}

@@ -25,7 +25,6 @@ sudo bash install.sh
 | --- | --- |
 | 数据库 | 内置 MySQL、宿主机/1Panel Docker MySQL、外部 MySQL |
 | 对外访问 | Caddy 自动 HTTPS、外部 HTTPS 反向代理、HTTP（仅适合受控环境） |
-| MCP | 主 TXBoard 镜像内置的可选 MCP Gateway，默认关闭 |
 | Core 镜像 | `ghcr.io/anrcm0/txboard-core`；已有 `txboard` 配置继续沿用原仓库 |
 | Gateway 镜像 | `ghcr.io/anrcm0/txboard-gateway`，独立 Native Gateway |
 | Node 镜像 | `ghcr.io/anrcm0/txboard-node`，保留 stable/dev 渠道与 txnode 管理入口 |
@@ -63,7 +62,6 @@ sudo txboard admin-reset-path  # 轮换管理后台安全路径
 | 已有 XBoard，需要迁移历史数据 | [隔离导入流程](docs/migration-from-xboard.md) |
 | 已有 TXBoard，升级、备份、恢复、诊断 | [运维与升级](docs/operations.md) |
 | 在隔离副本演练订阅回填、签名计划与中断恢复 | [持久升级影子演练](docs/durable-upgrade.md) |
-| 配置 AI Agent 的 MCP 接入 | [内置 MCP Gateway](docs/mcp-gateway.md) |
 | CI、自动化安装与参数说明 | [无人值守安装](docs/unattended-install.md) |
 | 部署层与应用仓库的职责边界 | [仓库边界与 CI](docs/architecture-and-ci.md) |
 
@@ -73,6 +71,6 @@ sudo txboard admin-reset-path  # 轮换管理后台安全路径
 - 不要运行 `docker compose down -v` 清理数据卷；不要跳过升级前的完整备份。
 - 安装、更新、迁移前先核实真实运行的容器和 Compose 项目，**不根据容器名猜测归属**。
 - 公开 Docker 镜像可以被拉取并检查文件系统，镜像公开不意味着其中源码具备保密性。
-- CI/镜像发布不是生产验收；对数据迁移、支付、Node 和 Agent 的上线验证见 [主仓库发布 Runbook](https://github.com/ANRCM0/TXBoard/blob/main/docs/operations/release-staging-acceptance.md)。
+- CI/镜像发布不是生产验收；对数据迁移、支付、Node 的上线验证见 [主仓库发布 Runbook](https://github.com/ANRCM0/TXBoard/blob/main/docs/operations/release-staging-acceptance.md)。
 
 本仓库只负责部署与服务器生命周期，不修改 TXBoard 的账本、权限和接口契约。

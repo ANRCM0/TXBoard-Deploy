@@ -8,7 +8,6 @@
 - **安装/配置选项**：[installation.md](installation.md) 与 [unattended-install.md](unattended-install.md)。
 - **服务发现、备份、恢复、升级**：[operations.md](operations.md)。
 - **历史 XBoard 数据迁移**：[migration-from-xboard.md](migration-from-xboard.md)；必须保留隔离目标库与原生产库不修改的警告。
-- **内置 MCP**：[mcp-gateway.md](mcp-gateway.md)；不要混淆独立 TXBoard-Gateway 用户 API BFF。
 - **TXBoard 应用协议**：以 [主应用合同](https://github.com/ANRCM0/TXBoard/blob/main/contracts/README.md) 为准。
 
 ## 修改流程
