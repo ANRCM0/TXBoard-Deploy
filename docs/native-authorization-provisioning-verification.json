@@ -66,5 +66,13 @@
                                      "actual_docker_installation":  false,
                                      "full_enrolled_node_backup_restore":  false,
                                      "configuration_only_restore":  "refuses enrolled deployments"
-                                 }
+                                 },
+    "review_and_merge":  {
+                             "branch":  "feat/node-native-authorization-pins",
+                             "pull_request":  "not created: GitHub API returned must be a collaborator",
+                             "merged_to_default_branch":  false,
+                             "precise_branch_ci_commit":  "da34cad2585d693c9e2063220672408bbaafa325",
+                             "precise_branch_ci_run":  38631490770,
+                             "precise_branch_ci_result":  "success"
+                         }
 }
