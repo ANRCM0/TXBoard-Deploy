@@ -28,6 +28,24 @@ Optional non-interactive flags include `--provider xboard|txboard`, `--channel s
 `--audit true|false`, and `--report-all true|false`. The non-interactive
 defaults are `xboard` protocol, `singbox`, `info`, audit disabled, and `report_all=false`.
 
+## TXBoard signed authorization pins
+
+For an explicitly enrolled TXBoard Node, the installer can pin the Core Ed25519 public trust tuple:
+
+```bash
+sudo bash deploy.sh install --mode machine --provider txboard \
+  --panel-url https://core.example.com --machine-id 12 --token '<machine-token>' \
+  --authorization-core-instance-id core-prod-01 \
+  --authorization-key-id core-ed25519-2026-01 --authorization-key-epoch 1 \
+  --authorization-public-key '<base64url-ed25519-public-key>'
+```
+
+All four `--authorization-*` values are required together; partial pins, noncanonical Ed25519 keys, non-HTTPS origins and Xboard enrollment are refused. The installer stores only the public Core/key identity in `config.yml`. It leaves `state_dir` to the Node's per-instance persistent `kernel.config_dir/authorization` default, so different Core targets cannot share revision state. The Core signing seed is never accepted by the installer. Public trust must be obtained and checked through a trusted Core administration channel before installation; the installer does not learn or accept keys automatically. Reconfiguring an enrolled single instance retains its pin by default; disabling enrollment requires typed confirmation. Identity-scope changes for an enrolled Node/Machine remain refused until Core supports controlled re-binding. A single Machine pin applies to its child nodes while each child keeps separate Node/Machine-bound high-water state; `instances[]` requires the pin on each enrolled instance.
+
+Enrollment requires Python 3 and a Node image that explicitly advertises `node_authorization_snapshot_v1` through `tx-node --capabilities`. The installer probes the image with networking disabled and no configuration or credentials mounted. For an existing container, the probe uses its actual immutable image ID. A newer `dev` tag alone cannot prove the running container supports enrollment. An old image or failed capability check leaves the existing configuration unchanged; use a published, reviewed supporting release first.
+
+`txnode backup` still creates a configuration archive. It does not include runtime authorization state or traffic spools; preserve the complete `data` directory separately. The old configuration-only restore entry refuses an enrolled deployment, because replacing a pin without matching durable high-water and traffic data is not a verified restore. Full enrolled-node backup/recovery is a subsequent Installer acceptance slice.
+
 After installation, use:
 
 ```bash

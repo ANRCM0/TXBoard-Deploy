@@ -37,6 +37,7 @@ jobs:
       - name: Preserve Node Installer regression suites
         run: |
           bash node/tests/install_args_test.sh
+          bash node/tests/authorization_runtime_test.sh
           bash node/tests/image_channel_test.sh
           bash node/tests/remote_update_bridge_test.sh
           bash node/tests/legacy_cleanup_test.sh

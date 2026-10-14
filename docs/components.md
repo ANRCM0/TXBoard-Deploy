@@ -58,6 +58,8 @@ sudo txnode upgrade stable
 sudo txnode channel dev
 ```
 
+For the opt-in finite signed Node authorization, pass the complete Core trust pin to the delegated Node installer: `--authorization-core-instance-id`, `--authorization-key-id`, `--authorization-key-epoch` and `--authorization-public-key`. All four are required together and only apply to `--provider txboard`; no signing private key is accepted. Machine mode shares the public pin across its children, while every child maintains a separate target-bound authorization revision. See [Node installer details](../node/README.md#txboard-signed-authorization-pins) and the [versioned authorization contract](https://github.com/ANRCM0/TXBoard/blob/main/contracts/node-protocol/native-authorization-lease-v1.md).
+
 这里委托 [原 Node 安装器](../node/README.md)，保留 `/etc/txnode`、data/config mount、host networking、多面板/多实例、legacy 导入、stable/dev 及受限 host update bridge；不授予容器 Docker socket。直接执行 `node/deploy.sh` 的 provider 默认仍为 `xboard`，TXBoard 用户应明确传 `--provider txboard`。统一入口的 `--dir` 须紧接组件参数，用于传递 Node 的 `INSTALL_DIR`；其他 Node 参数原样保留。
 
 Node 的 OCI 默认改为 `ghcr.io/anrcm0/txboard-node`，程序仍为 `tx-node`，快捷命令仍为 `txnode`。加载新脚本不改写已保存的旧/自定义 Compose image 或显式 `IMAGE`；旧 `tx-node` package 可以继续 status/start/stop，但新版渠道切换与远程更新只允许新的官方 package，对旧仓库拒绝自动切换。已有部署的镜像迁移需操作者单独审阅，不会通过自更新脚本强制替换。

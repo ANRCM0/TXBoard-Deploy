@@ -1074,6 +1074,11 @@ parse_install_args() {
   LOG_LEVEL="info"
   AUDIT_ENABLED="false"
   REPORT_ALL="false"
+  AUTHORIZATION_CORE_INSTANCE_ID=""
+  AUTHORIZATION_KEY_ID=""
+  AUTHORIZATION_KEY_EPOCH=""
+  AUTHORIZATION_PUBLIC_KEY=""
+  AUTHORIZATION_DISABLE_CONFIRMED="false"
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -1111,6 +1116,18 @@ parse_install_args() {
       --report-all)
         [ "$#" -ge 2 ] || fail "--report-all 缺少参数"
         REPORT_ALL="$2"; shift 2 ;;
+      --authorization-core-instance-id)
+        [ "$#" -ge 2 ] || fail "$1 缺少参数"
+        AUTHORIZATION_CORE_INSTANCE_ID="$2"; shift 2 ;;
+      --authorization-key-id)
+        [ "$#" -ge 2 ] || fail "$1 缺少参数"
+        AUTHORIZATION_KEY_ID="$2"; shift 2 ;;
+      --authorization-key-epoch)
+        [ "$#" -ge 2 ] || fail "$1 缺少参数"
+        AUTHORIZATION_KEY_EPOCH="$2"; shift 2 ;;
+      --authorization-public-key)
+        [ "$#" -ge 2 ] || fail "$1 缺少参数"
+        AUTHORIZATION_PUBLIC_KEY="$2"; shift 2 ;;
       *)
         fail "未知 install 参数: $1"
         ;;
@@ -1127,6 +1144,8 @@ parse_install_args() {
   [[ "$LOG_LEVEL" =~ ^(info|debug|warn|error)$ ]] || fail "--log-level 只支持 info/debug/warn/error"
   [[ "$AUDIT_ENABLED" =~ ^(true|false)$ ]] || fail "--audit 只支持 true/false"
   [[ "$REPORT_ALL" =~ ^(true|false)$ ]] || fail "--report-all 只支持 true/false"
+
+  validate_authorization_pin_args
 
   if [ "$KERNEL" = "xray" ] && [ "$AUDIT_ENABLED" = "true" ]; then
     fail "xray 内核不支持内嵌审计，请使用 --audit false"
@@ -1150,6 +1169,159 @@ parse_install_args() {
   fi
 
   NONINTERACTIVE_INSTALL=1
+}
+
+validate_authorization_pin_args() {
+  local supplied=0
+  local decoded_size canonical_key
+  [ -n "$AUTHORIZATION_CORE_INSTANCE_ID" ] && supplied=$((supplied+1))
+  [ -n "$AUTHORIZATION_KEY_ID" ] && supplied=$((supplied+1))
+  [ -n "$AUTHORIZATION_KEY_EPOCH" ] && supplied=$((supplied+1))
+  [ -n "$AUTHORIZATION_PUBLIC_KEY" ] && supplied=$((supplied+1))
+  if [ "$supplied" -eq 0 ]; then
+    AUTHORIZATION_ENABLED="false"
+    return 0
+  fi
+  [ "$supplied" -eq 4 ] || fail "有限授权需要同时提供 Core instance、key id、key epoch 和 public key 四项 pin"
+  [ "$MODE_STR" = "machine" ] || [ "$MODE_STR" = "node" ] || fail "有限授权只支持显式 Node/Machine 安装"
+  [ "$PANEL_PROVIDER" = "txboard" ] || fail "有限授权 pin 仅支持 TXBoard provider"
+  [[ "$PANEL_URL" =~ ^https://(\[[0-9a-fA-F:]+\]|[A-Za-z0-9.-]+)(:[0-9]{1,5})?/?$ ]] \
+    || fail "有限授权要求 HTTPS origin；不接受路径、查询、fragment 或 URL 凭据"
+  [[ "$AUTHORIZATION_CORE_INSTANCE_ID" =~ ^[A-Za-z0-9:_-]{8,80}$ ]] || fail "authorization Core instance pin 格式无效"
+  [[ "$AUTHORIZATION_KEY_ID" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || fail "authorization key id pin 格式无效"
+  [[ "$AUTHORIZATION_KEY_EPOCH" =~ ^[1-9][0-9]{0,18}$ ]] || fail "authorization key epoch 必须是正整数"
+  [[ "$AUTHORIZATION_PUBLIC_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]] || fail "authorization public key 必须是 base64url Ed25519 pin"
+  decoded_size="$(printf '%s=' "$AUTHORIZATION_PUBLIC_KEY" | tr '_-' '/+' | base64 --decode 2>/dev/null | wc -c | tr -d '[:space:]')" \
+    || fail "authorization public key 不是有效的 base64url Ed25519 pin"
+  [ "$decoded_size" = "32" ] || fail "authorization public key 必须解码为 32 字节"
+  canonical_key="$(printf '%s=' "$AUTHORIZATION_PUBLIC_KEY" | tr '_-' '/+' | base64 --decode 2>/dev/null | base64 | tr '/+' '_-' | tr -d '=\n')" \
+    || fail "authorization public key 不是规范的 base64url Ed25519 pin"
+  [ "$canonical_key" = "$AUTHORIZATION_PUBLIC_KEY" ] || fail "authorization public key 不是规范的 base64url Ed25519 pin"
+  AUTHORIZATION_ENABLED="true"
+}
+
+render_authorization_block() {
+  [ "${AUTHORIZATION_ENABLED:-false}" = "true" ] || return 0
+  cat <<EOF
+authorization:
+  enabled: true
+  core_instance_id: "$AUTHORIZATION_CORE_INSTANCE_ID"
+  key_id: "$AUTHORIZATION_KEY_ID"
+  key_epoch: "$AUTHORIZATION_KEY_EPOCH"
+  public_key: "$AUTHORIZATION_PUBLIC_KEY"
+  policy_version: native-node-authorization/v1
+  refresh_interval: 30
+  max_clock_skew: 5
+EOF
+}
+
+verify_authorization_runtime() {
+  [ "${AUTHORIZATION_ENABLED:-false}" = "true" ] || return 0
+  command -v python3 >/dev/null 2>&1 || fail "有限授权镜像预检需要 Python 3；请安装后重试"
+  local proof checked_image="${1:-$IMAGE}"
+  proof="$(docker run --rm --network none --entrypoint /usr/local/bin/tx-node "$checked_image" --capabilities 2>/dev/null)" \
+    || fail "所选 Node 镜像未提供有限授权能力；请先使用已发布的受信版本"
+  [ "${#proof}" -le 4096 ] || fail "Node 能力响应超过限制"
+  printf '%s' "$proof" | python3 -c '
+import json,sys
+try:
+    body=json.loads(sys.stdin.read(4097))
+    assert type(body) is dict and type(body.get("protocol_version")) is int and body["protocol_version"] == 1
+    assert body.get("runtime") == "tx-node"
+    caps=body.get("capabilities")
+    assert type(caps) is list and all(type(item) is str for item in caps)
+    assert "node_authorization_snapshot_v1" in caps
+except (ValueError,TypeError,AssertionError):
+    raise SystemExit(1)
+' || fail "所选 Node 镜像未声明有限签名授权支持；保持原配置"
+}
+
+verify_existing_authorization_runtime() {
+  [ "${AUTHORIZATION_ENABLED:-false}" = "true" ] || return 0
+  local running_image
+  running_image="$(docker inspect -f '{{.Image}}' "$APP_NAME" 2>/dev/null)" \
+    || fail "不能确认现有 Node 的实际镜像；保持原配置"
+  [[ "$running_image" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "现有 Node 镜像身份无效；保持原配置"
+  verify_authorization_runtime "$running_image"
+}
+
+authorization_enabled_in_config() {
+  [ -f "$CONFIG_FILE" ] || return 1
+  awk '
+    function indent_of(line, copy) { copy=line; sub(/[^ ].*$/, "", copy); return length(copy) }
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    {
+      indent=indent_of($0)
+      if ($0 ~ /^[[:space:]]*authorization:[[:space:]]*[{&*]/) { found=1; next }
+      if ($0 ~ /^[[:space:]]*authorization:[[:space:]]*(#.*)?$/) { in_auth=1; auth_indent=indent; next }
+      if (in_auth && indent <= auth_indent) in_auth=0
+      if (in_auth && $0 ~ /^[[:space:]]*enabled:/ && $0 !~ /^[[:space:]]*enabled:[[:space:]]*false[[:space:]]*(#.*)?$/) found=1
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$CONFIG_FILE"
+}
+
+authorization_config_value() {
+  local wanted="$1"
+  [ -f "$CONFIG_FILE" ] || return 0
+  awk -v wanted="$wanted" '
+    function indent_of(line, copy) { copy=line; sub(/[^ ].*$/, "", copy); return length(copy) }
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    {
+      indent=indent_of($0)
+      if ($0 ~ /^[[:space:]]*authorization:[[:space:]]*$/) { in_auth=1; auth_indent=indent; next }
+      if (in_auth && indent <= auth_indent) exit
+      if (in_auth && indent == auth_indent+2) {
+        line=$0; sub(/^[[:space:]]+/, "", line)
+        split(line, pair, ":")
+        if (pair[1] == wanted) {
+          value=substr(line, index(line, ":")+1)
+          sub(/^[[:space:]]+/, "", value); sub(/[[:space:]]+#.*$/, "", value)
+          if (value ~ /^".*"$/ || value ~ /^\047.*\047$/) value=substr(value, 2, length(value)-2)
+          print value; exit
+        }
+      }
+    }
+  ' "$CONFIG_FILE"
+}
+
+read_authorization_pin() {
+  local reuse_existing="${1:-yes}"
+  AUTHORIZATION_CORE_INSTANCE_ID=""
+  AUTHORIZATION_KEY_ID=""
+  AUTHORIZATION_KEY_EPOCH=""
+  AUTHORIZATION_PUBLIC_KEY=""
+  AUTHORIZATION_ENABLED="false"
+  AUTHORIZATION_DISABLE_CONFIRMED="false"
+  local existing=0 default_answer="n"
+  if [ "$reuse_existing" = "yes" ] && authorization_enabled_in_config; then
+    existing=1
+    default_answer="Y"
+    AUTHORIZATION_CORE_INSTANCE_ID="$(authorization_config_value core_instance_id)"
+    AUTHORIZATION_KEY_ID="$(authorization_config_value key_id)"
+    AUTHORIZATION_KEY_EPOCH="$(authorization_config_value key_epoch)"
+    AUTHORIZATION_PUBLIC_KEY="$(authorization_config_value public_key)"
+  fi
+  if [ "$existing" -eq 1 ]; then
+    confirm "保留当前有限授权 Core/key 公钥 pin？" "$default_answer" || {
+      confirm_typed "关闭当前有限 Node 授权会使节点退回普通快照模式。确认关闭？" "DISABLE-NODE-AUTHORIZATION" \
+        || fail "有限授权保留；已取消重新配置"
+      AUTHORIZATION_DISABLE_CONFIRMED="true"
+      return 0
+    }
+  else
+    confirm "为该 TXBoard Node pin 有限签名授权公钥？" "n" || return 0
+  fi
+  local value
+  read -r -p "Core instance id [$AUTHORIZATION_CORE_INSTANCE_ID]: " value || fail "输入中断，已取消"
+  AUTHORIZATION_CORE_INSTANCE_ID="${value:-$AUTHORIZATION_CORE_INSTANCE_ID}"
+  read -r -p "Authorization key id [$AUTHORIZATION_KEY_ID]: " value || fail "输入中断，已取消"
+  AUTHORIZATION_KEY_ID="${value:-$AUTHORIZATION_KEY_ID}"
+  read -r -p "Authorization key epoch [$AUTHORIZATION_KEY_EPOCH]: " value || fail "输入中断，已取消"
+  AUTHORIZATION_KEY_EPOCH="${value:-$AUTHORIZATION_KEY_EPOCH}"
+  read -r -p "Ed25519 public key (base64url) [$AUTHORIZATION_PUBLIC_KEY]: " value || fail "输入中断，已取消"
+  AUTHORIZATION_PUBLIC_KEY="${value:-$AUTHORIZATION_PUBLIC_KEY}"
+  validate_authorization_pin_args
 }
 
 read_panel_credentials() {
@@ -1218,6 +1390,17 @@ read_panel_credentials() {
 }
 
 write_config_files() {
+  if authorization_enabled_in_config \
+    && [ "${AUTHORIZATION_ENABLED:-false}" != "true" ] \
+    && [ "${AUTHORIZATION_DISABLE_CONFIRMED:-false}" != "true" ]; then
+    fail "现有有限授权 pin 不会被静默移除；请重新输入完整 pin，或显式确认关闭授权"
+  fi
+  if authorization_enabled_in_config && [ "${AUTHORIZATION_ENABLED:-false}" = "true" ]; then
+    local identity_id
+    if [ "$MODE_STR" = machine ]; then identity_id="$MACHINE_ID"; else identity_id="$NODE_ID"; fi
+    current_target_exists "$PANEL_URL" "$MODE_STR" "$identity_id" \
+      || fail "有限授权节点不能就地更换 Core/Node/Machine 目标；需要受控重绑定"
+  fi
   DATA_DIR="$INSTALL_DIR/data"
   mkdir -p "$INSTALL_DIR" "$REMOTE_UPDATE_DIR" "$DATA_DIR"
   chmod 700 "$DATA_DIR" 2>/dev/null || true
@@ -1253,6 +1436,7 @@ EOF
 # Generated by tx-node deploy.sh ($(date '+%Y-%m-%d %H:%M:%S'))
 # 重新生成请执行: txnode  → 选择「重新配置」
 $PANEL_BLOCK
+$([ "${AUTHORIZATION_ENABLED:-false}" = "true" ] && render_authorization_block)
 $HEALTH_BLOCK
 
 kernel:
@@ -1317,6 +1501,7 @@ do_install() {
 
   if [ "${NONINTERACTIVE_INSTALL:-0}" != "1" ]; then
     read_panel_credentials
+    read_authorization_pin
   fi
 
   if [ "${NONINTERACTIVE_INSTALL:-0}" != "1" ]; then
@@ -1328,10 +1513,12 @@ do_install() {
   fi
 
   backup_config
+  verify_authorization_runtime
   write_config_files
 
   info "拉取镜像（首次较慢）..."
   dc pull || fail "镜像拉取失败。若是私有包未授权，请先 docker login ghcr.io；网络问题可配置镜像加速后重跑"
+  verify_authorization_runtime
 
   reset_container || fail "清理旧容器失败，安装中止"
 
@@ -2152,6 +2339,11 @@ do_reconfigure() {
     warn "txnode 尚未部署，请先安装（或从 install.sh 导入）"
     return 0
   fi
+  if config_uses_instances; then
+    warn "当前配置使用 instances 多实例布局，重新生成单实例配置会移除其它面板目标"
+    hint "请使用「添加面板 / 实例」追加目标，或通过编辑器逐实例修改 authorization pin"
+    return 0
+  fi
 
   echo
   # 注意：$EDITOR 在多数最小化镜像里**根本没有设置**，而本脚本开了 set -u，
@@ -2167,6 +2359,8 @@ do_reconfigure() {
     1)
       backup_config
       read_panel_credentials
+      read_authorization_pin
+      verify_existing_authorization_runtime
       local prev_mode="$DEPLOY_MODE"
       write_config_files
       DEPLOY_MODE="$prev_mode"
@@ -2509,6 +2703,9 @@ do_backup() {
     warn "没有可备份的配置"
     return 0
   fi
+  if authorization_enabled_in_config; then
+    warn "此命令仅备份配置；有限授权版本与原流量批次位于 data 持久目录，需另行完整备份"
+  fi
   mkdir -p "$BACKUP_DIR"
   local stamp dest
   stamp=$(date +%Y%m%d-%H%M%S)
@@ -2536,6 +2733,9 @@ list_backups() {
 }
 
 do_restore() {
+  if authorization_enabled_in_config; then
+    fail "有限授权部署不能用旧配置恢复入口覆盖 pin；需同时核对授权版本与流量持久数据"
+  fi
   [ -d "$BACKUP_DIR" ] || { warn "没有备份目录"; return 0; }
   local files
   mapfile -t files < <(ls -1t "$BACKUP_DIR" 2>/dev/null || true)
@@ -2680,6 +2880,7 @@ render_instance_block() {
     audit:
       enabled: $AUDIT_ENABLED
       report_all: $REPORT_ALL
+$([ "${AUTHORIZATION_ENABLED:-false}" = "true" ] && render_authorization_block | sed 's/^/    /')
 EOF
   else
     cat <<EOF
@@ -2695,6 +2896,7 @@ EOF
     audit:
       enabled: $AUDIT_ENABLED
       report_all: $REPORT_ALL
+$([ "${AUTHORIZATION_ENABLED:-false}" = "true" ] && render_authorization_block | sed 's/^/    /')
 EOF
   fi
 }
@@ -2768,7 +2970,9 @@ do_add_panel_instance() {
   hint "推荐：同一个 tx-node 容器用 instances[] 同时连接多个 TXBoard。"
   if [ "${NONINTERACTIVE_INSTALL:-0}" != "1" ]; then
     read_panel_credentials
+    read_authorization_pin fresh
   fi
+  verify_existing_authorization_runtime
 
   local target_mode target_id
   if [ "$MODE_STR" = "machine" ]; then
@@ -2884,8 +3088,14 @@ do_existing_install() {
     1) do_add_panel_instance ;;
     2) do_install_isolated ;;
     3)
+      if config_uses_instances; then
+        warn "instances 配置不能覆盖为单实例；请使用「添加面板 / 实例」或逐实例编辑"
+        return 0
+      fi
       confirm "确认覆盖当前 config.yml？" "n" || return 0
       read_panel_credentials
+      read_authorization_pin
+      verify_existing_authorization_runtime
       backup_config
       write_config_files
       do_restart
@@ -3053,6 +3263,10 @@ do_machine_mode() {
         return 0
       }
       [ "$DEPLOY_MODE" = "docker" ] || { warn "txnode 尚未部署，请先安装或从 install.sh 导入"; return 0; }
+      if authorization_enabled_in_config; then
+        warn "已 enrollment 的 Node/Machine 不能直接切换身份作用域；需先通过 Core 完成受控重绑定"
+        return 0
+      fi
       local url mid tok
       read -r -p "面板地址: " url || return 0
       url="${url%/}"
@@ -3079,6 +3293,7 @@ log:
 audit:
   enabled: true
   report_all: false
+$([ "${AUTHORIZATION_ENABLED:-false}" = "true" ] && render_authorization_block)
 EOF
       chmod 600 "$CONFIG_FILE"
       ok "已切换为机器模式 (machine_id=$mid)"
@@ -3579,6 +3794,8 @@ usage() {
                    非交互单节点安装
       [--provider xboard|txboard] [--channel stable|dev] [--kernel singbox|xray] [--log-level info|debug|warn|error]
       [--audit true|false] [--report-all true|false]
+      [--authorization-core-instance-id ID --authorization-key-id ID --authorization-key-epoch N --authorization-public-key BASE64URL]
+                   四项一起提供时，为 TXBoard Node 固定 Core Ed25519 公钥 pin；不接收或保存私钥
     migrate        从 install.sh 部署导入配置并转成 docker 部署
     migrate --dry-run
                    只预览将要生成的配置，不写入任何文件
