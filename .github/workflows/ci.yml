@@ -3,7 +3,10 @@ name: deploy-ci
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, feat/node-native-authorization-pins]
+
+permissions:
+  contents: read
 
 jobs:
   verify:
