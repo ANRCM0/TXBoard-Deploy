@@ -1,0 +1,4 @@
+node/deploy.sh text eol=lf
+node/runtime*.py text eol=lf
+node/tests/runtime*.py text eol=lf
+node/tests/runtime*.sh text eol=lf

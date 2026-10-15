@@ -195,3 +195,20 @@ This keeps migration/cleanup authority in the Installer instead of requiring fut
 ## License
 
 The deployment script follows the TX-Node project's MPL-2.0 licensing.
+
+## 完整运行状态备份与恢复（P1 审阅候选）
+
+支持此能力的 Linux Node 镜像可使用：
+
+```bash
+txnode backup --full /root/txnode-runtime.tar
+txnode restore --full /root/txnode-runtime.tar
+txnode runtime-recover
+txnode start
+```
+
+`backup --full` 对正在运行的节点请求安全停机，关闭连接、保存最后流量并验证当前进程回执，再归档配置、Compose 和完整 `data/`；完成后保持停止。已停止的节点只能保存已有持久文件，不补回此前丢失的内存计量。普通 `backup` 仍仅备份配置，不能恢复已注册有限授权的节点。
+
+完整恢复限定原安装路径和相同配置，优先保留当前更新的授权高水位及当前独有的待上报文件；同一路径的流量文件内容冲突时拒绝覆盖。恢复将镜像固定到已验证的本地 image ID，保留原目录安全副本并保持停止。恢复中断时先执行 `runtime-recover`；保护标记存在期间配置写入、启动、重启、更新和清除会被阻止；停止、状态和日志仍可使用。再次启动仍需新的在线签名授权。
+
+支持范围是安装器生成的 canonical 三挂载 Docker 布局。额外挂载、外部持久路径、环境变量配置覆盖及实验 Usage 模式会拒绝。实际安装步骤、格式与边界见 [完整运行备份契约](../docs/node-runtime-backup-v1.md)，验收记录见 [P1 运行状态备份验收](../docs/node-runtime-backup-verification.json)。当前本地 Docker 验收使用合成 HTTP 夹具；真实 Core/TLS/签名授权及完整安装更新尚待后续验收。
