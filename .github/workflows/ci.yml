@@ -3,7 +3,10 @@ name: deploy-ci
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, feat/node-native-authorization-pins]
+
+permissions:
+  contents: read
 
 jobs:
   verify:
@@ -37,6 +40,13 @@ jobs:
       - name: Preserve Node Installer regression suites
         run: |
           bash node/tests/install_args_test.sh
+          bash node/tests/authorization_runtime_test.sh
+          bash node/tests/runtime_guard_test.sh
+          bash node/tests/runtime_tools_test.sh
+          bash node/tests/runtime_compose_test.sh
+          bash node/tests/runtime_config_restore_test.sh
+          python3 -B node/tests/runtime_backup_test.py
+          python3 -B node/tests/runtime_manager_test.py
           bash node/tests/image_channel_test.sh
           bash node/tests/remote_update_bridge_test.sh
           bash node/tests/legacy_cleanup_test.sh

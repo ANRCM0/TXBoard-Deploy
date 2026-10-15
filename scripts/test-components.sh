@@ -20,6 +20,34 @@ bash "$tmp/source/install.sh" --component node --dir "$tmp/node" --mode machine 
 printf '%s\n' install --mode machine --token 'literal $() `token` space' > "$tmp/expected"
 cmp "$tmp/expected" "$tmp/arguments"
 [[ "$(cat "$tmp/install-dir")" == "$tmp/node" ]]
+bash "$tmp/source/install.sh" --component node --dir "$tmp/auth-node" \
+  --mode machine --provider txboard --panel-url https://core.example.test --machine-id 12 \
+  --token synthetic-machine-token --authorization-core-instance-id core-example-01 \
+  --authorization-key-id core-key-1 --authorization-key-epoch 1 \
+  --authorization-public-key AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+cat > "$tmp/expected" <<'EOF'
+install
+--mode
+machine
+--provider
+txboard
+--panel-url
+https://core.example.test
+--machine-id
+12
+--token
+synthetic-machine-token
+--authorization-core-instance-id
+core-example-01
+--authorization-key-id
+core-key-1
+--authorization-key-epoch
+1
+--authorization-public-key
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+EOF
+cmp "$tmp/expected" "$tmp/arguments"
+[[ "$(cat "$tmp/install-dir")" == "$tmp/auth-node" ]]
 bash "$tmp/source/install.sh" --component gateway --upstream https://core.example.com --origins https://site.example.com
 [[ "$(head -n1 "$tmp/arguments")" == install ]]
 bash "$tmp/source/txboard.sh" --dir "$tmp/node" node status

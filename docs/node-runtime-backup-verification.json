@@ -1,0 +1,298 @@
+{
+  "format": "txboard.p1-node-runtime-backup-verification/v1",
+  "date": "2026-10-15",
+  "status": "implementation_and_synthetic_docker_verified",
+  "p1_overall_complete": false,
+  "branches": {
+    "TXBoard": "feat/installer-node-authorization-preflight",
+    "TXBoard-Deploy": "feat/node-native-authorization-pins"
+  },
+  "scope": "Installer-owned same-deployment Node runtime backup/restore; native v1 traffic and signed authorization high-water preservation; no production writes",
+  "runtime_contract": {
+    "layout": "txnode.backup-layout/v1",
+    "capability": "node_runtime_checkpoint_v1",
+    "receipt": "txnode.runtime-checkpoint/v1",
+    "signal": "Linux SIGUSR1",
+    "normal_sigterm_receipt": false,
+    "new_checkpoint_http": false,
+    "previous_inflight_http": "joined; shutdown timeout fails without successful capture"
+  },
+  "node_linux": {
+    "exit_code": 0,
+    "log_sha256": "d7823373bea9ab62f03b06e69fcc8e956a66180ee9dae44e7c84b1db2c4bf857",
+    "packages_pass": 31,
+    "test_pass": 1203,
+    "test_skip": 8,
+    "fail": [],
+    "source_snapshot": "/opt/txboard-baseline/p1-runtime-r2/node/node",
+    "source_sha256": {
+      "node/cmd/tx-node/backup_layout.go": "24c5c5f887db69bd409643d7c5cc15ea28919881ff0c55d90970d51729f58efa",
+      "node/cmd/tx-node/backup_layout_test.go": "80b7b95853ff91234539da713c9e9f39a0750025b5cff2d4677e02ebd826d0b4",
+      "node/cmd/tx-node/checkpoint_linux.go": "acf0188038ee295b6cbaf8f81ffbc397a62d7c578dc6ac472bfb3971dc7733dc",
+      "node/cmd/tx-node/checkpoint_linux_test.go": "ff64cd9f486f08098a2d6b0991ec4fe3e071dc23aee89bc58e58bb9e07cdd18b",
+      "node/cmd/tx-node/checkpoint_other.go": "042e1a01a0b0f144a13c95ac762638e893ae1e8faa3ed741a5878e4b580a7637",
+      "node/internal/controlerror/checkpoint.go": "530b3982e0ca3ad6fa60b51417e6eca44f12cdd6ecfd1950ca31f3db69b297f7",
+      "node/internal/machine/runtime_checkpoint_test.go": "e5b87c38942980b4aa17e517af15c71d673d1158281e5f26b84cc4eef231d6e6",
+      "node/internal/service/runtime_checkpoint.go": "d2ee886701409cdb1c47d8187a859f8a082bd5486284b36a2f1c7216354e3e2e",
+      "node/internal/service/runtime_checkpoint_test.go": "98ae22db27ad134d0d520a4528bf6c9a2639fffc9cc63c36c8e549bd5f29f96c",
+      "node/cmd/tx-node/capabilities.go": "6364cb6119bbd9906b8c226f521140747634a9e5eb131a4dc1f58f362d52ca19",
+      "node/cmd/tx-node/capabilities_test.go": "aff1386de4815202a516ec090da3628caaeb8514996916bc5f4a8ca6c795f03b",
+      "node/cmd/tx-node/main.go": "db18f2a6516d3e1e58b22beb1c71490a7a603b3fc64da97e4b923e2c457f422c",
+      "node/internal/machine/machine.go": "d378b3f288d4dd9b61d41f490e868bda1c2a9cfb6a4df0b9d66aa25bfd9d6e63",
+      "node/internal/pushsync/controller.go": "a9846314cca386d55d96a8cee05daa66933822abd4e74785dab7516e9dd70c53",
+      "node/internal/reporting/controller.go": "16f8e45802eb13923910e55afd1dba61fede94269b5d40ab7b1967a9be64e38a",
+      "node/internal/service/authorization_adapter.go": "e42cbba0b95b0b92abb02913fb9903017f91da73b519df548f2767da1c960ff9",
+      "node/internal/service/service.go": "732dd9ec37478a9df009dcfe87cd48cd0a74999879d1e078bee3ff0836b8f59d"
+    },
+    "binary_sha256": "c63416ed7f70f468f45d1975e0422722de1cb40f079fd6950ed1edb00e70630d"
+  },
+  "installer_linux": {
+    "snapshot": "/opt/txboard-baseline/p1-runtime-r9",
+    "shell_suites": 16,
+    "archive_tests": 27,
+    "docker_manager_tests": 19,
+    "guard_entrypoints": 28,
+    "results": [
+      {
+        "name": "node-tests-install_args_test.sh",
+        "exit_code": 0,
+        "log_sha256": "754803a32e4fccdd93704f26db3f239128756e90006c06bbd2775a2f4049ce3a"
+      },
+      {
+        "name": "node-tests-authorization_runtime_test.sh",
+        "exit_code": 0,
+        "log_sha256": "b634998c2c518d5f66fff53e630d97b975c6af68f2912169841fd2d7eb095e2e"
+      },
+      {
+        "name": "node-tests-runtime_guard_test.sh",
+        "exit_code": 0,
+        "log_sha256": "0915b4614452ff44ed4366e9879882df2b67f76e06650596b1968ebbb19185f3"
+      },
+      {
+        "name": "node-tests-runtime_tools_test.sh",
+        "exit_code": 0,
+        "log_sha256": "ef6ac5e0971193251070183a388ed5804c1153b3a8e8d6e99f17edcd597c318a"
+      },
+      {
+        "name": "node-tests-runtime_compose_test.sh",
+        "exit_code": 0,
+        "log_sha256": "12663194f083aea5c795b77373b02a01e3e60047546c2253ba971789c99f51dd"
+      },
+      {
+        "name": "node-tests-runtime_config_restore_test.sh",
+        "exit_code": 0,
+        "log_sha256": "bfb9cb62452ac66587642bb8aaa5a3a241dee72ecdadb17a9c8c632e4ec9b514"
+      },
+      {
+        "name": "node-tests-deploy_multi_instance_test.sh",
+        "exit_code": 0,
+        "log_sha256": "9ed2ea3273d201bba31d97ca5451a96a3204dc7ca9e251580a026b6266714bfc"
+      },
+      {
+        "name": "scripts-test-components.sh",
+        "exit_code": 0,
+        "log_sha256": "eb932285e569283a15d17ee3ca1038df6c3208fbfe22f539c7222e95f5789bb5"
+      },
+      {
+        "name": "scripts-test-install-flow.sh",
+        "exit_code": 0,
+        "log_sha256": "64b56c18fca8d5f5815b1dd29caa786a45ff76cc28bd6b6dcb9f7833ec9e677a"
+      },
+      {
+        "name": "node-tests-image_channel_test.sh",
+        "exit_code": 0,
+        "log_sha256": "a85d4ce3084ebe2ed9685b6498d1509e05e7abe7d885662459d5b9565a73867c"
+      },
+      {
+        "name": "node-tests-remote_update_bridge_test.sh",
+        "exit_code": 0,
+        "log_sha256": "8e74b918f053b0307906145ab14c9be8a34ba39f170404084899497e55eb7411"
+      },
+      {
+        "name": "node-tests-legacy_cleanup_test.sh",
+        "exit_code": 0,
+        "log_sha256": "66f8e4cde8d63e20f1db06a27cbd6ff429265110062504e89469282ed833391c"
+      },
+      {
+        "name": "scripts-test-detect.sh",
+        "exit_code": 0,
+        "log_sha256": "9a83d2cc4092185f4ff894a7724441b213f049dd6d3ada536167996bd8cf9ef9"
+      },
+      {
+        "name": "scripts-test-maintenance.sh",
+        "exit_code": 0,
+        "log_sha256": "60ca8264f5ff9f043b2b0030dd60947d5c29b465a12192f618dd7da750e3c3be"
+      },
+      {
+        "name": "scripts-test-upgrade.sh",
+        "exit_code": 0,
+        "log_sha256": "8d60534650266368ccb5857a8b2c9dac8098beb8ef80c8a6a8ebe3103eeeba74"
+      },
+      {
+        "name": "scripts-test-upgrade-management.sh",
+        "exit_code": 0,
+        "log_sha256": "517bdcc0bbe0e4851e5a11a654525ab8fa84a26ac078120fa0f9dc9dd55d77d0"
+      },
+      {
+        "name": "runtime_backup_test",
+        "exit_code": 0,
+        "log_sha256": "a02c661e1531c87851e281a06de36aa3cef10fb0d6e317f3cbfd2226c72b99e3"
+      },
+      {
+        "name": "runtime_manager_test",
+        "exit_code": 0,
+        "log_sha256": "369d0802e7981a953d5b1195504e3cc34d665429e0f82c5f009c714400d7317c"
+      }
+    ],
+    "source_sha256": {
+      ".gitattributes": "46602efa1f3e4d14901fd946916b0021221033c62c0764676b51c7b09e4b5af5",
+      "docs/node-runtime-backup-v1.md": "c4a2e9df35580a82044d0d355f552ff6d1fa039212565e27975be8a030a5c428",
+      "node/runtime_backup.py": "9d0a806d5ed1dac8db1354310a7a8dea9c2d5aebc05c6e928c21a5a9380e729d",
+      "node/runtime_manager.py": "b1b749f5a9e0c3a2e7a4d439e648289b8c3764a135c3c98e2667decd3f1a9d1b",
+      "node/tests/runtime_backup_test.py": "0e70098c8c3bcfe6442aefe439c2bd747a7684b8dcbcdc7c82c032e7f82086eb",
+      "node/tests/runtime_compose_test.sh": "ac94bf61a2b1fd9bc58b80208468c195a6bb4cb9a8d4c0f70f895733bc7ebcaf",
+      "node/tests/runtime_config_restore_test.sh": "87e78b834bc57f4c24285e6e350643ecf72469ec6f0133b1de9f733531d999af",
+      "node/tests/runtime_guard_test.sh": "f44abc284f1c34bc38a7321d5a8b12e94eaaba6d91dec3771695273e56866cfe",
+      "node/tests/runtime_manager_test.py": "2421301d02721e075fd6d791f85d6875d0f20f13a71c658ca7688e628ce013aa",
+      "node/tests/runtime_tools_test.sh": "b6d2073c7403fbf331ea2890fe61aef8989b033815ddfbe5e123b81f6ef39f1f",
+      "scripts/tests/node-runtime-backup/proc_read.go": "03ddc26b4a07dedae8899664fd5aad825f8355d6f1430853bc6419e374745bc4",
+      "scripts/tests/node-runtime-backup/run.py": "f5c0b4e675287eed76a3efbd7e34c2913a08cf093260992fdc82ee1660f40620",
+      ".github/workflows/ci.yml": "e05673636f7bd67f941d490ede105b07a493a802fca7b42a957e74f191dfe28d",
+      "node/README.md": "909c8f591acdcc7672666f0916f1ebc8f2b7fcac88cd6f0ad56e0fbad2da7d32",
+      "node/deploy.sh": "6bcdbbfede18616bd5510958d17bea9f6561f1fe91adaa2f4246a801312ab7c5"
+    }
+  },
+  "actual_docker": {
+    "snapshot": "/opt/txboard-baseline/p1-runtime-r9/deploy",
+    "evidence": "/opt/txboard-baseline/p1-runtime-smoke-r6",
+    "report_sha256": "ff328d735cc2b1257abe1bfe6611bca80fe74a577f2d3fa53d45ad7d7a51a23a",
+    "daemon": "unix:///opt/txboard-baseline/p1-docker-r1/docker.sock",
+    "image_origin": "local scratch import of source-built static Node, no image publication",
+    "fixture": "synthetic local HTTP; not real Core",
+    "native_authorization": false,
+    "cases": [
+      {
+        "container": "txnode-p1-singbox-e2979e44296f",
+        "current_process_receipt_verified": true,
+        "deployment": "/opt/txboard-baseline/p1-runtime-smoke-r6/deployment-singbox",
+        "final_archive_sha256": "dcc91104766b73f5a697544d0e975e5df9562eda4e016811061936c7441fb407",
+        "initial_archive_sha256": "da251f5a8abbfc15116fad2e7f76a6b4efefff850f487c468a64fae1ea74e0a6",
+        "kernel": "singbox",
+        "original_batch_id": "d2229de58fb2a94a2086698c74814039",
+        "payload_bytes": 65536,
+        "post_restore_payload_bytes": 65536,
+        "protocol": "vless",
+        "replayed_original_batch": true,
+        "restore_interruption_recovered": true,
+        "result": "passed",
+        "scenario": "runtime_backup_restore_checkpoint",
+        "terminal_sha256": "ae1e2d1aaef1a4ba341522d0e25c7c116a460dd61d2bea64f8622cf8749a22c4"
+      },
+      {
+        "archive_absent": true,
+        "container": "txnode-p1-receipt-refusal-singbox-e2979e44296f",
+        "deployment": "/opt/txboard-baseline/p1-runtime-smoke-r6/receipt-refusal-singbox",
+        "durable_tail_sha256": "0dd351fa4d5a6726561a70e984e3e1e5bfc9d1a73319d916c5306b8980b9cb2b",
+        "expectation": "backup refused on receipt publication failure",
+        "false_success_receipt_absent": true,
+        "kernel": "singbox",
+        "native_authorization": false,
+        "observed_process_exit_code": 1,
+        "payload_bytes": 65536,
+        "protocol": "vless",
+        "restart_policy": "no",
+        "result": "passed",
+        "scenario": "checkpoint_receipt_persistence_refusal"
+      },
+      {
+        "container": "txnode-p1-sigterm-singbox-e2979e44296f",
+        "deployment": "/opt/txboard-baseline/p1-runtime-smoke-r6/sigterm-singbox",
+        "expectation": "ordinary stop creates no checkpoint receipt",
+        "kernel": "singbox",
+        "native_authorization": false,
+        "observed_process_exit_code": 0,
+        "payload_bytes": 65536,
+        "protocol": "vless",
+        "receipt_absent": true,
+        "restart_policy": "no",
+        "result": "passed",
+        "scenario": "normal_sigterm_no_checkpoint_receipt"
+      },
+      {
+        "container": "txnode-p1-xray-e2979e44296f",
+        "current_process_receipt_verified": true,
+        "deployment": "/opt/txboard-baseline/p1-runtime-smoke-r6/deployment-xray",
+        "final_archive_sha256": "0cbaf33443b8b849fc3626e89a4310ab48731ce1800ce6e8159b1f0e50e1220d",
+        "initial_archive_sha256": "a1e8de9860e3324d54f427a988d05fad86cf946f2a39b726726dd4ab38715c78",
+        "kernel": "xray",
+        "original_batch_id": "45cedce46f1af4c41eee4b308de387f8",
+        "payload_bytes": 65536,
+        "post_restore_payload_bytes": 65536,
+        "protocol": "vless",
+        "replayed_original_batch": true,
+        "restore_interruption_recovered": true,
+        "result": "passed",
+        "scenario": "runtime_backup_restore_checkpoint",
+        "terminal_sha256": "c6f9fdf28828afed67b7038770706786ee129772e80634d01c917523fe06fc05"
+      },
+      {
+        "archive_absent": true,
+        "container": "txnode-p1-receipt-refusal-xray-e2979e44296f",
+        "deployment": "/opt/txboard-baseline/p1-runtime-smoke-r6/receipt-refusal-xray",
+        "durable_tail_sha256": "f655f31ca3d211f2e696f79435c99e5bb054dd203e53d2cde4c116cd6dd2b622",
+        "expectation": "backup refused on receipt publication failure",
+        "false_success_receipt_absent": true,
+        "kernel": "xray",
+        "native_authorization": false,
+        "observed_process_exit_code": 1,
+        "payload_bytes": 65536,
+        "protocol": "vless",
+        "restart_policy": "no",
+        "result": "passed",
+        "scenario": "checkpoint_receipt_persistence_refusal"
+      },
+      {
+        "container": "txnode-p1-sigterm-xray-e2979e44296f",
+        "deployment": "/opt/txboard-baseline/p1-runtime-smoke-r6/sigterm-xray",
+        "expectation": "ordinary stop creates no checkpoint receipt",
+        "kernel": "xray",
+        "native_authorization": false,
+        "observed_process_exit_code": 0,
+        "payload_bytes": 65536,
+        "protocol": "vless",
+        "receipt_absent": true,
+        "restart_policy": "no",
+        "result": "passed",
+        "scenario": "normal_sigterm_no_checkpoint_receipt"
+      }
+    ],
+    "limitations": [
+      "No real Core database/receipt acceptance",
+      "No finite signed authorization/TLS/offline refusal acceptance",
+      "VLESS TCP only; no VMess or complete protocol matrix",
+      "No full installation/update/rollback acceptance"
+    ]
+  },
+  "failure_history_preserved": [
+    {
+      "evidence": "/opt/txboard-baseline/p1-runtime-smoke-r1",
+      "reason": "synthetic echo traffic hit existing private-address block; fixture now uses exact TCP port direct route"
+    },
+    {
+      "evidence": "/opt/txboard-baseline/p1-runtime-smoke-r2",
+      "reason": "Compose v2 adds entrypoint:null; explicit overrides still refused"
+    }
+  ],
+  "public_artifacts": "sanitized hashes, fixed error codes and synthetic identities only; configs, archives, DB material and private logs are excluded",
+  "release_state": {
+    "default_branch_merged": false,
+    "images_published": false,
+    "ci": "remote branch CI recorded separately; local evidence does not assert remote success"
+  },
+  "next_gates": [
+    "real Core/TLS/finite signed authorization with full Installer backup/restore, fresh online recovery and offline refusal",
+    "VMess traffic in the Installer recovery harness",
+    "full actual Node installation/update/failure rollback and Core/Gateway single-host delivery",
+    "Gateway/Internal API, production PKI/recovery and basic purchase/payment P1 slices per development priorities"
+  ]
+}

@@ -1,0 +1,78 @@
+{
+    "phase":  "P1-node-installer-signed-authorization-provisioning",
+    "status":  "installer-pins-verified-exact-commit-ci-passed",
+    "recorded_local_date":  "2026-10-15",
+    "base_commit":  "73f8ce8",
+    "feature":  {
+                    "cli_flags":  [
+                                      "--authorization-core-instance-id",
+                                      "--authorization-key-id",
+                                      "--authorization-key-epoch",
+                                      "--authorization-public-key"
+                                  ],
+                    "provider":  "txboard-only",
+                    "partial_pins":  "refused",
+                    "secret_handling":  "public pin only; Core signing seed is never accepted",
+                    "durable_state_path":  "runtime default: per-instance kernel.config_dir/authorization",
+                    "runtime_preflight":  "read-only --capabilities, network none, no credential mounts; existing image checked by immutable ID",
+                    "machine_scope":  "shared public trust pin with per-child durable state",
+                    "reconfiguration":  "existing pin retained by default; disable requires typed confirmation",
+                    "unsupported_rebinding":  "enrolled Node/Machine identity-mode changes refused"
+                },
+    "local_tests":  {
+                        "node_install_args":  "passed",
+                        "install_components_literal_forwarding":  "passed",
+                        "multi_instance_regressions":  "passed",
+                        "installer_flow_regressions":  "passed",
+                        "bash_syntax":  "passed",
+                        "linux_installer_suites":  {
+                                                       "total":  12,
+                                                       "passed":  12
+                                                   },
+                        "actual_node_config_consumer":  "passed: production LoadRoot/NormalizeInstances consumes Installer single/multi fixtures; state roots are distinct",
+                        "actual_node_cli":  "race regression, build and offline --capabilities passed",
+                        "snapshot":  "/opt/txboard-baseline/installer-authorization-r6",
+                        "result":  {
+                                       "workspace_path":  ".tmp/installer-authorization-r6/result.json",
+                                       "sha256":  "aaa36f2f23203a77c684f7a403c595ada64120099759f5d060b5671b1f2bfc8d"
+                                   },
+                        "manifest":  ".tmp/installer-authorization-r6/manifest.json"
+                    },
+    "precise_commit_ci":  {
+                              "commit":  "6209c6b2b45a34cfd0c34c6065891c2956c0b13a",
+                              "branch":  "feat/node-native-authorization-pins",
+                              "run_id":  38626612279,
+                              "conclusion":  "success",
+                              "jobs":  [
+                                           {
+                                               "name":  "verify",
+                                               "conclusion":  "success"
+                                           },
+                                           {
+                                               "name":  "gateway-docker",
+                                               "conclusion":  "success"
+                                           }
+                                       ],
+                              "default_branch_merge":  "not performed; review branch only"
+                          },
+    "production_scope":  {
+                             "core_private_key_provisioning":  false,
+                             "automatic_trust_discovery":  false,
+                             "automatic_key_rotation":  false,
+                             "identity_rebinding":  false
+                         },
+    "remaining_delivery_gates":  {
+                                     "published_supporting_core_node_release":  "pending review and merge; review-branch CI does not publish images",
+                                     "actual_docker_installation":  false,
+                                     "full_enrolled_node_backup_restore":  false,
+                                     "configuration_only_restore":  "refuses enrolled deployments"
+                                 },
+    "review_and_merge":  {
+                             "branch":  "feat/node-native-authorization-pins",
+                             "pull_request":  "not created: GitHub API returned must be a collaborator",
+                             "merged_to_default_branch":  false,
+                             "precise_branch_ci_commit":  "da34cad2585d693c9e2063220672408bbaafa325",
+                             "precise_branch_ci_run":  38631490770,
+                             "precise_branch_ci_result":  "success"
+                         }
+}

@@ -196,6 +196,31 @@ legacy_hint_or_fail() {
 # ════════════════════════════════════════════════════════════════════
 #  docker 侧封装
 # ════════════════════════════════════════════════════════════════════
+# Keep the lock outside data/ and the installation itself: restore renames data,
+# and purge must not erase evidence belonging to an interrupted publication.
+require_runtime_restore_clear() {
+  local root parent name lock guard
+  root=$(readlink -m -- "$INSTALL_DIR") || return 1
+  parent="${root%/*}"; name="${root##*/}"
+  guard="$parent/.$name.runtime-restore.guard"
+  if [ -e "$guard" ] || [ -L "$guard" ]; then
+    warn "完整恢复尚未完成；先执行 txnode runtime-recover，保持节点停止"
+    return 1
+  fi
+  lock="$parent/.$name.runtime-operation.lock"
+  if [ "${TXNODE_RUNTIME_LOCK_PATH:-}" != "$lock" ]; then
+    command -v flock >/dev/null 2>&1 || { warn "Node 运维需要 flock"; return 1; }
+    mkdir -p "$parent" || return 1
+    [ ! -L "$lock" ] || return 1
+    (umask 077; touch "$lock") || return 1
+    exec 9>>"$lock" || return 1
+    flock -n 9 || { warn "另一个 Node 运维操作正在进行"; return 1; }
+    TXNODE_RUNTIME_LOCK_PATH="$lock"
+  fi
+  # Recheck after locking, including a dangling or malformed guard.
+  [ ! -e "$guard" ] && [ ! -L "$guard" ]
+}
+
 dc() { docker compose -f "$COMPOSE_FILE" "$@"; }
 
 container_state() { # 输出 running | exited | created | absent
@@ -215,6 +240,7 @@ container_state() { # 输出 running | exited | created | absent
 #
 # 返回 0 = 目标名已可用（或本来就没占用）；非 0 = 清理失败
 reset_container() {
+  require_runtime_restore_clear || return
   if ! command -v docker >/dev/null 2>&1; then return 0; fi
   # 该名字下不存在的容器 → 无事可做
   if ! docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$APP_NAME"; then
@@ -811,6 +837,7 @@ EOF
 # 整合入口：迁移确认后写盘 + 启动。dry_run=1 时只打印不落盘
 # 用法: mig_write_and_start <group_key> [dry_run]
 mig_write_and_start() {
+  require_runtime_restore_clear || return
   local key="$1" dry="${2:-0}"
   mig_build_group "$key"
 
@@ -998,6 +1025,7 @@ _mask() {
 # 完整迁移流程（面板 / CLI 共用）
 # 用法: do_migrate_legacy [dry_run]
 do_migrate_legacy() {
+  require_runtime_restore_clear || return
   local dry="${1:-0}"
 
   if ! detect_legacy_install; then
@@ -1074,6 +1102,11 @@ parse_install_args() {
   LOG_LEVEL="info"
   AUDIT_ENABLED="false"
   REPORT_ALL="false"
+  AUTHORIZATION_CORE_INSTANCE_ID=""
+  AUTHORIZATION_KEY_ID=""
+  AUTHORIZATION_KEY_EPOCH=""
+  AUTHORIZATION_PUBLIC_KEY=""
+  AUTHORIZATION_DISABLE_CONFIRMED="false"
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -1111,6 +1144,18 @@ parse_install_args() {
       --report-all)
         [ "$#" -ge 2 ] || fail "--report-all 缺少参数"
         REPORT_ALL="$2"; shift 2 ;;
+      --authorization-core-instance-id)
+        [ "$#" -ge 2 ] || fail "$1 缺少参数"
+        AUTHORIZATION_CORE_INSTANCE_ID="$2"; shift 2 ;;
+      --authorization-key-id)
+        [ "$#" -ge 2 ] || fail "$1 缺少参数"
+        AUTHORIZATION_KEY_ID="$2"; shift 2 ;;
+      --authorization-key-epoch)
+        [ "$#" -ge 2 ] || fail "$1 缺少参数"
+        AUTHORIZATION_KEY_EPOCH="$2"; shift 2 ;;
+      --authorization-public-key)
+        [ "$#" -ge 2 ] || fail "$1 缺少参数"
+        AUTHORIZATION_PUBLIC_KEY="$2"; shift 2 ;;
       *)
         fail "未知 install 参数: $1"
         ;;
@@ -1127,6 +1172,8 @@ parse_install_args() {
   [[ "$LOG_LEVEL" =~ ^(info|debug|warn|error)$ ]] || fail "--log-level 只支持 info/debug/warn/error"
   [[ "$AUDIT_ENABLED" =~ ^(true|false)$ ]] || fail "--audit 只支持 true/false"
   [[ "$REPORT_ALL" =~ ^(true|false)$ ]] || fail "--report-all 只支持 true/false"
+
+  validate_authorization_pin_args
 
   if [ "$KERNEL" = "xray" ] && [ "$AUDIT_ENABLED" = "true" ]; then
     fail "xray 内核不支持内嵌审计，请使用 --audit false"
@@ -1150,6 +1197,159 @@ parse_install_args() {
   fi
 
   NONINTERACTIVE_INSTALL=1
+}
+
+validate_authorization_pin_args() {
+  local supplied=0
+  local decoded_size canonical_key
+  [ -n "$AUTHORIZATION_CORE_INSTANCE_ID" ] && supplied=$((supplied+1))
+  [ -n "$AUTHORIZATION_KEY_ID" ] && supplied=$((supplied+1))
+  [ -n "$AUTHORIZATION_KEY_EPOCH" ] && supplied=$((supplied+1))
+  [ -n "$AUTHORIZATION_PUBLIC_KEY" ] && supplied=$((supplied+1))
+  if [ "$supplied" -eq 0 ]; then
+    AUTHORIZATION_ENABLED="false"
+    return 0
+  fi
+  [ "$supplied" -eq 4 ] || fail "有限授权需要同时提供 Core instance、key id、key epoch 和 public key 四项 pin"
+  [ "$MODE_STR" = "machine" ] || [ "$MODE_STR" = "node" ] || fail "有限授权只支持显式 Node/Machine 安装"
+  [ "$PANEL_PROVIDER" = "txboard" ] || fail "有限授权 pin 仅支持 TXBoard provider"
+  [[ "$PANEL_URL" =~ ^https://(\[[0-9a-fA-F:]+\]|[A-Za-z0-9.-]+)(:[0-9]{1,5})?/?$ ]] \
+    || fail "有限授权要求 HTTPS origin；不接受路径、查询、fragment 或 URL 凭据"
+  [[ "$AUTHORIZATION_CORE_INSTANCE_ID" =~ ^[A-Za-z0-9:_-]{8,80}$ ]] || fail "authorization Core instance pin 格式无效"
+  [[ "$AUTHORIZATION_KEY_ID" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || fail "authorization key id pin 格式无效"
+  [[ "$AUTHORIZATION_KEY_EPOCH" =~ ^[1-9][0-9]{0,18}$ ]] || fail "authorization key epoch 必须是正整数"
+  [[ "$AUTHORIZATION_PUBLIC_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]] || fail "authorization public key 必须是 base64url Ed25519 pin"
+  decoded_size="$(printf '%s=' "$AUTHORIZATION_PUBLIC_KEY" | tr '_-' '/+' | base64 --decode 2>/dev/null | wc -c | tr -d '[:space:]')" \
+    || fail "authorization public key 不是有效的 base64url Ed25519 pin"
+  [ "$decoded_size" = "32" ] || fail "authorization public key 必须解码为 32 字节"
+  canonical_key="$(printf '%s=' "$AUTHORIZATION_PUBLIC_KEY" | tr '_-' '/+' | base64 --decode 2>/dev/null | base64 | tr '/+' '_-' | tr -d '=\n')" \
+    || fail "authorization public key 不是规范的 base64url Ed25519 pin"
+  [ "$canonical_key" = "$AUTHORIZATION_PUBLIC_KEY" ] || fail "authorization public key 不是规范的 base64url Ed25519 pin"
+  AUTHORIZATION_ENABLED="true"
+}
+
+render_authorization_block() {
+  [ "${AUTHORIZATION_ENABLED:-false}" = "true" ] || return 0
+  cat <<EOF
+authorization:
+  enabled: true
+  core_instance_id: "$AUTHORIZATION_CORE_INSTANCE_ID"
+  key_id: "$AUTHORIZATION_KEY_ID"
+  key_epoch: "$AUTHORIZATION_KEY_EPOCH"
+  public_key: "$AUTHORIZATION_PUBLIC_KEY"
+  policy_version: native-node-authorization/v1
+  refresh_interval: 30
+  max_clock_skew: 5
+EOF
+}
+
+verify_authorization_runtime() {
+  [ "${AUTHORIZATION_ENABLED:-false}" = "true" ] || return 0
+  command -v python3 >/dev/null 2>&1 || fail "有限授权镜像预检需要 Python 3；请安装后重试"
+  local proof checked_image="${1:-$IMAGE}"
+  proof="$(docker run --rm --network none --entrypoint /usr/local/bin/tx-node "$checked_image" --capabilities 2>/dev/null)" \
+    || fail "所选 Node 镜像未提供有限授权能力；请先使用已发布的受信版本"
+  [ "${#proof}" -le 4096 ] || fail "Node 能力响应超过限制"
+  printf '%s' "$proof" | python3 -c '
+import json,sys
+try:
+    body=json.loads(sys.stdin.read(4097))
+    assert type(body) is dict and type(body.get("protocol_version")) is int and body["protocol_version"] == 1
+    assert body.get("runtime") == "tx-node"
+    caps=body.get("capabilities")
+    assert type(caps) is list and all(type(item) is str for item in caps)
+    assert "node_authorization_snapshot_v1" in caps
+except (ValueError,TypeError,AssertionError):
+    raise SystemExit(1)
+' || fail "所选 Node 镜像未声明有限签名授权支持；保持原配置"
+}
+
+verify_existing_authorization_runtime() {
+  [ "${AUTHORIZATION_ENABLED:-false}" = "true" ] || return 0
+  local running_image
+  running_image="$(docker inspect -f '{{.Image}}' "$APP_NAME" 2>/dev/null)" \
+    || fail "不能确认现有 Node 的实际镜像；保持原配置"
+  [[ "$running_image" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "现有 Node 镜像身份无效；保持原配置"
+  verify_authorization_runtime "$running_image"
+}
+
+authorization_enabled_in_config() {
+  [ -f "$CONFIG_FILE" ] || return 1
+  awk '
+    function indent_of(line, copy) { copy=line; sub(/[^ ].*$/, "", copy); return length(copy) }
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    {
+      indent=indent_of($0)
+      if ($0 ~ /^[[:space:]]*authorization:[[:space:]]*[{&*]/) { found=1; next }
+      if ($0 ~ /^[[:space:]]*authorization:[[:space:]]*(#.*)?$/) { in_auth=1; auth_indent=indent; next }
+      if (in_auth && indent <= auth_indent) in_auth=0
+      if (in_auth && $0 ~ /^[[:space:]]*enabled:/ && $0 !~ /^[[:space:]]*enabled:[[:space:]]*false[[:space:]]*(#.*)?$/) found=1
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$CONFIG_FILE"
+}
+
+authorization_config_value() {
+  local wanted="$1"
+  [ -f "$CONFIG_FILE" ] || return 0
+  awk -v wanted="$wanted" '
+    function indent_of(line, copy) { copy=line; sub(/[^ ].*$/, "", copy); return length(copy) }
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    {
+      indent=indent_of($0)
+      if ($0 ~ /^[[:space:]]*authorization:[[:space:]]*$/) { in_auth=1; auth_indent=indent; next }
+      if (in_auth && indent <= auth_indent) exit
+      if (in_auth && indent == auth_indent+2) {
+        line=$0; sub(/^[[:space:]]+/, "", line)
+        split(line, pair, ":")
+        if (pair[1] == wanted) {
+          value=substr(line, index(line, ":")+1)
+          sub(/^[[:space:]]+/, "", value); sub(/[[:space:]]+#.*$/, "", value)
+          if (value ~ /^".*"$/ || value ~ /^\047.*\047$/) value=substr(value, 2, length(value)-2)
+          print value; exit
+        }
+      }
+    }
+  ' "$CONFIG_FILE"
+}
+
+read_authorization_pin() {
+  local reuse_existing="${1:-yes}"
+  AUTHORIZATION_CORE_INSTANCE_ID=""
+  AUTHORIZATION_KEY_ID=""
+  AUTHORIZATION_KEY_EPOCH=""
+  AUTHORIZATION_PUBLIC_KEY=""
+  AUTHORIZATION_ENABLED="false"
+  AUTHORIZATION_DISABLE_CONFIRMED="false"
+  local existing=0 default_answer="n"
+  if [ "$reuse_existing" = "yes" ] && authorization_enabled_in_config; then
+    existing=1
+    default_answer="Y"
+    AUTHORIZATION_CORE_INSTANCE_ID="$(authorization_config_value core_instance_id)"
+    AUTHORIZATION_KEY_ID="$(authorization_config_value key_id)"
+    AUTHORIZATION_KEY_EPOCH="$(authorization_config_value key_epoch)"
+    AUTHORIZATION_PUBLIC_KEY="$(authorization_config_value public_key)"
+  fi
+  if [ "$existing" -eq 1 ]; then
+    confirm "保留当前有限授权 Core/key 公钥 pin？" "$default_answer" || {
+      confirm_typed "关闭当前有限 Node 授权会使节点退回普通快照模式。确认关闭？" "DISABLE-NODE-AUTHORIZATION" \
+        || fail "有限授权保留；已取消重新配置"
+      AUTHORIZATION_DISABLE_CONFIRMED="true"
+      return 0
+    }
+  else
+    confirm "为该 TXBoard Node pin 有限签名授权公钥？" "n" || return 0
+  fi
+  local value
+  read -r -p "Core instance id [$AUTHORIZATION_CORE_INSTANCE_ID]: " value || fail "输入中断，已取消"
+  AUTHORIZATION_CORE_INSTANCE_ID="${value:-$AUTHORIZATION_CORE_INSTANCE_ID}"
+  read -r -p "Authorization key id [$AUTHORIZATION_KEY_ID]: " value || fail "输入中断，已取消"
+  AUTHORIZATION_KEY_ID="${value:-$AUTHORIZATION_KEY_ID}"
+  read -r -p "Authorization key epoch [$AUTHORIZATION_KEY_EPOCH]: " value || fail "输入中断，已取消"
+  AUTHORIZATION_KEY_EPOCH="${value:-$AUTHORIZATION_KEY_EPOCH}"
+  read -r -p "Ed25519 public key (base64url) [$AUTHORIZATION_PUBLIC_KEY]: " value || fail "输入中断，已取消"
+  AUTHORIZATION_PUBLIC_KEY="${value:-$AUTHORIZATION_PUBLIC_KEY}"
+  validate_authorization_pin_args
 }
 
 read_panel_credentials() {
@@ -1218,6 +1418,18 @@ read_panel_credentials() {
 }
 
 write_config_files() {
+  require_runtime_restore_clear || return
+  if authorization_enabled_in_config \
+    && [ "${AUTHORIZATION_ENABLED:-false}" != "true" ] \
+    && [ "${AUTHORIZATION_DISABLE_CONFIRMED:-false}" != "true" ]; then
+    fail "现有有限授权 pin 不会被静默移除；请重新输入完整 pin，或显式确认关闭授权"
+  fi
+  if authorization_enabled_in_config && [ "${AUTHORIZATION_ENABLED:-false}" = "true" ]; then
+    local identity_id
+    if [ "$MODE_STR" = machine ]; then identity_id="$MACHINE_ID"; else identity_id="$NODE_ID"; fi
+    current_target_exists "$PANEL_URL" "$MODE_STR" "$identity_id" \
+      || fail "有限授权节点不能就地更换 Core/Node/Machine 目标；需要受控重绑定"
+  fi
   DATA_DIR="$INSTALL_DIR/data"
   mkdir -p "$INSTALL_DIR" "$REMOTE_UPDATE_DIR" "$DATA_DIR"
   chmod 700 "$DATA_DIR" 2>/dev/null || true
@@ -1253,6 +1465,7 @@ EOF
 # Generated by tx-node deploy.sh ($(date '+%Y-%m-%d %H:%M:%S'))
 # 重新生成请执行: txnode  → 选择「重新配置」
 $PANEL_BLOCK
+$([ "${AUTHORIZATION_ENABLED:-false}" = "true" ] && render_authorization_block)
 $HEALTH_BLOCK
 
 kernel:
@@ -1291,6 +1504,7 @@ EOF
 #  动作：安装 / 重装
 # ════════════════════════════════════════════════════════════════════
 do_install() {
+  require_runtime_restore_clear || return
   if [ "$#" -gt 0 ]; then
     parse_install_args "$@"
     info "使用非交互安装参数: mode=$MODE_STR panel=$PANEL_URL"
@@ -1317,6 +1531,7 @@ do_install() {
 
   if [ "${NONINTERACTIVE_INSTALL:-0}" != "1" ]; then
     read_panel_credentials
+    read_authorization_pin
   fi
 
   if [ "${NONINTERACTIVE_INSTALL:-0}" != "1" ]; then
@@ -1328,10 +1543,12 @@ do_install() {
   fi
 
   backup_config
+  verify_authorization_runtime
   write_config_files
 
   info "拉取镜像（首次较慢）..."
   dc pull || fail "镜像拉取失败。若是私有包未授权，请先 docker login ghcr.io；网络问题可配置镜像加速后重跑"
+  verify_authorization_runtime
 
   reset_container || fail "清理旧容器失败，安装中止"
 
@@ -1607,8 +1824,68 @@ do_status() {
 # ════════════════════════════════════════════════════════════════════
 #  动作：启停 / 重启
 # ════════════════════════════════════════════════════════════════════
+# Restored bundles use canonical Compose JSON (also valid YAML), with the
+# immutable image plus a bound official channel hint for a later explicit update.
+compose_is_json() {
+  [ -f "$COMPOSE_FILE" ] && grep -qE '^[[:space:]]*\{' "$COMPOSE_FILE"
+}
+compose_json_operation() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 -B - "$COMPOSE_FILE" "$1" "${2:-}" "$REMOTE_UPDATE_IMAGE_PREFIX" "$REMOTE_UPDATE_DIR" "$REMOTE_UPDATE_CONTAINER_DIR" <<'PY_COMPOSE'
+import json, os, pathlib, re, stat, sys, tempfile
+p, op, value, prefix, bridge, destination = sys.argv[1:]
+try:
+    if pathlib.Path(p).is_symlink() or os.path.getsize(p) > 4 * 1024 * 1024:
+        raise ValueError()
+    data = json.loads(pathlib.Path(p).read_bytes())
+    service = data['services']['tx-node']
+    image = service['image']
+    if op == 'image':
+        print(image)
+    elif op == 'channel':
+        origin = data.get('x-txnode-origin-image', image)
+        if origin != image and (not re.fullmatch(r'sha256:[a-f0-9]{64}', image) or data.get('x-txnode-origin-id') != image):
+            raise ValueError()
+        if origin not in (prefix + ':latest', prefix + ':dev'):
+            raise ValueError()
+        print('stable' if origin.endswith(':latest') else 'dev')
+    elif op == 'bridge':
+        mounts = [v for v in service.get('volumes', []) if v.get('target') == destination]
+        if len(mounts) != 1 or mounts[0].get('type') != 'bind' or mounts[0].get('source') != bridge or mounts[0].get('read_only', False):
+            raise ValueError()
+    else:
+        if op == 'restart' and value in ('no', 'unless-stopped'):
+            service['restart'] = value
+        elif op == 'image-set' and value in (prefix + ':latest', prefix + ':dev'):
+            service['image'] = value
+            data.pop('x-txnode-origin-image', None)
+            data.pop('x-txnode-origin-id', None)
+        else:
+            raise ValueError()
+        fd, name = tempfile.mkstemp(prefix='.compose-runtime-', dir=pathlib.Path(p).parent)
+        try:
+            with os.fdopen(fd, 'w') as output:
+                json.dump(data, output, separators=(',', ':'))
+                output.write('\n')
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(name, p)
+            directory = os.open(pathlib.Path(p).parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if os.path.exists(name):
+                os.unlink(name)
+except (OSError, ValueError, TypeError, KeyError, AttributeError):
+    raise SystemExit('TXNODE_COMPOSE_OPERATION_REFUSED')
+PY_COMPOSE
+}
+
 compose_set_restart_policy() {
   local policy="$1" rendered="$1"
+  if compose_is_json; then compose_json_operation restart "$policy"; return; fi
   # restart: no 在 YAML 里会被解析成布尔 false，必须加引号才等价于 "no"
   [ "$policy" = "no" ] && rendered='"no"'
   if [ -f "$COMPOSE_FILE" ] && grep -qE '^[[:space:]]*restart:' "$COMPOSE_FILE" 2>/dev/null; then
@@ -1633,17 +1910,18 @@ wait_container_stable() {
 }
 
 promote_restart_policy() {
-  compose_set_restart_policy "unless-stopped"
+  compose_set_restart_policy "unless-stopped" || return
   runtime_set_restart_policy "unless-stopped"
 }
 
 # 安全启动：先用 restart=no 起，确认连续稳定后再提升为 unless-stopped。
 # 这样坏配置不会陷入 Restarting 死循环。
 guarded_compose_start() {
+  require_runtime_restore_clear || return
   local recreate="${1:-0}"
 
   # 首次验证阶段禁用自动重启，坏配置不会形成 Restarting 死循环。
-  compose_set_restart_policy "no"
+  compose_set_restart_policy "no" || return
 
   if [ "$recreate" = "1" ]; then
     dc up -d --force-recreate || {
@@ -1678,6 +1956,7 @@ guarded_compose_start() {
 }
 
 do_start() {
+  require_runtime_restore_clear || return
   detect_deploy_mode
   ! is_installed && legacy_hint_or_fail "启动"
   info "启动..."
@@ -1704,6 +1983,7 @@ do_stop() {
 }
 
 do_restart() {
+  require_runtime_restore_clear || return
   detect_deploy_mode
   ! is_installed && legacy_hint_or_fail "重启"
   info "安全重启..."
@@ -1774,9 +2054,11 @@ official_image_for_channel() {
 }
 current_compose_image() {
   [ -f "$COMPOSE_FILE" ] || return 1
+  if compose_is_json; then compose_json_operation image; return; fi
   awk '/^[[:space:]]*image:[[:space:]]*/ {print $2; exit}' "$COMPOSE_FILE"
 }
 current_compose_channel() {
+  if compose_is_json; then compose_json_operation channel; return; fi
   local current
   current="$(current_compose_image)" || return 1
   case "$current" in
@@ -1790,6 +2072,7 @@ set_compose_channel() {
   local image tmp
   image="$(official_image_for_channel "$1")" || return 1
   remote_update_compose_supported || return 1
+  if compose_is_json; then compose_json_operation image-set "$image"; return; fi
   tmp="$COMPOSE_FILE.channel.$BASHPID"
   awk -v image="$image" '
     /^[[:space:]]*image:[[:space:]]*/ {sub(/image:[[:space:]]*[^[:space:]]+/, "image: " image); n++}
@@ -1801,6 +2084,7 @@ set_compose_channel() {
 
 ensure_remote_update_mount() {
   [ -f "$COMPOSE_FILE" ] || return 1
+  if compose_is_json; then compose_json_operation bridge; return; fi
   mkdir -p "$REMOTE_UPDATE_DIR"
   chmod 700 "$REMOTE_UPDATE_DIR" 2>/dev/null || true
 
@@ -1977,6 +2261,7 @@ write_remote_update_status() {
 # Shared Installer upgrade runtime. The remote bridge and manual 'txnode upgrade'
 # both delegate here so upgrade/rollback semantics have one owner.
 perform_docker_upgrade() {
+  require_runtime_restore_clear || return
   UPGRADE_OUTCOME="failed"
   local target="$1" old_image_id old_ref old_compose target_image
   remote_update_compose_supported || { warn "只支持官方 stable/dev 镜像"; return 1; }
@@ -2021,6 +2306,7 @@ perform_docker_upgrade() {
 }
 
 do_remote_upgrade_apply() {
+  require_runtime_restore_clear || return
   detect_deploy_mode
 
   if ! parse_remote_update_request "$REMOTE_UPDATE_REQUEST"; then
@@ -2077,6 +2363,7 @@ do_channel() {
   do_upgrade "$target"
 }
 do_upgrade() {
+  require_runtime_restore_clear || return
   local target="${1:-}"
   if [ -n "$target" ]; then [[ "$target" =~ ^(stable|dev|latest)$ ]] || fail "upgrade 只支持 stable/dev"; fi
   detect_deploy_mode
@@ -2141,6 +2428,7 @@ pick_editor() {
 #  动作：改配置
 # ════════════════════════════════════════════════════════════════════
 do_reconfigure() {
+  require_runtime_restore_clear || return
   detect_deploy_mode
   if [ "$DEPLOY_MODE" = "legacy" ]; then
     warn "当前只有 install.sh 部署，本脚本的配置向导只写 txnode 的 docker 布局"
@@ -2150,6 +2438,11 @@ do_reconfigure() {
   fi
   if [ "$DEPLOY_MODE" = "none" ]; then
     warn "txnode 尚未部署，请先安装（或从 install.sh 导入）"
+    return 0
+  fi
+  if config_uses_instances; then
+    warn "当前配置使用 instances 多实例布局，重新生成单实例配置会移除其它面板目标"
+    hint "请使用「添加面板 / 实例」追加目标，或通过编辑器逐实例修改 authorization pin"
     return 0
   fi
 
@@ -2167,6 +2460,8 @@ do_reconfigure() {
     1)
       backup_config
       read_panel_credentials
+      read_authorization_pin
+      verify_existing_authorization_runtime
       local prev_mode="$DEPLOY_MODE"
       write_config_files
       DEPLOY_MODE="$prev_mode"
@@ -2219,6 +2514,7 @@ audit_read() {
 
 # 写入审计开关。参数：$1=enabled(可空) $2=report_all(可空)
 audit_write() {
+  require_runtime_restore_clear || return
   local new_aud="${1:-}" new_rpt="${2:-}"
   if [ -z "$new_aud" ] && [ -z "$new_rpt" ]; then return 0; fi
 
@@ -2504,10 +2800,98 @@ do_validate() {
 # ════════════════════════════════════════════════════════════════════
 #  动作：备份 / 恢复
 # ════════════════════════════════════════════════════════════════════
+# Full runtime tools are version-bound to this script. A downloaded helper is
+# never executed until its complete SHA-256 matches this reviewed release.
+RUNTIME_BACKUP_SHA256="9d0a806d5ed1dac8db1354310a7a8dea9c2d5aebc05c6e928c21a5a9380e729d"
+RUNTIME_MANAGER_SHA256="b1b749f5a9e0c3a2e7a4d439e648289b8c3764a135c3c98e2667decd3f1a9d1b"
+
+ensure_runtime_tools() {
+  command -v python3 >/dev/null 2>&1 || { warn "完整备份/恢复需要 Python 3.10+"; return 1; }
+  python3 -B - "$INSTALL_DIR" <<'PY_PATH' || return
+import os, pathlib, sys
+p = pathlib.Path(os.path.abspath(sys.argv[1]))
+for item in (p, *p.parents):
+    if item.is_symlink():
+        raise SystemExit("TXNODE_RUNTIME_SYMLINK_REFUSED")
+PY_PATH
+  local tools="$INSTALL_DIR/.runtime-tools" file expected source tmp
+  mkdir -p "$tools" || return 1
+  [ ! -L "$tools" ] || return 1
+  chmod 700 "$tools" || return 1
+  for file in runtime_backup.py runtime_manager.py; do
+    case "$file" in
+      runtime_backup.py) expected="$RUNTIME_BACKUP_SHA256" ;;
+      *) expected="$RUNTIME_MANAGER_SHA256" ;;
+    esac
+    if [ -f "$tools/$file" ] && [ ! -L "$tools/$file" ] \
+      && [ "$(sha256sum "$tools/$file" | cut -d' ' -f1)" = "$expected" ]; then
+      continue
+    fi
+    tmp=$(mktemp "$tools/.helper-XXXXXX") || return 1
+    source="${SELF_PATH%/*}/$file"
+    if [ -f "$source" ] && [ ! -L "$source" ] \
+      && [ "$(sha256sum "$source" | cut -d' ' -f1)" = "$expected" ]; then
+      cp "$source" "$tmp" || { rm -f "$tmp"; return 1; }
+    elif command -v curl >/dev/null 2>&1; then
+      curl --proto '=https' --tlsv1.2 -fsSL "${SCRIPT_RAW_URL%/*}/$file" -o "$tmp" \
+        || { rm -f "$tmp"; warn "无法获取此安装器版本的完整备份工具"; return 1; }
+    else
+      rm -f "$tmp"; warn "完整备份工具缺失；请使用完整安装器目录或安装 curl"; return 1
+    fi
+    if [ "$(sha256sum "$tmp" | cut -d' ' -f1)" != "$expected" ]; then
+      rm -f "$tmp"; warn "完整备份工具版本校验失败；保持节点配置"; return 1
+    fi
+    chmod 600 "$tmp" || return 1
+    mv -f "$tmp" "$tools/$file" || return 1
+  done
+}
+
+runtime_bundle_command() {
+  local action="$1"; shift
+  ensure_runtime_tools || return
+  local root
+  root=$(readlink -m -- "$INSTALL_DIR") || return 1
+  local -a lock_args=()
+  if [ "${TXNODE_RUNTIME_LOCK_PATH:-}" = "${root%/*}/.${root##*/}.runtime-operation.lock" ]; then
+    lock_args=(--lock-fd 9)
+  fi
+  python3 -B "$INSTALL_DIR/.runtime-tools/runtime_manager.py" \
+    --install-dir "$root" --app-name "$APP_NAME" "${lock_args[@]}" "$action" "$@"
+}
+
+do_runtime_backup() {
+  require_runtime_restore_clear || return
+  [ "$#" -le 1 ] || { warn "用法: txnode backup --full [输出文件]"; return 1; }
+  local dest="${1:-$BACKUP_DIR/runtime-$(date +%Y%m%d-%H%M%S).tar}"
+  mkdir -p "$BACKUP_DIR" || return 1
+  runtime_bundle_command backup --output "$dest" || return
+  ok "完整备份已完成，节点保持停止 → $dest"
+  hint "启动: txnode start；请私密保存归档，其中包含凭据与运行状态"
+}
+
+do_runtime_restore() {
+  require_runtime_restore_clear || return
+  [ "$#" -eq 1 ] || { warn "用法: txnode restore --full <归档>"; return 1; }
+  runtime_bundle_command restore --archive "$1" || return
+  ok "完整恢复已完成，节点保持停止；启动时仍需获取新的在线授权"
+}
+
+do_runtime_recover() {
+  [ "$#" -eq 0 ] || { warn "用法: txnode runtime-recover"; return 1; }
+  runtime_bundle_command runtime-recover || return
+  ok "恢复事务已完成，原目录保留为安全副本；节点保持停止"
+}
+
 do_backup() {
+  if [ "${1:-}" = "--full" ]; then shift; do_runtime_backup "$@"; return; fi
+  [ "$#" -eq 0 ] || { warn "用法: txnode backup [--full [输出文件]]"; return 1; }
+  require_runtime_restore_clear || return
   if [ ! -f "$CONFIG_FILE" ]; then
     warn "没有可备份的配置"
     return 0
+  fi
+  if authorization_enabled_in_config; then
+    warn "此命令仅备份配置；完整保存授权版本与原流量批次请使用 txnode backup --full"
   fi
   mkdir -p "$BACKUP_DIR"
   local stamp dest
@@ -2535,10 +2919,27 @@ list_backups() {
   done <<< "$files"
 }
 
+legacy_config_backup_names() {
+  local name
+  while IFS= read -r name; do
+    case "$name" in
+      backup-[0-9]*.tar.gz|config.yml.[0-9]*|pre-instance-add.[0-9]*.yml)
+        [ -f "$BACKUP_DIR/$name" ] && [ ! -L "$BACKUP_DIR/$name" ] && printf '%s\n' "$name"
+        ;;
+    esac
+  done < <(ls -1t "$BACKUP_DIR" 2>/dev/null || true)
+}
+
 do_restore() {
+  if [ "${1:-}" = "--full" ]; then shift; do_runtime_restore "$@"; return; fi
+  [ "$#" -eq 0 ] || { warn "用法: txnode restore --full <归档>"; return 1; }
+  require_runtime_restore_clear || return
+  if authorization_enabled_in_config; then
+    fail "有限授权部署不能用旧配置恢复入口覆盖 pin；需同时核对授权版本与流量持久数据"
+  fi
   [ -d "$BACKUP_DIR" ] || { warn "没有备份目录"; return 0; }
   local files
-  mapfile -t files < <(ls -1t "$BACKUP_DIR" 2>/dev/null || true)
+  mapfile -t files < <(legacy_config_backup_names)
   if [ ${#files[@]} -eq 0 ]; then
     warn "没有可用备份"; return 0
   fi
@@ -2555,11 +2956,57 @@ do_restore() {
     info "已取消"; return 0
   fi
   backup_config
-  if [[ "$chosen" == *.tar.gz ]]; then
-    tar -xzf "$BACKUP_DIR/$chosen" -C "$INSTALL_DIR"
-  else
-    cp -a "$BACKUP_DIR/$chosen" "$CONFIG_FILE"
-  fi
+  command -v python3 >/dev/null 2>&1 || fail "配置恢复需要 Python 3"
+  python3 -B - "$BACKUP_DIR/$chosen" "$INSTALL_DIR" <<'PY_CONFIG_RESTORE' || return
+import os, pathlib, re, stat, sys, tarfile, tempfile
+source, root = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+try:
+    if source.is_symlink() or not source.is_file():
+        raise ValueError()
+    if source.name.endswith('.tar.gz'):
+        with tarfile.open(source, "r:gz") as archive:
+            members = []
+            for member in archive:
+                if len(members) >= 2 or not member.isfile() or not 0 <= member.size <= 4 * 1024 * 1024:
+                    raise ValueError()
+                members.append(member)
+            names = [m.name for m in members]
+            if len(names) != len(set(names)) or not names or set(names) - {"config.yml", "docker-compose.yml"} or "config.yml" not in names:
+                raise ValueError()
+            bodies = {}
+            for m in members:
+                body = archive.extractfile(m).read(m.size + 1)
+                if len(body) != m.size:
+                    raise ValueError()
+                bodies[m.name] = body
+    else:
+        if source.stat().st_size > 4 * 1024 * 1024:
+            raise ValueError()
+        bodies = {"config.yml": source.read_bytes()}
+    if any((root / name).is_symlink() for name in bodies):
+        raise ValueError()
+    # This legacy entry has no full YAML/runtime trust consumer. Conservatively
+    # reject enrollment or ambiguous syntax on both sides of the replacement.
+    def require_unenrolled_plain_yaml(raw):
+        text = raw.decode('utf-8-sig')
+        if re.search('authorization', text, re.IGNORECASE) or any(c in text for c in ('\\', '&', '*', '!', '{', '}', '[', ']', '\t', '\x00')) or '<<:' in text:
+            raise ValueError()
+    require_unenrolled_plain_yaml(bodies['config.yml'])
+    current = root / 'config.yml'
+    if current.exists():
+        if current.stat().st_size > 4 * 1024 * 1024:
+            raise ValueError()
+        require_unenrolled_plain_yaml(current.read_bytes())
+    for name, body in bodies.items():
+        fd, temporary = tempfile.mkstemp(prefix=".config-restore-", dir=root)
+        with os.fdopen(fd, "wb") as output:
+            output.write(body)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, root / name)
+except (OSError, ValueError, UnicodeError, tarfile.TarError):
+    raise SystemExit("TXNODE_CONFIG_ARCHIVE_REFUSED")
+PY_CONFIG_RESTORE
   chmod 600 "$CONFIG_FILE" 2>/dev/null || true
   ok "已恢复 $chosen"
   detect_deploy_mode
@@ -2680,6 +3127,7 @@ render_instance_block() {
     audit:
       enabled: $AUDIT_ENABLED
       report_all: $REPORT_ALL
+$([ "${AUTHORIZATION_ENABLED:-false}" = "true" ] && render_authorization_block | sed 's/^/    /')
 EOF
   else
     cat <<EOF
@@ -2695,6 +3143,7 @@ EOF
     audit:
       enabled: $AUDIT_ENABLED
       report_all: $REPORT_ALL
+$([ "${AUTHORIZATION_ENABLED:-false}" = "true" ] && render_authorization_block | sed 's/^/    /')
 EOF
   fi
 }
@@ -2740,6 +3189,7 @@ runtime_has_bind_conflict() {
 }
 
 restart_after_instance_change() {
+  require_runtime_restore_clear || return
   local rollback="$1"
   runtime_set_restart_policy "no"
   if docker restart "$APP_NAME" >/dev/null 2>&1 \
@@ -2760,6 +3210,7 @@ restart_after_instance_change() {
 }
 
 do_add_panel_instance() {
+  require_runtime_restore_clear || return
   detect_deploy_mode
   [ "$DEPLOY_MODE" = "docker" ] || { warn "需要先有 txnode docker 部署"; return 1; }
   [ -f "$CONFIG_FILE" ] || fail "配置文件不存在: $CONFIG_FILE"
@@ -2768,7 +3219,9 @@ do_add_panel_instance() {
   hint "推荐：同一个 tx-node 容器用 instances[] 同时连接多个 TXBoard。"
   if [ "${NONINTERACTIVE_INSTALL:-0}" != "1" ]; then
     read_panel_credentials
+    read_authorization_pin fresh
   fi
+  verify_existing_authorization_runtime
 
   local target_mode target_id
   if [ "$MODE_STR" = "machine" ]; then
@@ -2840,6 +3293,7 @@ find_next_isolated_suffix() {
 }
 
 do_install_isolated() {
+  require_runtime_restore_clear || return
   ensure_docker
   local suffix hp runner
   suffix=$(find_next_isolated_suffix) || fail "无法分配新的隔离实例编号"
@@ -2884,8 +3338,14 @@ do_existing_install() {
     1) do_add_panel_instance ;;
     2) do_install_isolated ;;
     3)
+      if config_uses_instances; then
+        warn "instances 配置不能覆盖为单实例；请使用「添加面板 / 实例」或逐实例编辑"
+        return 0
+      fi
       confirm "确认覆盖当前 config.yml？" "n" || return 0
       read_panel_credentials
+      read_authorization_pin
+      verify_existing_authorization_runtime
       backup_config
       write_config_files
       do_restart
@@ -2944,6 +3404,7 @@ nodes_summary() {
 }
 
 do_add_node() {
+  require_runtime_restore_clear || return
   detect_deploy_mode
   if config_uses_instances; then
     warn "当前已启用 instances 多面板布局，请使用「添加面板 / 实例」。"
@@ -2988,6 +3449,7 @@ do_add_node() {
 }
 
 do_remove_node() {
+  require_runtime_restore_clear || return
   detect_deploy_mode
   if config_uses_instances; then
     warn "当前已启用 instances 多面板布局；请手动编辑对应 instance，避免误删其它面板。"
@@ -3032,6 +3494,7 @@ do_remove_node() {
 }
 
 do_machine_mode() {
+  require_runtime_restore_clear || return
   detect_deploy_mode
   if config_uses_instances; then
     warn "当前已启用 instances 多面板布局，请通过「添加面板 / 实例」新增 machine instance。"
@@ -3053,6 +3516,10 @@ do_machine_mode() {
         return 0
       }
       [ "$DEPLOY_MODE" = "docker" ] || { warn "txnode 尚未部署，请先安装或从 install.sh 导入"; return 0; }
+      if authorization_enabled_in_config; then
+        warn "已 enrollment 的 Node/Machine 不能直接切换身份作用域；需先通过 Core 完成受控重绑定"
+        return 0
+      fi
       local url mid tok
       read -r -p "面板地址: " url || return 0
       url="${url%/}"
@@ -3079,6 +3546,7 @@ log:
 audit:
   enabled: true
   report_all: false
+$([ "${AUTHORIZATION_ENABLED:-false}" = "true" ] && render_authorization_block)
 EOF
       chmod 600 "$CONFIG_FILE"
       ok "已切换为机器模式 (machine_id=$mid)"
@@ -3178,6 +3646,7 @@ do_legacy_cleanup() {
 #  动作：卸载 / 彻底清除
 # ════════════════════════════════════════════════════════════════════
 do_uninstall() {
+  require_runtime_restore_clear || return
   detect_deploy_mode
   ! is_installed && fail "未检测到已部署的 tx-node"
 
@@ -3206,6 +3675,7 @@ do_uninstall() {
 }
 
 do_purge() {
+  require_runtime_restore_clear || return
   detect_deploy_mode
   title "彻底清除 tx-node"
   echo -e "${RED}  将删除以下内容：${NC}"
@@ -3579,6 +4049,8 @@ usage() {
                    非交互单节点安装
       [--provider xboard|txboard] [--channel stable|dev] [--kernel singbox|xray] [--log-level info|debug|warn|error]
       [--audit true|false] [--report-all true|false]
+      [--authorization-core-instance-id ID --authorization-key-id ID --authorization-key-epoch N --authorization-public-key BASE64URL]
+                   四项一起提供时，为 TXBoard Node 固定 Core Ed25519 公钥 pin；不接收或保存私钥
     migrate        从 install.sh 部署导入配置并转成 docker 部署
     migrate --dry-run
                    只预览将要生成的配置，不写入任何文件
@@ -3599,8 +4071,9 @@ usage() {
     doctor         环境与运行诊断
     panel-add      向当前容器添加新的面板 / 实例
     isolated-add   自动创建 tx-node-N 隔离实例
-    backup         备份当前配置
-    restore        从备份恢复
+    backup [--full [文件]]  配置备份；--full 含完整运行状态并保持停止
+    restore --full <文件>   验证并恢复完整状态，保持停止
+    runtime-recover         完成中断的恢复事务，保持停止
     uninstall      卸载（保留配置）
     purge          彻底清除（删除配置、镜像，不可逆）
     link           安装 / 重建快捷命令 txnode
@@ -3718,8 +4191,9 @@ main() {
     doctor)      do_doctor ;;
     panel-add)   NONINTERACTIVE_INSTALL=0; do_add_panel_instance ;;
     isolated-add) NONINTERACTIVE_INSTALL=0; do_install_isolated ;;
-    backup)      do_backup ;;
-    restore)     do_restore ;;
+    backup)      do_backup "$@" ;;
+    restore)     do_restore "$@" ;;
+    runtime-recover) do_runtime_recover "$@" ;;
     uninstall)   do_uninstall ;;
     purge)       do_purge ;;
     *)
