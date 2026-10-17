@@ -100,6 +100,13 @@ run_upgrade() {
   python3 "$executable" "$@" --dir "$TXBOARD_INSTALL_DIR"
 }
 
+run_native() {
+  local executable="$SCRIPT_DIR/scripts/native-runtime.py"
+  [[ -f "$executable" && ! -L "$executable" ]] || die "native deployment runner missing from the reviewed toolkit"
+  command -v python3 >/dev/null 2>&1 || die "native deployment requires Python 3.10+"
+  python3 "$executable" "$@" --dir "$TXBOARD_INSTALL_DIR"
+}
+
 show_help() {
   cat <<'EOF'
 TXBoard 管理工具
@@ -129,6 +136,7 @@ Quick commands:
   logs [service]       Follow logs: all, txboard, database/mysql, backup
   update [tag]         Update the current image, or switch to a tag
   upgrade <command>   Signed isolated shadow plan/check/apply/status/recover/restore-check
+  native <command>    Native update --image DIGEST / status / recover (original durable intent)
   backup               Create a backup now
   backups              List available backups
   restore              Restore a managed-MySQL backup interactively (local mode only)
@@ -237,6 +245,7 @@ case "$CMD" in
   install) run_install ;;
   update) run_update "$ARG" ;;
   upgrade) shift; run_upgrade "$@" ;;
+  native) shift; run_native "$@" ;;
   detect) docker_ok; txboard_detect_scan "$TXBOARD_INSTALL_DIR"; txboard_detect_print ;;
   status|ps) service_status ;;
   start) service_start ;;

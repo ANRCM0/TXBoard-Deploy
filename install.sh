@@ -87,6 +87,8 @@ IMAGE_REPO="${TXBOARD_IMAGE_REPO:-ghcr.io/anrcm0/txboard-core}"
 IMAGE_REPO="${IMAGE_REPO,,}"
 IMAGE_TAG="${TXBOARD_IMAGE_TAG:-latest}"
 INSTALL_DIR="${TXBOARD_INSTALL_DIR:-/opt/txboard}"
+NATIVE_CONFIG_DIR="${TXBOARD_NATIVE_CONFIG_DIR:-}"
+NATIVE_IMAGE="${TXBOARD_NATIVE_IMAGE:-}"
 ADMIN_EMAIL="${TXBOARD_ADMIN_EMAIL:-}"
 MODE="${TXBOARD_MODE:-}"
 DOMAIN="${TXBOARD_DOMAIN:-}"
@@ -218,6 +220,8 @@ Options:
   --db-user USER      Database username (default: txboard)
   --db-password PASS  Database password (prefer environment variable)
   --install-type MODE fresh | xboard-import (default: fresh)
+  --native-config DIR  Prepare/activate native runtime using private operator configuration
+  --native-image REF   Native image pinned by repository@sha256 or an existing sha256 image ID
   --xboard-dump PATH Trusted XBoard single-database mysqldump .sql.gz (not a live DB)
   --xboard-env PATH  Original XBoard .env containing APP_KEY
   --xboard-auto-dump  Export .sql.gz automatically from local XBoard MySQL container
@@ -295,6 +299,8 @@ while [[ $# -gt 0 ]]; do
     --db-user) DB_USERNAME="${2:?missing value for --db-user}"; shift 2 ;;
     --db-password) DB_PASSWORD="${2:?missing value for --db-password}"; shift 2 ;;
     --install-type) INSTALL_TYPE="${2:?missing value for --install-type}"; shift 2 ;;
+    --native-config) NATIVE_CONFIG_DIR="${2:?missing value for --native-config}"; shift 2 ;;
+    --native-image) NATIVE_IMAGE="${2:?missing value for --native-image}"; shift 2 ;;
     --xboard-dump) XBOARD_DUMP="${2:?missing value for --xboard-dump}"; INSTALL_TYPE=xboard-import; shift 2 ;;
     --xboard-env) XBOARD_ENV_FILE="${2:?missing value for --xboard-env}"; shift 2 ;;
     --xboard-auto-dump) XBOARD_AUTO_DUMP=true; INSTALL_TYPE=xboard-import; shift ;;
@@ -575,11 +581,17 @@ detect_host() {
 install_deploy_tools() {
   local manager_tmp="$INSTALL_DIR/.txboard.sh.tmp"
   local updater_tmp="$INSTALL_DIR/.update.sh.tmp"
-  local module tmp
+  local module tmp toolkit_source
+  toolkit_source="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
   mkdir -p "$INSTALL_DIR/lib"
 
   download_file() {
     local url="$1" dest="$2"
+    local relative="${url#"$DEPLOY_RAW_BASE/"}"
+    if [[ "$relative" != "$url" && -f "$toolkit_source/$relative" && ! -L "$toolkit_source/$relative" ]]; then
+      cp -- "$toolkit_source/$relative" "$dest"
+      return
+    fi
     if command -v curl >/dev/null 2>&1; then
       curl -fsSL "$url" -o "$dest"
     elif command -v wget >/dev/null 2>&1; then
@@ -608,6 +620,10 @@ install_deploy_tools() {
 
   mv "$manager_tmp" "$INSTALL_DIR/txboard.sh"
   mv "$updater_tmp" "$INSTALL_DIR/update.sh"
+  if [[ -n "$NATIVE_CONFIG_DIR" ]]; then
+    [[ -f "$INSTALL_DIR/scripts/native-runtime.py" && ! -L "$INSTALL_DIR/scripts/native-runtime.py" ]] ||
+      die "native runner was not preserved in the installed toolkit"
+  fi
   chmod 755 "$INSTALL_DIR/txboard.sh" "$INSTALL_DIR/update.sh" "$INSTALL_DIR"/lib/*.sh
 
   if [[ "${EUID:-$(id -u)}" -eq 0 && -d /usr/local/bin ]]; then
@@ -756,10 +772,28 @@ IMAGE_TAG="$(prompt "TXBoard 镜像版本（latest / dev / 固定版本）" "$IM
 [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "invalid image tag: $IMAGE_TAG"
 IMAGE="$IMAGE_REPO:$IMAGE_TAG"
 
+if [[ -n "$NATIVE_CONFIG_DIR" ]]; then
+  [[ "$NATIVE_IMAGE" =~ ^sha256:[0-9a-f]{64}$ || "$NATIVE_IMAGE" =~ ^[a-z0-9][a-z0-9./:_-]{0,220}@sha256:[0-9a-f]{64}$ ]] ||
+    die "native installation requires --native-image with an immutable image reference"
+  IMAGE="$NATIVE_IMAGE"
+  command -v python3 >/dev/null 2>&1 || die "native installation requires Python 3.10+"
+  [[ "$INSTALL_TYPE" == fresh && "$NATIVE_CONFIG_DIR" == /* && -d "$NATIVE_CONFIG_DIR" && ! -L "$NATIVE_CONFIG_DIR" ]] ||
+    die "--native-config requires a fresh installation and an absolute private configuration directory"
+  [[ "$NATIVE_CONFIG_DIR" != "$INSTALL_DIR" && "$NATIVE_CONFIG_DIR" != "$INSTALL_DIR/"* ]] ||
+    die "private native source configuration must be outside the target installation directory"
+  native_email="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["identity"]["email"])' "$NATIVE_CONFIG_DIR/prepare.json")" ||
+    die "cannot read native administrator configuration"
+  [[ -z "$ADMIN_EMAIL" || "$ADMIN_EMAIL" == "$native_email" ]] || die "administrator email differs from native preparation"
+  ADMIN_EMAIL="$native_email"
+elif [[ -n "$NATIVE_IMAGE" ]]; then
+  die "--native-image requires --native-config"
+fi
 if [[ "$ASSUME_YES" -eq 1 && -z "$ADMIN_EMAIL" ]]; then
   die "--yes requires --email or TXBOARD_ADMIN_EMAIL"
 fi
-ADMIN_EMAIL="$(prompt "管理员邮箱" "${ADMIN_EMAIL:-admin@example.com}")"
+if [[ -z "$NATIVE_CONFIG_DIR" ]]; then
+  ADMIN_EMAIL="$(prompt "管理员邮箱" "${ADMIN_EMAIL:-admin@example.com}")"
+fi
 valid_email "$ADMIN_EMAIL" || die "invalid administrator email: $ADMIN_EMAIL"
 
 case "${TEST_MODE,,}" in
@@ -779,7 +813,7 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
 
 fi
 
-if [[ "$ASSUME_YES" -eq 0 && "$INSTALL_TYPE" == fresh && -z "$XBOARD_DUMP" ]]; then
+if [[ "$ASSUME_YES" -eq 0 && "$INSTALL_TYPE" == fresh && -z "$XBOARD_DUMP" && -z "$NATIVE_CONFIG_DIR" ]]; then
   install_choice="$(prompt "安装类型：1 全新空库 / 2 从 XBoard SQL 备份迁入" "1")"
   case "$install_choice" in
     1) INSTALL_TYPE=fresh ;;
@@ -1076,6 +1110,24 @@ MAILGUN_SECRET=
 INSTALLED=false
 EOF
 
+NATIVE_VOLUME_BLOCK=""
+PLUGIN_VOLUME_BLOCK="      - ./data/plugins:/www/plugins"
+if [[ -n "$NATIVE_CONFIG_DIR" ]]; then
+  mkdir -p "$INSTALL_DIR/scripts"
+  native_source="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/scripts/native-runtime.py"
+  if [[ -f "$native_source" && ! -L "$native_source" ]]; then
+    cp -- "$native_source" "$INSTALL_DIR/scripts/native-runtime.py"
+  elif command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$DEPLOY_RAW_BASE/scripts/native-runtime.py" -o "$INSTALL_DIR/scripts/native-runtime.py" || die "cannot retrieve native deployment runner"
+  else
+    wget -qO "$INSTALL_DIR/scripts/native-runtime.py" "$DEPLOY_RAW_BASE/scripts/native-runtime.py" || die "cannot retrieve native deployment runner"
+  fi
+  chmod 700 "$INSTALL_DIR/scripts/native-runtime.py"
+  python3 "$INSTALL_DIR/scripts/native-runtime.py" stage-config --dir "$INSTALL_DIR" --source "$NATIVE_CONFIG_DIR" || die "native configuration rejected"
+  PLUGIN_VOLUME_BLOCK=""
+  NATIVE_VOLUME_BLOCK="      - ./native:/run/txboard-native:ro"
+fi
+
 cat > backup.sh <<'BACKUP'
 #!/bin/sh
 #
@@ -1299,7 +1351,8 @@ $DB_EXTRA_HOSTS_BLOCK
 $DB_NETWORKS_BLOCK
     volumes:
       - ./data/storage:/www/storage
-      - ./data/plugins:/www/plugins
+$PLUGIN_VOLUME_BLOCK
+$NATIVE_VOLUME_BLOCK
       - ./api.env:/www/.env
       - api-redis:/data
       - caddy-data:/caddy-data
@@ -1376,7 +1429,16 @@ fi
 INSTALL_PROGRESS_TOTAL=5
 [[ "$INSTALL_TYPE" == xboard-import ]] && INSTALL_PROGRESS_TOTAL=7
 INSTALL_PROGRESS_DONE=0
-install_progress_step "拉取 TXBoard 与依赖镜像" docker compose pull ||
+pull_install_images() {
+  if [[ -z "$NATIVE_CONFIG_DIR" ]]; then docker compose pull; return; fi
+  if [[ "$IMAGE" != sha256:* ]]; then docker pull "$IMAGE" || return; fi
+  docker image inspect "$IMAGE" >/dev/null || return
+  local service
+  while IFS= read -r service; do
+    [[ "$service" == txboard ]] || docker compose pull "$service" || return
+  done < <(docker compose config --services)
+}
+install_progress_step "拉取 TXBoard 与依赖镜像" pull_install_images ||
   die "unable to pull TXBoard images"
 
 verify_database_connectivity
@@ -1411,12 +1473,21 @@ if [[ "$INSTALL_TYPE" == xboard-import ]]; then
     die "TXBoard imported installation finalization failed"
 fi
 
+if [[ -n "$NATIVE_CONFIG_DIR" ]]; then
+  native_install() {
+    local image_id
+    image_id="$(docker image inspect "$IMAGE" --format '{{.Id}}')" || return 1
+    python3 "$INSTALL_DIR/scripts/native-runtime.py" install --dir "$INSTALL_DIR" --image "$image_id"
+  }
+  install_progress_step "准备、探测并激活原生运行时" native_install ||
+    die "native deployment incomplete; preserve the private inputs and run txboard native recover"
+else
 # Start the real application container before installation, but do not wait for
 # its health check yet. txboard:install relies on the normal container runtime.
 install_progress_step "启动 TXBoard 应用容器" docker compose up -d --remove-orphans txboard ||
   die "failed to start TXBoard"
 
-if [[ "$INSTALL_TYPE" == fresh ]]; then
+if [[ "$INSTALL_TYPE" == fresh && -z "$NATIVE_CONFIG_DIR" ]]; then
   # Fresh installs may emit a one-time password; keep that output visible.
   log "初始化管理员（请保存输出的一次性密码）..."
   docker compose exec -T txboard php artisan txboard:install </dev/null
@@ -1429,6 +1500,7 @@ install_progress_step "等待 TXBoard 服务健康检查" docker compose up -d -
 
 if ! docker compose exec -T txboard php artisan txboard:install-status --no-interaction </dev/null >/dev/null; then
   die "TXBoard installation state is incomplete. Inspect: cd $INSTALL_DIR && docker compose logs txboard"
+fi
 fi
 
 install_progress_step "启动定时备份" docker compose up -d backup ||
@@ -1446,7 +1518,7 @@ Panel:       $APP_URL/admin/
 Install dir: $INSTALL_DIR
 Image:       $IMAGE
 
-$([[ "$INSTALL_TYPE" == fresh ]] && printf '%s' 'Fresh install: save the administrator password printed above.' || printf '%s' 'Imported users and administrators keep their original accounts and password hashes.')
+$([[ -n "$NATIVE_CONFIG_DIR" ]] && printf '%s' 'Native runtime activated at epoch 2; administrator credentials come from your private preparation file.' || { [[ "$INSTALL_TYPE" == fresh ]] && printf '%s' 'Fresh install: save the administrator password printed above.' || printf '%s' 'Imported users and administrators keep their original accounts and password hashes.'; })
 
 Management:
   sudo txboard
