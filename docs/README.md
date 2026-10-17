@@ -20,7 +20,9 @@
 
 ## Agent/MCP 退役记录
 
-安装器不再启用 MCP；旧参数在服务发现前拒绝。隔离回归与历史镜像验收范围见 [退役验证](agent-retirement-verification.json)。
+安装器不再提供 Agent/MCP 的安装、配置或接入功能；旧 `--enable-mcp/--disable-mcp` 参数在服务发现前明确拒绝，原环境变量不再启用功能。范围与数据保留规则以 [Core 退役说明](https://github.com/ANRCM0/TXBoard/blob/main/docs/architecture/v2/admin-only-scope.md)为准，不再保留单独的 MCP 接入占位页。
+
+升级前先核对目标 Core 镜像版本；更新后的 Core 不启动 MCP，历史数据库与审计保留。已运行的旧版本不会被文档变更自动停服；基础 Core、Gateway、Node 安装更新流程继续生效。隔离回归与历史镜像验收范围见[退役验证](agent-retirement-verification.json)。
 
 ## 开发与集中验收
 
