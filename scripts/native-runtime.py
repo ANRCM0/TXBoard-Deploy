@@ -314,7 +314,16 @@ class Docker:
     def run(self, args):
         result = subprocess.run(["docker", *args], cwd=self.root, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        require(result.returncode == 0, "DOCKER_COMMAND_FAILED")
+        if result.returncode != 0:
+            for line in result.stdout[-8192:].decode("utf-8", errors="replace").splitlines():
+                try:
+                    value = json.loads(line)
+                except ValueError:
+                    continue
+                code = value.get("error_code") if isinstance(value, dict) else None
+                if isinstance(code, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{1,127}", code):
+                    raise NativeError("CORE_" + code)
+            raise NativeError("DOCKER_COMMAND_FAILED")
         return result.stdout.decode("utf-8")
 
     def compose(self, *args):

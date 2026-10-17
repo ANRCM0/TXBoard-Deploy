@@ -4,6 +4,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -191,6 +192,14 @@ class NativeDeploymentTest(unittest.TestCase):
         result = native.Runner(self.root, self.backend).execute(recover=True)
         self.assertEqual(intent["operation_id"], result["operation_id"])
         self.assertFalse(native.Journal(self.root).guard.exists())
+
+    def test_failed_core_handshake_exposes_only_a_bounded_error_code(self):
+        result = SimpleNamespace(returncode=1, stdout=b'{"error_code":"MODULE_DRAIN_REQUIRED"}\n', stderr=b'private details')
+        with patch.object(native.subprocess, 'run', return_value=result), self.assertRaisesRegex(native.NativeError, '^CORE_MODULE_DRAIN_REQUIRED$'):
+            native.Docker(self.root).run(['ignored'])
+        result.stdout = b'{"error_code":"private unstructured content"}\n'
+        with patch.object(native.subprocess, 'run', return_value=result), self.assertRaisesRegex(native.NativeError, '^DOCKER_COMMAND_FAILED$'):
+            native.Docker(self.root).run(['ignored'])
 
 
 if __name__ == "__main__":
