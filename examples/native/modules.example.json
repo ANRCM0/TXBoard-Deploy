@@ -1,0 +1,7 @@
+{
+  "schema": "native-module-preparation/v1",
+  "operations": [
+    {"code": "epay", "action": "install"},
+    {"code": "epay", "action": "enable"}
+  ]
+}

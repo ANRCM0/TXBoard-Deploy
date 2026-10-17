@@ -1,0 +1,30 @@
+{
+  "schema": "native-operator-configuration/v1",
+  "runner": "scripts/native-runtime.py",
+  "runtime_group": 1000,
+  "required_files": {
+    "prepare.json": "Private native-preparation/v1 manifest; Core api/native-preparation.example.json and api/resources/contracts/native-preparation.v1.json define the input",
+    "runtime.env": "Explicit public runtime settings; use runtime.env.example",
+    "signer.seed": "Base64url 32-byte dedicated Ed25519 seed, without padding; keep original for recovery",
+    "node-recipients.json": "Object keyed by positive Node ID; each value has machine_id (integer or null) and recipient_sha256 (Node TLS leaf SHA-256)",
+    "provider-ca.pem": "Operator-approved Provider TLS CA PEM",
+    "provider-client.pem": "Core control-client TLS certificate PEM",
+    "provider-client.key": "Core control-client private key PEM"
+  },
+  "optional_files": {
+    "module-packages.lock.json": "Exact maintainer-approved module package lock matching the immutable Core image",
+    "modules.json": "native-module-preparation/v1 ordered module operations; use modules.example.json",
+    "module-config.CODE.json": "Module configuration object; secret fields contain named secret references",
+    "module-secrets.json": "Flat secret-name to secret-value object; defaults to empty object",
+    "outbound-policy.json": "Module-code to approved HTTPS hostname array; defaults to empty object"
+  },
+  "commands": {
+    "install": "sudo bash install.sh --yes --native-config /private/initial --native-image REGISTRY/IMAGE@sha256:DIGEST",
+    "update": "sudo bash update.sh --dir /opt/txboard --native-image REGISTRY/IMAGE@sha256:DIGEST --native-config /private/target --yes",
+    "image_only_update": "sudo txboard native update --image REGISTRY/IMAGE@sha256:DIGEST",
+    "status": "sudo txboard native status",
+    "recover": "sudo txboard native recover"
+  },
+  "recovery": "Keep the original runner, immutable image, deployment intent, APP_KEY, backup and private inputs. Recovery resumes the original operation. It does not restore SQL, reset authority epoch or start an older image after DDL.",
+  "target_configuration": "An update stages a separate target tree before draining the old process. Only module plan, module configuration, secrets, outbound policy and an already configured lock may change. Installation, Provider trust and Node bindings use their owner transition workflows. Omitting target configuration skips the initial install module plan."
+}
