@@ -201,6 +201,28 @@ class NativeDeploymentTest(unittest.TestCase):
         with patch.object(native.subprocess, 'run', return_value=result), self.assertRaisesRegex(native.NativeError, '^DOCKER_COMMAND_FAILED$'):
             native.Docker(self.root).run(['ignored'])
 
+    def test_native_storage_is_ready_before_entrypoint_and_refuses_links(self):
+        with patch.object(native.os, 'chown'):
+            native.prepare_storage(self.root)
+        for relative in ('app/public', 'framework/cache/data', 'framework/sessions', 'framework/views', 'logs'):
+            self.assertTrue((self.root / 'data/storage' / relative).is_dir())
+        outside = self.root / 'outside'
+        outside.mkdir()
+        views = self.root / 'data/storage/framework/views'
+        views.rmdir()
+        views.symlink_to(outside, target_is_directory=True)
+        with patch.object(native.os, 'chown'), self.assertRaisesRegex(native.NativeError, '^UNSAFE_DEPLOYMENT_PATH$'):
+            native.prepare_storage(self.root)
+        self.assertEqual([], list(outside.iterdir()))
+
+    def test_console_boot_failures_keep_only_classified_diagnostics(self):
+        for output, code in ((b'Please provide a valid cache path. private context', 'CORE_RUNTIME_DIRECTORY_REQUIRED'),
+                             (b'SQLSTATE[HY000] private database context', 'CORE_SQLSTATE_HY000'),
+                             (b'MODULE_PACKAGE_LOCK_INVALID private path', 'CORE_MODULE_PACKAGE_LOCK_INVALID')):
+            result = SimpleNamespace(returncode=1, stdout=output, stderr=b'private details')
+            with patch.object(native.subprocess, 'run', return_value=result), self.assertRaisesRegex(native.NativeError, '^' + code + '$'):
+                native.Docker(self.root).run(['ignored'])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -192,6 +192,19 @@ def runtime_permissions(directory):
             os.chmod(path, 0o640)
 
 
+def prepare_storage(root):
+    # Native preparation invokes PHP before the image entrypoint has initialized its bind mount.
+    for relative in ("data", "data/storage", "data/storage/app", "data/storage/app/public", "data/storage/framework",
+                     "data/storage/framework/cache", "data/storage/framework/cache/data", "data/storage/framework/sessions",
+                     "data/storage/framework/views", "data/storage/logs"):
+        path = root / relative
+        require(not path.is_symlink() and (not path.exists() or path.is_dir()), "UNSAFE_DEPLOYMENT_PATH")
+        path.mkdir(mode=0o750, exist_ok=True)
+        if relative != "data":
+            os.chown(path, 1000, 1000)
+            os.chmod(path, 0o750)
+
+
 def stage_config(root, source):
     require(source.is_dir() and not source.is_symlink() and not (root / "native").exists(), "NATIVE_CONFIGURATION_CONFLICT")
     require(source.resolve() != root.resolve(), "NATIVE_CONFIGURATION_CONFLICT")
@@ -238,6 +251,7 @@ def stage_config(root, source):
         if not (root / "native" / name).exists():
             atomic(root / "native" / name, b"{}\n")
     runtime_permissions(root / "native")
+    prepare_storage(root)
     env_update(root / "api.env", configuration)
     module_operations(root)
 
@@ -323,6 +337,15 @@ class Docker:
                 code = value.get("error_code") if isinstance(value, dict) else None
                 if isinstance(code, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{1,127}", code):
                     raise NativeError("CORE_" + code)
+            output = (result.stdout + result.stderr)[-16384:].decode("utf-8", errors="replace")
+            code = re.search(r"\b((?:MODULE|TRUSTED_CONFIGURATION|INSTALLATION_AUTHORITY)_[A-Z_]{1,100})\b", output)
+            if code:
+                raise NativeError("CORE_" + code.group(1))
+            if "Please provide a valid cache path" in output:
+                raise NativeError("CORE_RUNTIME_DIRECTORY_REQUIRED")
+            sqlstate = re.search(r"SQLSTATE\[([A-Z0-9]{5})\]", output)
+            if sqlstate:
+                raise NativeError("CORE_SQLSTATE_" + sqlstate.group(1))
             raise NativeError("DOCKER_COMMAND_FAILED")
         return result.stdout.decode("utf-8")
 
