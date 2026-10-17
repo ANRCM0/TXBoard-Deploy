@@ -3,23 +3,27 @@
 // Scope intentionally stays on public-facing docs; external URLs, anchor IDs,
 // reference-style links and generated paths require human review.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const inputs = ['README.md', 'docs', 'node/README.md'];
+const args = process.argv.slice(2);
+const rootIndex = args.indexOf('--root');
+if (rootIndex !== -1 && (!args[rootIndex + 1] || args[rootIndex + 1].startsWith('--'))) {
+  throw new Error('--root requires a directory');
+}
+const root = rootIndex === -1
+  ? resolve(dirname(fileURLToPath(import.meta.url)), '..')
+  : resolve(args[rootIndex + 1]);
+const excluded = new Set(['.git', 'node_modules', 'vendor', 'third_party', 'third-party', 'thirdparty', 'dist', 'build', '.cache']);
 const files = [];
 const errors = [];
 let checked = 0;
 
 function collect(relative) {
   const abs = resolve(root, relative);
-  if (!existsSync(abs)) {
-    errors.push(`Missing documentation input: ${relative}`);
-    return;
-  }
   if (statSync(abs).isDirectory()) {
     for (const child of readdirSync(abs)) {
+      if (excluded.has(child)) continue;
       collect(join(relative, child));
     }
   } else if (extname(abs) === '.md') {
@@ -27,7 +31,15 @@ function collect(relative) {
   }
 }
 
-for (const entry of inputs) collect(entry);
+collect('.');
+if (args.includes('--has-docs')) {
+  console.log(files.length > 0 ? 'true' : 'false');
+  process.exit(0);
+}
+if (files.length === 0) {
+  console.log('SKIP: no first-party Markdown documentation found; link validation did not run.');
+  process.exit(0);
+}
 
 for (const file of files) {
   const source = readFileSync(file, 'utf8');
