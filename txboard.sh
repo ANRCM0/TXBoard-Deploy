@@ -171,17 +171,12 @@ EOF
 install_menu() {
   require_tty
   while true; do
-    printf '\033[2J\033[H' > /dev/tty
-    cat > /dev/tty <<'EOF'
-========================================
-            TXBoard 管理中心
-========================================
-未检测到现有 TXBoard 部署。
-
-  1) 安装 TXBoard
-  0) 退出
-========================================
-EOF
+    ui_screen
+    ui_header "首次安装" "未检测到部署，可以开始安装向导"
+    ui_section "快速开始"
+    ui_item 1 "安装 TXBoard" "环境检测 · 数据库 · 启动"
+    ui_footer
+    ui_item 0 "退出"
     case "$(choose "请选择" "1" "1")" in
       1) run_install; return 0 ;;
       0) return 0 ;;
@@ -194,38 +189,37 @@ main_menu() {
   deployment_exists || { install_menu; return; }
 
   while true; do
-    printf '\033[2J\033[H' > /dev/tty
-    cat > /dev/tty <<'EOF'
-========================================
-            TXBoard 管理中心
-========================================
-  1) 查看运行状态
-  2) 升级镜像 / 数据库
-  3) 启动服务
-  4) 停止服务
-  5) 重启 TXBoard
-  6) 查看运行日志
-  7) 立即备份
-  8) 备份管理
-  9) 配置管理
- 10) 故障诊断
- 11) 资源占用
- 12) 卸载
- 13) 重置管理员密码
- 14) 运维工具
- 15) 仅更新运维脚本
- 16) 重置管理面板安全路径
-  0) 退出
-========================================
-EOF
+    ui_screen
+    ui_header "运维管理中心" "${TXBOARD_INSTALL_DIR}  ·  $(detect_mode)"
+    ui_section "服务与运行"
+    ui_item 1 "查看运行状态" "容器和服务"
+    ui_item 2 "安全升级" "镜像与数据库迁移"
+    ui_item 3 "启动服务"
+    ui_item 4 "停止服务"
+    ui_item 5 "重启 TXBoard"
+    ui_item 6 "查看运行日志"
+    ui_item 11 "资源占用"
+    ui_section "备份与配置"
+    ui_item 7 "立即备份"
+    ui_item 8 "备份管理" "列表 / 恢复 / 保留策略"
+    ui_item 9 "配置管理" "端口 / HTTPS / 镜像"
+    ui_section "维护与安全"
+    ui_item 10 "故障诊断"
+    ui_item 13 "重置管理员密码"
+    ui_item 16 "重置后台安全路径"
+    ui_item 14 "运维工具"
+    ui_item 15 "更新运维脚本" "不修改业务数据"
+    ui_danger_item 12 "卸载" "高风险 · 二次确认"
+    ui_footer
+    ui_item 0 "退出"
     case "$(choose "请选择" "1" "16")" in
       1) service_status; pause ;;
       2) run_update; pause ;;
-      3) service_start; pause ;;
-      4) service_stop; pause ;;
-      5) service_restart; pause ;;
+      3) ui_run "启动 TXBoard 服务" service_start || warn "启动失败"; pause ;;
+      4) ui_run "停止 TXBoard 服务" service_stop || warn "停止失败"; pause ;;
+      5) ui_run "重启 TXBoard 服务" service_restart || warn "重启失败"; pause ;;
       6) logs_menu ;;
-      7) backup_create; pause ;;
+      7) ui_run "创建完整备份" backup_create || warn "备份失败"; pause ;;
       8) backup_menu ;;
       9) config_menu ;;
       10) diagnose_run || true; pause ;;

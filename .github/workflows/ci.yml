@@ -94,6 +94,9 @@ jobs:
           bash txboard.sh help | grep -q 'repair-command'
           bash txboard.sh help | grep -q 'refresh-manager'
 
+      - name: Test colorful manager UI and safe loading animations
+        run: bash scripts/test-cli-ui.sh
+
       - name: Test administrator recovery and maintenance commands
         run: bash scripts/test-maintenance.sh
 

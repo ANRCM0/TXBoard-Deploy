@@ -24,7 +24,7 @@ service_status() {
 
 service_start() { docker_ok; need_install; upgrade_safe_mutation compose up -d --remove-orphans; }
 service_stop() { docker_ok; need_install; compose stop; }
-service_restart_locked() { compose restart txboard; compose up -d --wait txboard; }
+service_restart_locked() { compose restart txboard && compose up -d --wait txboard; }
 service_restart() { docker_ok; need_install; upgrade_safe_mutation service_restart_locked; }
 
 service_stats() {
@@ -38,12 +38,22 @@ service_stats() {
 service_menu() {
   local choice
   while true; do
-    choice="$(choose "1 状态  2 启动  3 停止  4 重启  5 资源占用  0 返回" "1" "5")"
+    ui_screen
+    ui_header "服务管理" "启动、停止和查看应用容器状态"
+    ui_section "服务操作"
+    ui_item 1 "运行状态"
+    ui_item 2 "启动全部服务"
+    ui_item 3 "停止服务"
+    ui_item 4 "重启 TXBoard"
+    ui_item 5 "查看资源占用"
+    ui_footer
+    ui_item 0 "返回主菜单"
+    choice="$(choose "请选择" "1" "5")"
     case "$choice" in
       1) service_status; pause ;;
-      2) service_start; pause ;;
-      3) service_stop; pause ;;
-      4) service_restart; pause ;;
+      2) ui_run "启动全部服务" service_start || warn "启动失败"; pause ;;
+      3) ui_run "停止服务" service_stop || warn "停止失败"; pause ;;
+      4) ui_run "重启 TXBoard" service_restart || warn "重启失败"; pause ;;
       5) service_stats; pause ;;
       0) return 0 ;;
     esac
@@ -76,8 +86,16 @@ logs_menu() {
   docker_ok; need_install
   local choice service="all"
 
+  ui_screen
+  ui_header "日志查看" "实时日志按 Ctrl+C 返回终端"
+  ui_section "选择要跟踪的容器"
   if [[ "$(database_mode)" != "local" ]]; then
-    choice="$(choose "1 TXBoard  2 备份  3 全部  0 返回" "1" "3")"
+    ui_item 1 "TXBoard 应用日志"
+    ui_item 2 "自动备份服务"
+    ui_item 3 "全部服务"
+    ui_footer
+    ui_item 0 "返回"
+    choice="$(choose "请选择" "1" "3")"
     case "$choice" in
       1) service=txboard ;;
       2) service=backup ;;
@@ -85,7 +103,13 @@ logs_menu() {
       0) return 0 ;;
     esac
   else
-    choice="$(choose "1 TXBoard  2 MySQL  3 备份  4 全部  0 返回" "1" "4")"
+    ui_item 1 "TXBoard 应用日志"
+    ui_item 2 "MySQL 数据库"
+    ui_item 3 "自动备份服务"
+    ui_item 4 "全部服务"
+    ui_footer
+    ui_item 0 "返回"
+    choice="$(choose "请选择" "1" "4")"
     case "$choice" in
       1) service=txboard ;;
       2) service=database ;;
