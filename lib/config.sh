@@ -36,12 +36,12 @@ HTTP bind:         $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_BIND)
 HTTP port:         $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_PORT)
 HTTPS port:        $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTPS_PORT)
 Backup retention:  $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION)
-MCP Gateway:       $(if [[ "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_ENABLE_MCP)" == "true" ]]; then printf 'true'; else printf 'false'; fi)
-MCP URL:           $(if [[ "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_ENABLE_MCP)" == "true" ]]; then printf '%s/mcp' "$(env_get "$TXBOARD_INSTALL_DIR/api.env" APP_URL)"; else printf 'disabled'; fi)
 EOF
 }
 
-config_access() {
+config_access() { upgrade_safe_mutation config_access_locked; }
+
+config_access_locked() {
   require_tty; docker_ok; need_install
   local choice mode domain host http_port https_port url bind site secure publish_https tmp
   choice="$(choose "1 自动 HTTPS  2 外部 HTTPS  3 HTTP  0 返回" "1" "3")"
@@ -107,46 +107,6 @@ config_access() {
   log "public URL updated: $url"
 }
 
-config_mcp() {
-  require_tty; docker_ok; need_install
-  local current default target tmp
-  current="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_ENABLE_MCP)"
-  [[ "$current" == "true" ]] || current=false
-  default="N"
-  [[ "$current" == "true" ]] && default="Y"
-
-  if confirm "启用 MCP 网关？" "$default"; then
-    target=true
-  else
-    target=false
-  fi
-
-  [[ "$target" != "$current" ]] || { log "MCP Gateway unchanged: $current"; return 0; }
-
-  if [[ "$target" == "true" ]] &&
-     ! compose run -T --rm --no-deps --entrypoint sh txboard -lc 'test -f /opt/txboard-mcp/dist/index.js' >/dev/null; then
-    die "current TXBoard image does not include the embedded MCP Gateway; update TXBoard before enabling MCP"
-  fi
-
-  tmp="$(mktemp)"
-  cp "$TXBOARD_INSTALL_DIR/.env" "$tmp"
-  env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_ENABLE_MCP "$target"
-
-  if ! (cd "$TXBOARD_INSTALL_DIR" && docker compose config >/dev/null) ||
-     ! compose up -d --force-recreate --wait txboard; then
-    cp "$tmp" "$TXBOARD_INSTALL_DIR/.env"
-    compose up -d --force-recreate txboard || true
-    rm -f "$tmp"
-    die "MCP configuration failed and was rolled back"
-  fi
-
-  rm -f "$tmp"
-  log "MCP Gateway: $target"
-  if [[ "$target" == "true" ]]; then
-    log "MCP endpoint: $(env_get "$TXBOARD_INSTALL_DIR/api.env" APP_URL)/mcp"
-  fi
-}
-
 config_menu() {
   local choice value image tag
   while true; do
@@ -158,12 +118,11 @@ config_menu() {
     ui_item 2 "访问域名与端口"
     ui_item 3 "更新镜像版本"
     ui_item 4 "备份保留数量"
-    ui_item 5 "MCP 网关"
     ui_section "安全"
-    ui_item 6 "重置管理面板安全路径" "原链接会失效"
+    ui_item 5 "重置管理面板安全路径" "原链接会失效"
     ui_footer
     ui_item 0 "返回主菜单"
-    choice="$(choose "请选择" "1" "6")"
+    choice="$(choose "请选择" "1" "5")"
     case "$choice" in
       1) config_show; pause ;;
       2) config_access; pause ;;
@@ -181,15 +140,10 @@ config_menu() {
       4)
         value="$(prompt "备份保留数量（0 为全部保留）" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION)")"
         [[ "$value" =~ ^[0-9]+$ ]] || { warn "invalid retention"; continue; }
-        env_set "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION "$value"
-        compose up -d --force-recreate backup
+        backup_set_retention "$value"
         pause
         ;;
       5)
-        config_mcp
-        pause
-        ;;
-      6)
         maintenance_reset_admin_path
         pause
         ;;

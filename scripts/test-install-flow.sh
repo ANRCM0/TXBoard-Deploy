@@ -76,6 +76,16 @@ chmod +x "$tmp/bin/docker"
 export PATH="$tmp/bin:$PATH" MOCK_DOCKER_LOG="$tmp/docker.log"
 : > "$MOCK_DOCKER_LOG"
 
+# Retired switches fail before service discovery or installation side effects.
+for retired_option in --enable-mcp --disable-mcp; do
+  if bash "$repo/install.sh" "$retired_option" >"$tmp/retired-option.log" 2>&1; then
+    echo "retired MCP option was accepted" >&2; exit 1
+  fi
+  grep -Fq 'MCP has been retired' "$tmp/retired-option.log"
+  [[ ! -s "$MOCK_DOCKER_LOG" ]] || { echo 'retired option called Docker' >&2; exit 1; }
+done
+echo 'retired MCP switches rejected before service discovery: passed'
+
 # DB local old-volume removal must be approved/scheduled, not immediate.
 (
   set -e
@@ -121,3 +131,45 @@ if MOCK_TABLES=fail "$tmp/test-inventory.sh" >"$tmp/error" 2>&1; then
   exit 1
 fi
 echo 'installer database inventory and reset deferral: passed'
+
+# A socket-only initialization server must never satisfy the host-container
+# readiness check. Exercise the actual helper across shutdown/authentication
+# failure and final restart; sleep is replaced only in this synthetic fixture.
+(
+  set -euo pipefail
+  source "$repo/lib/install-database.sh"
+  probe_log="$tmp/readiness.log"
+  : > "$probe_log"
+  sleep() { :; }
+  mysql_container_exec_root() {
+    [[ "$1" == fixture && "$2" == fixture-password ]]
+    [[ "$3" == *'@@GLOBAL.skip_networking'* ]]
+    printf 'probe\n' >> "$probe_log"
+    case "$(wc -l < "$probe_log" | tr -d '[:space:]')" in
+      1) printf 'readiness\ntxboard_mysql_bootstrap\n' ;;
+      2) return 1 ;;
+      3) printf 'readiness\ntxboard_mysql_ready\n' ;;
+      *) echo 'unexpected extra readiness probe' >&2; return 99 ;;
+    esac
+  }
+  wait_mysql_container_admin fixture fixture-password
+  [[ "$(wc -l < "$probe_log" | tr -d '[:space:]')" == 3 ]]
+
+  : > "$probe_log"
+  mysql_container_exec_root() {
+    printf 'probe\n' >> "$probe_log"
+    printf 'readiness\ntxboard_mysql_bootstrap\n'
+  }
+  if wait_mysql_container_admin fixture fixture-password; then
+    echo 'socket-only bootstrap server accepted as ready' >&2
+    exit 1
+  fi
+  [[ "$(wc -l < "$probe_log" | tr -d '[:space:]')" == 30 ]]
+
+  mysql_container_exec_root() { printf 'malformed-readiness\n'; }
+  if wait_mysql_container_admin fixture fixture-password; then
+    echo 'unknown readiness result accepted' >&2
+    exit 1
+  fi
+)
+echo 'host MySQL bootstrap/restart readiness: passed'

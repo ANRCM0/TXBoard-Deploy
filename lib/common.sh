@@ -74,7 +74,7 @@ ui_footer() {
 # Run ONLY non-interactive operations whose output is non-sensitive. Do NOT
 # use for credential resets, DB restore or upgrades with interactive recovery.
 # Foreground mode keeps command output identical for scripts and non-TTY use.
-ui_run() {
+ui_run() (
   local title="$1" status=0 log_file pid frame=0
   shift
   if [[ "${TXBOARD_UI_VERBOSE:-false}" == true || ! -t 0 || "${TERM:-dumb}" == dumb || ! -w /dev/tty ]]; then
@@ -82,10 +82,14 @@ ui_run() {
     return $?
   fi
   local log_dir="$TXBOARD_INSTALL_DIR/backups/manager"
+  log_file="$log_dir/operations.log"
+  [[ ! -L "$TXBOARD_INSTALL_DIR/backups" && ! -L "$log_dir" && ! -L "$log_file" ]] || {
+    warn "unsafe manager log path"; return 1;
+  }
+  [[ ! -e "$log_file" || -f "$log_file" ]] || return 1
   umask 077
   mkdir -p -m 700 -- "$log_dir" || return 1
   chmod 700 -- "$log_dir" || return 1
-  log_file="$log_dir/operations.log"
   touch "$log_file" && chmod 600 "$log_file" || return 1
   printf '\n[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$title" >> "$log_file"
   "$@" >> "$log_file" 2>&1 &
@@ -106,7 +110,7 @@ ui_run() {
   tail -n 15 "$log_file" >&2 || true
   warn "操作失败，完整日志：$log_file"
   return "$status"
-}
+)
 
 require_tty() { [[ -r /dev/tty ]] || die "interactive TTY required"; }
 
@@ -121,7 +125,28 @@ need_install() {
     die "no TXBoard deployment found in $TXBOARD_INSTALL_DIR"
 }
 
+# All image starts, restores and toolkit updates share the upgrader's lock.
+# A durable unfinished intent may mean DDL committed before the process died.
+# Do not infer compatibility from a healthy image or an absent shell process.
+upgrade_safe_mutation() (
+  need_install
+  command -v flock >/dev/null 2>&1 || die "flock is required for upgrade-safe management"
+  [[ ! -L "$TXBOARD_INSTALL_DIR/.upgrade.lock" ]] || die "unsafe upgrade lock path"
+  umask 077
+  exec 8>"$TXBOARD_INSTALL_DIR/.upgrade.lock"
+  flock -n 8 || die "another TXBoard management or upgrade process holds the lock"
+  [[ ! -e "$TXBOARD_INSTALL_DIR/.upgrade-in-progress" && ! -L "$TXBOARD_INSTALL_DIR/.upgrade-in-progress" ]] ||
+    die "unfinished durable upgrade; use upgrade status/recover before starting an image or restoring data"
+  "$@"
+)
+
 compose() {
+  case "${1:-}" in
+    up|restart|down|rm)
+      [[ ! -e "$TXBOARD_INSTALL_DIR/.upgrade-in-progress" && ! -L "$TXBOARD_INSTALL_DIR/.upgrade-in-progress" ]] ||
+        die "unfinished durable upgrade; image changes/deletion require upgrade recovery"
+      ;;
+  esac
   (cd "$TXBOARD_INSTALL_DIR" && docker compose "$@")
 }
 

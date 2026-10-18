@@ -1,0 +1,181 @@
+{
+  "profile": "unified-component-installer/synthetic-v1",
+  "date": "2026-10-13",
+  "scope": "Core/Gateway/Node installer host lifecycle; no production or crypto acceptance",
+  "base_commit": "980c7c3fedd856c78a853ee565750f5a38ec7603",
+  "source_files": [
+    {
+      "path": "install.sh",
+      "working_sha256": "2e731947a457693abb175377ddeb1a0a4e7b3545784d112b6ce5d3de8f09545a",
+      "snapshot_sha256": "5927865849174ae9e5d4151ea64d77b7b74ca6677461d5d03d6e758a3ced6a90"
+    },
+    {
+      "path": "txboard.sh",
+      "working_sha256": "97f53ff03d96811909588c101c176750279a2755cb3657b6a965d1eda24d5e22",
+      "snapshot_sha256": "100b5de5dacd3de612b793f27d8cd314566008101cef5005fdec8e7255efdb77"
+    },
+    {
+      "path": "update.sh",
+      "working_sha256": "0ff3c89a9f928f55d573f21c4b3fa472db39b3aeff37f9a1e34c96a351985528",
+      "snapshot_sha256": "898a2f0d33c5fb938db66916a354f18e322d75791f0a39d627056750b7ee2a0c"
+    },
+    {
+      "path": "lib/detect.sh",
+      "working_sha256": "1f36a07505f089bd22b42174e14eb854394df62cb8690308203218d0261a8f91",
+      "snapshot_sha256": "20ac566e4406df5c77c56705d0902ae7c6f57dfae1345df3e6437da67d4e00c6"
+    },
+    {
+      "path": "lib/components.sh",
+      "working_sha256": "2e850a4396248ecaec5f08487ad2808a89ef84940d1a5fd3b5ac740664b7d9f8",
+      "snapshot_sha256": "2e850a4396248ecaec5f08487ad2808a89ef84940d1a5fd3b5ac740664b7d9f8"
+    },
+    {
+      "path": "gateway/deploy.sh",
+      "working_sha256": "274c137966590e9c2fb410a333f0b5bea8a4e9290bf03acd49e9d267e3cf3e97",
+      "snapshot_sha256": "274c137966590e9c2fb410a333f0b5bea8a4e9290bf03acd49e9d267e3cf3e97"
+    },
+    {
+      "path": "node/deploy.sh",
+      "working_sha256": "332f40fb67a6d14a0783fcc56af525a919e526cb72b786a1a4d308ee1f5a102b",
+      "snapshot_sha256": "fb448e1415c7db56d9e30c1a5b7e5566273ff813e2d1bcf4036811e74b7007fc"
+    },
+    {
+      "path": "node/README.md",
+      "working_sha256": "67d45da3d47fd55b93c3b3bc6b1ab1ad15d4cf28c77f7e61ebf6f2556f0c38fa",
+      "snapshot_sha256": "67d45da3d47fd55b93c3b3bc6b1ab1ad15d4cf28c77f7e61ebf6f2556f0c38fa"
+    },
+    {
+      "path": "scripts/test-components.sh",
+      "working_sha256": "0d27590644292c69bae5a18fa313a4eddee03f48324041df2b7780eea4471365",
+      "snapshot_sha256": "0d27590644292c69bae5a18fa313a4eddee03f48324041df2b7780eea4471365"
+    },
+    {
+      "path": "scripts/test-gateway.sh",
+      "working_sha256": "3a0487ca70e693317b4950f741fb22242eeeec4566ff169b1fd869ba75e6cd9a",
+      "snapshot_sha256": "3a0487ca70e693317b4950f741fb22242eeeec4566ff169b1fd869ba75e6cd9a"
+    },
+    {
+      "path": "scripts/test-detect.sh",
+      "working_sha256": "3f3b070fab1da1fe567aedc955337709a603596104724904866b116e4f68d815",
+      "snapshot_sha256": "21c68b2508f7a600c28bac80b60c0c250521d6a1a1fad672975ced35fcc80c7e"
+    },
+    {
+      "path": "scripts/check-docs.mjs",
+      "working_sha256": "441b10a4bfdb2ead5c836dd0c9960cacae89c35cb8b5cd0bd3277fc33b868209",
+      "snapshot_sha256": "441b10a4bfdb2ead5c836dd0c9960cacae89c35cb8b5cd0bd3277fc33b868209"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "working_sha256": "762a2b7f16d3b9f06b72c54e4e778994d132a50f129bd9fbb1ba72b5cfac92d9",
+      "snapshot_sha256": "762a2b7f16d3b9f06b72c54e4e778994d132a50f129bd9fbb1ba72b5cfac92d9"
+    },
+    {
+      "path": "README.md",
+      "working_sha256": "ec82bb98a2c646e36cd1894050b50fc91f6dc03a487f5fd00b461bb753fb5efa",
+      "snapshot_sha256": "ec82bb98a2c646e36cd1894050b50fc91f6dc03a487f5fd00b461bb753fb5efa"
+    },
+    {
+      "path": "docs/components.md",
+      "working_sha256": "26b00aba2d103656c49a5d53dc0d4e2b227af342988e4dabdb4f4f3eb515c189",
+      "snapshot_sha256": "26b00aba2d103656c49a5d53dc0d4e2b227af342988e4dabdb4f4f3eb515c189"
+    },
+    {
+      "path": "docs/README.md",
+      "working_sha256": "765f039599ec386aa75c7c2c7aec8e395d16a24625ce4814b98110016a7bb2ce",
+      "snapshot_sha256": "765f039599ec386aa75c7c2c7aec8e395d16a24625ce4814b98110016a7bb2ce"
+    },
+    {
+      "path": "docs/installation.md",
+      "working_sha256": "7705d4b8af71a0cb2c005635156f6499a6055bc1a9ff16893f8d839cd2b87a20",
+      "snapshot_sha256": "7705d4b8af71a0cb2c005635156f6499a6055bc1a9ff16893f8d839cd2b87a20"
+    },
+    {
+      "path": "docs/architecture-and-ci.md",
+      "working_sha256": "67956c79f4884f3b1c87b021d7b188af122d9bec5d53affbc73e5b83de1a0d8e",
+      "snapshot_sha256": "67956c79f4884f3b1c87b021d7b188af122d9bec5d53affbc73e5b83de1a0d8e"
+    }
+  ],
+  "source_aggregate_sha256": "d831d7b2a0369e133a3893cb85a82728d194d1af2791f889d8f107efb26c02c6",
+  "source_hash_definition": "SHA256 of UTF-8 canonical JSON records sorted keys and compact separators; working file hashes retain original bytes; snapshot .sh files normalize CRLF to LF",
+  "snapshot": {
+    "linux_directory": "/opt/txboard-baseline/unified-deploy-980c7c3-r2",
+    "archive_sha256": "8d7c6d2d7a0ac04c6a93c0a0720cf3f64850ef16221b15dc7735f35eb8694ed1",
+    "overlay_files": 18
+  },
+  "verification": {
+    "windows_git_bash_syntax": {
+      "scripts": 32,
+      "passed": 32,
+      "source": "r1 LF snapshot; r2 Linux rechecks complete source after the two narrow fixes"
+    },
+    "linux_bash_syntax": {
+      "scripts": 32,
+      "passed": 32
+    },
+    "linux_suites": {
+      "total": 14,
+      "passed": 14,
+      "failed": 0,
+      "names": [
+        "scripts/test-components.sh",
+        "scripts/test-gateway.sh",
+        "node/tests/install_args_test.sh",
+        "node/tests/image_channel_test.sh",
+        "node/tests/remote_update_bridge_test.sh",
+        "node/tests/legacy_cleanup_test.sh",
+        "node/tests/deploy_multi_instance_test.sh",
+        "scripts/test-detect.sh",
+        "scripts/test-install-flow.sh",
+        "scripts/test-maintenance.sh",
+        "scripts/test-upgrade.sh",
+        "scripts/test-upgrade-management.sh",
+        "scripts/test-upgrade-orchestrator.py",
+        "scripts/test-xboard-plan.py"
+      ]
+    },
+    "python_tests": {
+      "durable_upgrade": 48,
+      "xboard_plan": 9
+    },
+    "log": {
+      "path": ".tmp/unified-deploy-gate-r2/linux-attempt01.log",
+      "sha256": "c85999f27f8669020e3384e084801bd0a6f86175689768e48f62b1ca81c76ed7"
+    },
+    "documentation": {
+      "markdown_files": 13,
+      "relative_links": 37,
+      "passed": true
+    },
+    "git_diff_check": true
+  },
+  "preserved_failure": {
+    "path": ".tmp/unified-deploy-gate/linux-attempt01.log",
+    "sha256": "ed8084e97680673e541d1f18c091eca2759b6276913c09bebcb933c4b7759999",
+    "stage": "new component pipe regression; syntax passed before suite failure",
+    "finding": "Function BASH_SOURCE[0] could identify the shell on stdin; caller BASH_SOURCE[1] now distinguishes actual file. Fresh component install never prefers an old persisted installer over the canonical download.",
+    "repaired_in_new_snapshot": true
+  },
+  "runtime_boundaries": {
+    "core_fresh_image": "ghcr.io/anrcm0/txboard-core:latest",
+    "core_saved_repository_preserved": true,
+    "historical_smoke_and_import_image": "ghcr.io/anrcm0/txboard:dev-sha-c8492dc2e120",
+    "gateway_image": "ghcr.io/anrcm0/txboard-gateway:latest",
+    "node_image": "ghcr.io/anrcm0/tx-node:latest",
+    "gateway_host_default": "127.0.0.1:8787",
+    "gateway_native_only": true,
+    "gateway_hpke_internal_writes_account_workflows_enabled": false,
+    "gateway_health": "container /healthz only; does not verify Core reachability, authorization or TLS",
+    "gateway_rollback": "retained immutable Docker image ID, original channel stored separately; complete interrupted-update evidence required",
+    "old_node_entry": "separate parent-managed forwarder to be published after unified Deploy is pushed; old persistent scripts require explicit refresh/link"
+  },
+  "not_executed": [
+    "real Docker daemon/container",
+    "real Node binary",
+    "database or Redis tests",
+    "network requests",
+    "official image availability or multiarch",
+    "TLS or real Gateway/Core business flows",
+    "production/HA/crypto acceptance"
+  ],
+  "reproduction": "CI .github/workflows/ci.yml runs checked-in synthetic scripts. Exact local frozen snapshot and reviewed launcher are under .tmp/unified-deploy-gate-r2; no real service/data/network operations."
+}

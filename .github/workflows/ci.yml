@@ -3,7 +3,10 @@ name: deploy-ci
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, feat/node-native-authorization-pins]
+
+permissions:
+  contents: read
 
 jobs:
   verify:
@@ -22,6 +25,32 @@ jobs:
           bash -n scripts/test-maintenance.sh
           bash -n txboard.sh
           for f in lib/*.sh; do bash -n "$f"; done
+          bash -n gateway/deploy.sh
+          bash -n node/deploy.sh
+          bash -n scripts/test-components.sh
+          bash -n scripts/test-gateway.sh
+          bash -n scripts/test-gateway-docker.sh
+          for f in node/tests/*.sh; do bash -n "$f"; done
+
+      - name: Test unified component routing and Gateway lifecycle (synthetic Docker)
+        run: |
+          bash scripts/test-components.sh
+          bash scripts/test-gateway.sh
+
+      - name: Preserve Node Installer regression suites
+        run: |
+          bash node/tests/install_args_test.sh
+          bash node/tests/authorization_runtime_test.sh
+          bash node/tests/runtime_guard_test.sh
+          bash node/tests/runtime_tools_test.sh
+          bash node/tests/runtime_compose_test.sh
+          bash node/tests/runtime_config_restore_test.sh
+          python3 -B node/tests/runtime_backup_test.py
+          python3 -B node/tests/runtime_manager_test.py
+          bash node/tests/image_channel_test.sh
+          bash node/tests/remote_update_bridge_test.sh
+          bash node/tests/legacy_cleanup_test.sh
+          bash node/tests/deploy_multi_instance_test.sh
 
       - name: Check installer and manager regressions
         run: |
@@ -79,6 +108,14 @@ jobs:
 
       - name: Exercise database-aware updater fail-closed state machine
         run: bash scripts/test-upgrade.sh
+
+      - name: Exercise signed durable shadow upgrade and crash recovery
+        run: |
+          python3 -B scripts/test-upgrade-orchestrator.py
+          bash scripts/test-upgrade-management.sh
+
+      - name: Exercise native fixed-image deployment and interruption recovery
+        run: sudo python3 -B scripts/test-native-runtime.py
 
       - name: Check XBoard migration plan safety, legacy filenames and dump input
         run: python3 scripts/test-xboard-plan.py
@@ -279,7 +316,7 @@ jobs:
       - name: Require image-only Compose
         run: |
           ! sudo grep -Eq '^[[:space:]]*build:' /tmp/txboard-deploy-ci/compose.yaml
-          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest$' /tmp/txboard-deploy-ci/.env
+          sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard-core:latest$' /tmp/txboard-deploy-ci/.env
           sudo grep -q '^TXBOARD_MODE=http$' /tmp/txboard-deploy-ci/.env
           test "$(sudo stat -c '%a' /tmp/txboard-deploy-ci/.env)" = "600"
           test "$(sudo stat -c '%a' /tmp/txboard-deploy-ci/api.env)" = "600"
@@ -329,11 +366,16 @@ jobs:
 
           for i in $(seq 1 30); do
             if sudo docker exec -e MYSQL_PWD=ci-root-password txboard-host-mysql-ci \
-              mysqladmin ping -uroot --silent >/dev/null 2>&1; then
+              mysql --protocol=TCP -h127.0.0.1 -uroot --batch --skip-column-names \
+                --execute="SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='txboard';" >/dev/null 2>&1; then
               break
             fi
             sleep 2
           done
+
+          sudo docker exec -e MYSQL_PWD=ci-root-password txboard-host-mysql-ci \
+            mysql --protocol=TCP -h127.0.0.1 -uroot --batch --skip-column-names \
+              --execute="SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='txboard';" >/dev/null
 
           sudo -E bash install.sh --yes --render-only
           cd /tmp/txboard-deploy-host-ci
@@ -381,11 +423,38 @@ jobs:
           sudo grep -q '^TXBOARD_IMAGE=ghcr.io/anrcm0/txboard:latest$' "$TXBOARD_INSTALL_DIR/.env"
           sudo rm -rf "$TXBOARD_INSTALL_DIR"
 
-      - name: Check public image manifest
+      - name: Check fresh Core default and published compatibility manifest
         run: |
           image="$(sudo sed -n 's/^TXBOARD_IMAGE=//p' /tmp/txboard-deploy-ci/.env | tail -1)"
-          test "$image" = 'ghcr.io/anrcm0/txboard:latest'
-          docker manifest inspect "$image" >/dev/null
+          test "$image" = 'ghcr.io/anrcm0/txboard-core:latest'
+          # Rendering the new default does not imply a latest release exists.
+          # Keep this independent availability check on the published immutable
+          # historical smoke artifact until a reviewed new release is pinned.
+          docker manifest inspect ghcr.io/anrcm0/txboard:dev-sha-c8492dc2e120 >/dev/null
+
+  gateway-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      # Public, fixed runtime release; never substitute latest or moving dev.
+      TXBOARD_GATEWAY_TEST_IMAGE: ghcr.io/anrcm0/txboard-gateway:dev-sha-f9b271451eb3
+      TXBOARD_GATEWAY_TEST_REVISION: f9b271451eb36438db946ae018ab55568d2f10d5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the fixed public Gateway artifact
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker pull "$TXBOARD_GATEWAY_TEST_IMAGE"
+          revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$TXBOARD_GATEWAY_TEST_IMAGE")"
+          test "$revision" = "$TXBOARD_GATEWAY_TEST_REVISION"
+          printf 'Verified Gateway OCI revision: %s\n' "$revision"
+          docker image inspect --format 'Gateway image ID: {{.Id}}' "$TXBOARD_GATEWAY_TEST_IMAGE"
+      - name: Test actual Gateway installation and failed-image rollback
+        shell: bash
+        run: bash scripts/test-gateway-docker.sh
 
   smoke-install:
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -403,8 +472,10 @@ jobs:
           TXBOARD_PUBLIC_HOST: 127.0.0.1
           TXBOARD_HTTP_PORT: 18081
           TXBOARD_IMAGE_TAG: dev-sha-c8492dc2e120
+          # This pinned historical smoke release exists under the compatibility
+          # alias; default fresh installs and manifest checks use txboard-core.
+          TXBOARD_IMAGE_REPO: ghcr.io/anrcm0/txboard
           TXBOARD_BACKUP_RETENTION: 1
-          TXBOARD_ENABLE_MCP: "true"
         run: |
           python3 -c 'import sys,time; data=open("install.sh","rb").read(); [(sys.stdout.buffer.write(data[i:i+64]), sys.stdout.buffer.flush(), time.sleep(0.002)) for i in range(0,len(data),64)]' |
             sudo -E bash -s -- --yes
@@ -414,8 +485,9 @@ jobs:
           cd /tmp/txboard-deploy-smoke
           sudo docker compose exec -T txboard php artisan txboard:install-status --no-interaction
           curl -fsS http://127.0.0.1:18081/api/health | grep -q '"status":"ok"'
-          sudo grep -q '^TXBOARD_ENABLE_MCP=true$' .env
-          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18081/mcp)" = "401"
+          ! sudo grep -q '^TXBOARD_ENABLE_MCP=' .env
+          ! sudo grep -q 'ENABLE_MCP:' compose.yaml
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18081/mcp)" = "404"
           sudo test -x /tmp/txboard-deploy-smoke/txboard.sh
           sudo test -x /tmp/txboard-deploy-smoke/update.sh
           sudo test -x /tmp/txboard-deploy-smoke/lib/common.sh
@@ -463,6 +535,7 @@ jobs:
       - name: Exercise full isolated XBoard-style backup import
         env:
           TXBOARD_IMPORT_TEST_TAG: dev-sha-c8492dc2e120
+          TXBOARD_IMAGE_REPO: ghcr.io/anrcm0/txboard
         run: sudo -E bash scripts/test-import-roundtrip.sh
 
       - name: Cleanup

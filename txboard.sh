@@ -10,10 +10,29 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 
 if [[ "${1:-}" == "--dir" ]]; then
   export TXBOARD_INSTALL_DIR="${2:?missing path for --dir}"
+  export TXBOARD_COMPONENT_DIR="$TXBOARD_INSTALL_DIR"
   shift 2
 fi
 
 LIB_DIR="${TXBOARD_MANAGER_LIB_DIR:-$SCRIPT_DIR/lib}"
+
+# Components do not load Core modules or inherit Core's database/install dir.
+if [[ "${1:-}" == --component ]]; then
+  [[ $# -ge 2 ]] || { printf '[TXBoard] ERROR: missing component\n' >&2; exit 1; }
+  component="$2"; shift 2
+elif [[ "${1:-}" == core || "${1:-}" == gateway || "${1:-}" == node ]]; then
+  component="$1"; shift
+else
+  component=core
+fi
+case "$component" in
+  core) ;;
+  gateway|node)
+    [[ -f "$LIB_DIR/components.sh" ]] || { printf '[TXBoard] ERROR: components module missing; refresh the toolkit\n' >&2; exit 1; }
+    if (($#)); then exec bash "$LIB_DIR/components.sh" "$component" "$@";
+    else exec bash "$LIB_DIR/components.sh" "$component" help; fi ;;
+  *) printf '[TXBoard] ERROR: unknown component\n' >&2; exit 1 ;;
+esac
 
 for module in common service backup config diagnose uninstall detect maintenance; do
   [[ -f "$LIB_DIR/$module.sh" ]] || {
@@ -73,6 +92,21 @@ run_update() {
   return "$status"
 }
 
+run_upgrade() {
+  local executable="$SCRIPT_DIR/scripts/upgrade.py"
+  [[ -f "$executable" && ! -L "$executable" ]] ||
+    die "signed upgrade runner missing; use a reviewed TXBoard-Deploy checkout (scripts/upgrade.py)"
+  command -v python3 >/dev/null 2>&1 || die "upgrade requires Python 3.10+ and OpenSSL"
+  python3 "$executable" "$@" --dir "$TXBOARD_INSTALL_DIR"
+}
+
+run_native() {
+  local executable="$SCRIPT_DIR/scripts/native-runtime.py"
+  [[ -f "$executable" && ! -L "$executable" ]] || die "native deployment runner missing from the reviewed toolkit"
+  command -v python3 >/dev/null 2>&1 || die "native deployment requires Python 3.10+"
+  python3 "$executable" "$@" --dir "$TXBOARD_INSTALL_DIR"
+}
+
 show_help() {
   cat <<'EOF'
 TXBoard 管理工具
@@ -81,6 +115,9 @@ Usage:
   txboard
   txboard <command> [argument]
   txboard --dir /path/to/txboard <command>
+  txboard core <command>                 Existing Core commands
+  txboard gateway <command> [options]    Gateway install/status/logs/start/stop/restart/upgrade/recover/remove
+  txboard node <command> [options]       Delegate to the persistent txnode installer
 
 Interactive:
   menu                 Open the management menu
@@ -98,6 +135,8 @@ Quick commands:
   stats                Show container resource usage
   logs [service]       Follow logs: all, txboard, database/mysql, backup
   update [tag]         Update the current image, or switch to a tag
+  upgrade <command>   Signed isolated shadow plan/check/apply/status/recover/restore-check
+  native <command>    Native update --image DIGEST / status / recover (original durable intent)
   backup               Create a backup now
   backups              List available backups
   restore              Restore a managed-MySQL backup interactively (local mode only)
@@ -163,7 +202,7 @@ main_menu() {
     ui_section "备份与配置"
     ui_item 7 "立即备份"
     ui_item 8 "备份管理" "列表 / 恢复 / 保留策略"
-    ui_item 9 "配置管理" "端口 / HTTPS / MCP"
+    ui_item 9 "配置管理" "端口 / HTTPS / 镜像"
     ui_section "维护与安全"
     ui_item 10 "故障诊断"
     ui_item 13 "重置管理员密码"
@@ -199,6 +238,8 @@ case "$CMD" in
   menu) main_menu ;;
   install) run_install ;;
   update) run_update "$ARG" ;;
+  upgrade) shift; run_upgrade "$@" ;;
+  native) shift; run_native "$@" ;;
   detect) docker_ok; txboard_detect_scan "$TXBOARD_INSTALL_DIR"; txboard_detect_print ;;
   status|ps) service_status ;;
   start) service_start ;;

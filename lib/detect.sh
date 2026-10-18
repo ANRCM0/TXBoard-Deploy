@@ -43,7 +43,7 @@ txboard_detect_scan() {
     # Recognize Compose service labels; also notice legacy/orphan containers
     # using official TXBoard image. Neither image nor name authorizes ownership.
     case "${image,,}" in
-      ghcr.io/*/txboard:*|ghcr.io/*/txboard@*) : ;;
+      ghcr.io/*/txboard:*|ghcr.io/*/txboard@*|ghcr.io/*/txboard-core:*|ghcr.io/*/txboard-core@*) : ;;
       *) [[ "$svc" == txboard ]] || continue ;;
     esac
 

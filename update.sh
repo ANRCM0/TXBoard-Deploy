@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 INSTALL_DIR="${TXBOARD_INSTALL_DIR:-/opt/txboard}"
 IMAGE_TAG=""
+NATIVE_IMAGE=""
+NATIVE_CONFIGURATION=""
 SKIP_BACKUP=0
 ASSUME_YES=0
 TOOLS_ONLY=0
@@ -22,7 +24,9 @@ Usage:
 
 Options:
   --dir PATH       Install directory (default: /opt/txboard)
-  --tag TAG        Switch ghcr.io/anrcm0/txboard to a different tag
+  --tag TAG        Switch the installed Core image repository to a different tag
+  --native-image REF  Immutable native Core image (sha256 ID or repository@sha256)
+  --native-config DIR  Private target module configuration for a native update
   --skip-backup    Not permitted during schema-safe updates
   --yes            Unattended native TXBoard upgrade (rejects legacy v2_* schemas)
   --tools-only     Refresh management scripts only; do not update images or databases
@@ -35,6 +39,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir) INSTALL_DIR="${2:?missing value for --dir}"; shift 2 ;;
     --tag) IMAGE_TAG="${2:?missing value for --tag}"; shift 2 ;;
+    --native-image) NATIVE_IMAGE="${2:?missing value for --native-image}"; shift 2 ;;
+    --native-config) NATIVE_CONFIGURATION="${2:?missing value for --native-config}"; shift 2 ;;
     --skip-backup) SKIP_BACKUP=1; shift ;;
     --yes) ASSUME_YES=1; shift ;;
     --tools-only) TOOLS_ONLY=1; shift ;;
@@ -84,7 +90,7 @@ refresh_tools() {
       return 1
     fi
   done
-  for module in common service backup config diagnose uninstall detect xboard-import maintenance; do
+  for module in common service backup config diagnose uninstall detect xboard-import maintenance components; do
     if ! download_file "$DEPLOY_RAW_BASE/lib/$module.sh" "$stage/lib/$module.sh" ||
        ! bash -n "$stage/lib/$module.sh"; then
       warn "could not fetch/validate manager module: $module"
@@ -93,13 +99,27 @@ refresh_tools() {
     fi
   done
 
+  if [[ -f "$INSTALL_DIR/scripts/native-runtime.py" ]]; then
+    mkdir -p "$stage/scripts"
+    if ! download_file "$DEPLOY_RAW_BASE/scripts/native-runtime.py" "$stage/scripts/native-runtime.py" ||
+       ! python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$stage/scripts/native-runtime.py"; then
+      warn "could not fetch/validate native deployment runner"
+      rm -rf -- "$stage"
+      return 1
+    fi
+  fi
+
   mkdir -p "$INSTALL_DIR/lib"
-  for module in common service backup config diagnose uninstall detect xboard-import maintenance; do
+  for module in common service backup config diagnose uninstall detect xboard-import maintenance components; do
     mv -f -- "$stage/lib/$module.sh" "$INSTALL_DIR/lib/$module.sh"
   done
   for file in txboard.sh update.sh; do
     mv -f -- "$stage/$file" "$INSTALL_DIR/$file"
   done
+  if [[ -f "$stage/scripts/native-runtime.py" ]]; then
+    mv -f -- "$stage/scripts/native-runtime.py" "$INSTALL_DIR/scripts/native-runtime.py"
+    chmod 700 "$INSTALL_DIR/scripts/native-runtime.py"
+  fi
   rm -rf -- "$stage"
   chmod 755 "$INSTALL_DIR/txboard.sh" "$INSTALL_DIR/update.sh" "$INSTALL_DIR"/lib/*.sh
 
@@ -116,15 +136,28 @@ refresh_tools() {
 }
 
 if [[ "$TOOLS_ONLY" -eq 1 ]]; then
-  [[ -z "$IMAGE_TAG" && "$SKIP_BACKUP" -eq 0 ]] ||
+  [[ -z "$IMAGE_TAG" && -z "$NATIVE_IMAGE" && -z "$NATIVE_CONFIGURATION" && "$SKIP_BACKUP" -eq 0 ]] ||
     die "--tools-only cannot be combined with --tag or --skip-backup"
   umask 077
   command -v flock >/dev/null 2>&1 || die "flock is required for management refresh"
   exec 9>"$INSTALL_DIR/.upgrade.lock"
   flock -n 9 || die "another TXBoard management or upgrade process holds the lock"
+  [[ ! -e "$INSTALL_DIR/.upgrade-in-progress" && ! -L "$INSTALL_DIR/.upgrade-in-progress" ]] ||
+    die "unfinished durable upgrade; inspect upgrade status/recover before refreshing tools"
   refresh_tools || die "management tools refresh failed; current deployment was not changed"
   exit 0
 fi
+
+if grep -Fxq 'CORE_INSTALLATION_MODE=native' "$INSTALL_DIR/api.env"; then
+  [[ -n "$NATIVE_IMAGE" && -z "$IMAGE_TAG" && "$SKIP_BACKUP" -eq 0 ]] ||
+    die "native updates require --native-image with an immutable image; backup is mandatory"
+  native_runner="$INSTALL_DIR/scripts/native-runtime.py"
+  [[ -f "$native_runner" && ! -L "$native_runner" ]] || die "native runner missing; use the reviewed native deployment toolkit"
+  native_args=(update --dir "$INSTALL_DIR" --image "$NATIVE_IMAGE")
+  [[ -z "$NATIVE_CONFIGURATION" ]] || native_args+=(--configuration "$NATIVE_CONFIGURATION")
+  exec python3 "$native_runner" "${native_args[@]}"
+fi
+[[ -z "$NATIVE_IMAGE" && -z "$NATIVE_CONFIGURATION" ]] || die "native image/configuration requires an initialized native deployment"
 
 set_image() {
   local value="$1" tmp
@@ -188,6 +221,8 @@ umask 077
 command -v flock >/dev/null 2>&1 || die "flock is required for upgrade locking"
 exec 9>"$INSTALL_DIR/.upgrade.lock"
 flock -n 9 || die "another TXBoard upgrade is running"
+[[ ! -e "$INSTALL_DIR/.upgrade-in-progress" && ! -L "$INSTALL_DIR/.upgrade-in-progress" ]] ||
+  die "unfinished durable upgrade; use upgrade status/recover before changing an image"
 
 # The existing backup service supplies a MySQL client on the exact same network.
 # No application credentials or row data are printed.

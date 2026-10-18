@@ -1,0 +1,175 @@
+{
+  "profile": "node-oci-package-rename/synthetic-v1",
+  "date": "2026-10-13",
+  "base_commit": "12b42453ecf8d1b7ccd85d21c14fd34cd1fa9401",
+  "canonical_node_image": "ghcr.io/anrcm0/txboard-node",
+  "preserved_runtime_names": {
+    "executable": "tx-node",
+    "cli": "txnode",
+    "config": "/etc/txnode/config.yml",
+    "compose_service": "tx-node"
+  },
+  "source_files": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "working_sha256": "fed50ff0a17744c961d198ddf388711377face0f6fbc147b4d1ac1786ba1f9c7",
+      "snapshot_sha256": "fed50ff0a17744c961d198ddf388711377face0f6fbc147b4d1ac1786ba1f9c7"
+    },
+    {
+      "path": "docs/architecture-and-ci.md",
+      "working_sha256": "3bd50b37a70ad985d84613b03554753768aea24b52d8c9364c19fb79fec8410b",
+      "snapshot_sha256": "3bd50b37a70ad985d84613b03554753768aea24b52d8c9364c19fb79fec8410b"
+    },
+    {
+      "path": "docs/components.md",
+      "working_sha256": "907270f9b3da47983dac258bb1893f46dd2b57a0f40eaabe807247d6cdd188fd",
+      "snapshot_sha256": "907270f9b3da47983dac258bb1893f46dd2b57a0f40eaabe807247d6cdd188fd"
+    },
+    {
+      "path": "node/deploy.sh",
+      "working_sha256": "18c027e7fd2d724364c7040f1a35830e4a81b5afb651635b425513def9573e4c",
+      "snapshot_sha256": "76e6113217724875c9496c1f31df2725a3da61937c602ca486286a1156b8059c"
+    },
+    {
+      "path": "scripts/test-gateway-docker.sh",
+      "working_sha256": "c27a4d7f92600dd0efe69d8dde697bc09a50a54f83dda1e813af3a97c2f2d964",
+      "snapshot_sha256": "c27a4d7f92600dd0efe69d8dde697bc09a50a54f83dda1e813af3a97c2f2d964"
+    },
+    {
+      "path": "README.md",
+      "working_sha256": "20c26b82f91a7878d0e14ce9a949762f69a36467b1fce21c14e2ba440a1c5b4d",
+      "snapshot_sha256": "20c26b82f91a7878d0e14ce9a949762f69a36467b1fce21c14e2ba440a1c5b4d"
+    },
+    {
+      "path": "node/README.md",
+      "working_sha256": "735e67a3c139dda8cf83b691b242f051c7f78d635a5384642bf2e41eac06879d",
+      "snapshot_sha256": "735e67a3c139dda8cf83b691b242f051c7f78d635a5384642bf2e41eac06879d"
+    },
+    {
+      "path": "node/tests/image_channel_test.sh",
+      "working_sha256": "ae045bca4a8259e84dbcb5958d8fd27fb6252f5103a87edc36e4e9d387ac5ba9",
+      "snapshot_sha256": "9078895403e3b381074451662733d878234c43f4a0461bb7306f62218833d698"
+    },
+    {
+      "path": "node/tests/install_args_test.sh",
+      "working_sha256": "f0e24c9965f8baf30da5c8978e1efeb7eec5312ba2e8dc84faca4646d8d96ebf",
+      "snapshot_sha256": "73e658dc412daa80192061416ab66bbdd94d011362a040967f2859f71ee95cda"
+    },
+    {
+      "path": "node/tests/remote_update_bridge_test.sh",
+      "working_sha256": "4dc48dc736e9b4962c7a1ce2444b5fde50213f4a26b5cc4a0097ff3470703178",
+      "snapshot_sha256": "df45dadddbf5ffd924acca0611de2c9ee63980e8e1b2ba2ecdcca4ac778a930f"
+    }
+  ],
+  "source_aggregate_sha256": "055c0b59f98f0174cf17942b0fc6bc16c4240e36d7727f7e63bc7545e1c35403",
+  "hash_definition": "Raw working hashes retain existing line endings; Linux .sh snapshot normalizes CRLF to LF. Aggregate hashes canonical JSON source records using sorted keys and compact separators.",
+  "snapshot": {
+    "path": "/opt/txboard-baseline/unified-node-oci-12b4245-r1",
+    "archive_sha256": "5289b6dbef18bc6d3805e0f269d2523e15b900964ab6c35ade518b574c6491fc",
+    "overlay_files": 10
+  },
+  "documentation_after_gate": [
+    {
+      "path": "docs/repository-consolidation.md",
+      "sha256": "19b6d4fe8d94a5ed6dc29639aafecbcfbda5ee1475819523567ebc05cc41ef27",
+      "change": "Current Node package declaration updated; history/source evidence preserved; this docs-only file is outside the frozen Linux snapshot."
+    }
+  ],
+  "tests": {
+    "linux_bash_syntax": {
+      "total": 33,
+      "passed": 33
+    },
+    "linux_suites": {
+      "total": 7,
+      "passed": 7,
+      "failed": 0,
+      "names": [
+        "node/tests/install_args_test.sh",
+        "node/tests/image_channel_test.sh",
+        "node/tests/remote_update_bridge_test.sh",
+        "node/tests/legacy_cleanup_test.sh",
+        "node/tests/deploy_multi_instance_test.sh",
+        "scripts/test-components.sh",
+        "scripts/test-gateway.sh"
+      ]
+    },
+    "windows_bash_syntax": {
+      "total": 33,
+      "passed": 33
+    },
+    "log": {
+      "path": ".tmp/unified-node-oci-gate/linux-attempt01.log",
+      "sha256": "d042bbd5dce20a836ea555420e14b7aae1d0d0c5742040aae807bd5c07f1d4b1"
+    },
+    "docs": {
+      "markdown_files": 13,
+      "relative_links": 39,
+      "passed": true
+    },
+    "git_diff_check": true,
+    "existing_core_ci_jobs_and_events_unchanged": true
+  },
+  "compatibility_evidence": [
+    "Official fresh defaults and stable/dev channel fixtures use txboard-node.",
+    "Sourcing the updated script preserves an explicit old IMAGE value.",
+    "Old-package channel/automatic upgrade attempts are refused with byte-identical Compose retained.",
+    "Executable, CLI, config target, service, host networking, multiple instances and typed bridge regressions remain covered.",
+    "No dual-repository upgrade or automatic migration is introduced; old/custom saved configurations require operator-reviewed image changes."
+  ],
+  "not_executed": [
+    "actual Node binary",
+    "real Docker daemon or systemd operations",
+    "database or Redis",
+    "network/image pull",
+    "production installed-machine mutation",
+    "Node admission or business flows"
+  ],
+  "historical_evidence": "docs/unified-components-verification.json retains its original tested old-package source and evidence; this new report describes the current rename slice.",
+  "gateway_configuration_in_tested_snapshot": {
+    "image": "ghcr.io/anrcm0/txboard-gateway:dev-sha-9098eaf6f2a7",
+    "revision": "9098eaf6f2a77cba1b21e1465c675db769737fd8",
+    "ci_prepared": true,
+    "actual_docker_executed_by_this_gate": false,
+    "next_runtime_tag_requires_separate_update": true,
+    "note": "Historical fixed-snapshot configuration; actual Docker was not executed by the seven-suite Node OCI gate."
+  },
+  "current_gateway_configuration_after_gate": {
+    "image": "ghcr.io/anrcm0/txboard-gateway:dev-sha-f9b271451eb3",
+    "revision": "f9b271451eb36438db946ae018ab55568d2f10d5",
+    "ci_prepared": true,
+    "actual_docker_executed_by_this_agent": false,
+    "anonymous_publication_confirmed_by_parent": true,
+    "parent_reported_manifest_digest": "sha256:c14ca36e5b763d2f7e6415b277b5186cb44f69b262115f819be66effcae5fced",
+    "platforms_confirmed_by_parent": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
+  },
+  "configuration_and_docs_after_gate": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "e02f9bec1248f4a48ea052cd5db3aba836a182405067a87bef5051767d50dc36",
+      "change": "Fixed Gateway CI/ref to f9 native-build release; wording correction for explicit IMAGE compatibility; no Node runtime behavior change."
+    },
+    {
+      "path": "docs/components.md",
+      "sha256": "c3774317468535e12281d05b52364464db64859d1a57f4509e8024dc0d91b9d7",
+      "change": "Fixed Gateway CI/ref to f9 native-build release; wording correction for explicit IMAGE compatibility; no Node runtime behavior change."
+    },
+    {
+      "path": "node/README.md",
+      "sha256": "19ce082227b60a0694a42f353c9e84392967e2ca549b8f31ce62dc093c40128c",
+      "change": "Fixed Gateway CI/ref to f9 native-build release; wording correction for explicit IMAGE compatibility; no Node runtime behavior change."
+    }
+  ],
+  "final_static_checks": {
+    "actionlint": "1.7.12 passed; optional external shellcheck/pyflakes disabled",
+    "yaml_existing_core_jobs_unchanged": true,
+    "docs_markdown": 13,
+    "docs_relative_links": 39,
+    "git_diff_check": true,
+    "actual_runner_syntax": true,
+    "log_sha256": "8bc40c4a662160b1106f07b9b9e3c5d325c0aa0e3bac28c51404df1003c8c250"
+  }
+}

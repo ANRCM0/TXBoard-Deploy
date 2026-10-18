@@ -1,0 +1,131 @@
+{
+  "phase": "B2.4",
+  "status": "verified-isolated-current",
+  "production_acceptance": false,
+  "deploy_base": "fcb8d29b2d734223abff681aa055a44462d26cc7",
+  "core_commit": "63f99cf0d090e8b50c626ac5dac457f4ea5bcf7c",
+  "normalized_source_sha256": {
+    "scripts/upgrade.py": "96db0d57c70ddca7569dd7e6b1fa46ae7ce6fc3cd41c78a288188d598e5544ee",
+    "scripts/test-upgrade-orchestrator.py": "d515b7bbec47e24798c0d2933c1a81f15f0a3c398f33be537e73fa768b995e6b",
+    "scripts/test-upgrade-docker-recovery.py": "d9cebf6a070c01b67823706fd932504682f68261fd5c0472ea3ec13bc8602066",
+    "lib/detect.sh": "20ac566e4406df5c77c56705d0902ae7c6f57dfae1345df3e6437da67d4e00c6"
+  },
+  "windows_tests": {
+    "passed": 58,
+    "exit_code": 0,
+    "log_sha256": "37820601dd70dda0fac610374d8eb8a9d5b5f39778b824c0872b4880f8a95b13"
+  },
+  "linux_tests": {
+    "python": {
+      "exit_code": 0,
+      "log_sha256": "d4292201cf10072fb757515b73816896bde0c7d508337dacc1d2c45755c80eec"
+    },
+    "management": {
+      "exit_code": 0,
+      "log_sha256": "517bdcc0bbe0e4851e5a11a654525ab8fa84a26ac078120fa0f9dc9dd55d77d0"
+    }
+  },
+  "docker_core_mariadb_recovery": {
+    "profile": "captured-money-shadow/v1",
+    "result": "passed",
+    "fault": "SIGKILL after Core batch commit before journal result",
+    "core_cursor_after_kill": "100",
+    "manifest_sha256": "59f202c98fc41ad4b2a0ab323b9992ed8a6bf582b905358c8de6779a46c8f467",
+    "authority": "legacy",
+    "duplicate_maps": "0",
+    "binary_guard_retained": true,
+    "financial_evidence": {
+      "duplicate_steps": "0",
+      "unbalanced_steps": "0",
+      "checked_count": "205"
+    },
+    "target_digest": "127.0.0.1:15004/txboard-shadow@sha256:c2dbac57735f370d4eba8bffaafa036daf29e73c81435cf440b58f7511e94106"
+  },
+  "source_artifact_and_roundtrip": {
+    "core_commit": "63f99cf0d090e8b50c626ac5dac457f4ea5bcf7c",
+    "core_archive_sha256": "27aa1e82b5117f5a95b3fdd813c55de8360cd7033bb1b63a304bbe0567b2b596",
+    "deploy_normalized_source_sha256": {
+      "scripts/upgrade.py": "96db0d57c70ddca7569dd7e6b1fa46ae7ce6fc3cd41c78a288188d598e5544ee",
+      "scripts/test-upgrade-orchestrator.py": "d515b7bbec47e24798c0d2933c1a81f15f0a3c398f33be537e73fa768b995e6b",
+      "scripts/test-upgrade-docker-recovery.py": "d9cebf6a070c01b67823706fd932504682f68261fd5c0472ea3ec13bc8602066",
+      "lib/detect.sh": "20ac566e4406df5c77c56705d0902ae7c6f57dfae1345df3e6437da67d4e00c6"
+    },
+    "artifact": "127.0.0.1:15004/txboard-shadow@sha256:c2dbac57735f370d4eba8bffaafa036daf29e73c81435cf440b58f7511e94106",
+    "manifest_sha256": "59f202c98fc41ad4b2a0ab323b9992ed8a6bf582b905358c8de6779a46c8f467",
+    "dump_roundtrip_sha256": "3e679c9ab3e1e871ededb1ba102bd5b263095afbcbe82a1d2177c23c8abbacc0"
+  },
+  "fixture_root": "/opt/txboard-baseline/money-upgrade-r1",
+  "local_docker": "28.3.3",
+  "local_database": "MariaDB11.4.12",
+  "signed_scope": "one synthetic User, capture run/currency/timezone/stream/high-water/hash",
+  "limitations": [
+    "Local fixture OCI image built from exact committed API plus locked vendor, not official production image build acceptance",
+    "RSA2048 detached signature uses generated test-only release key, never production release trust",
+    "Standalone single-User profile; no whole-site migration or production writer authority switch",
+    "Partial DDL requires investigation; no cluster lease or automated full database restoration",
+    "Backup rehearsal and coverage remain explicit operator evidence; this fixture performed a real identical synthetic dump/restore"
+  ],
+  "ci": {
+    "status": "pending push and remote verification",
+    "workflow": ".github/workflows/ci.yml"
+  },
+  "remote_ci_initial": {
+    "commit": "71cb340ae537ab2ff26f585038a3d85171e7377c",
+    "run_url": "https://github.com/ANRCM0/TXBoard-Deploy/actions/runs/38337445075",
+    "overall": "failure",
+    "signed_orchestrator": "success",
+    "gateway_actual_install_and_rollback": "success",
+    "host_mysql_render": "failure",
+    "cause": "socket-only bootstrap readiness race"
+  },
+  "host_mysql_readiness_correction": {
+    "base_commit": "71cb340ae537ab2ff26f585038a3d85171e7377c",
+    "normalized_source_sha256": {
+      "lib/install-database.sh": "ddc708a2b213f8376d657295318779e485c328893f8ced09cd593391d2b18010",
+      "scripts/test-install-flow.sh": "23b79c225d7139f0580c109f23f94851757f65d8af062bd1baf9bff0c41058b1",
+      ".github/workflows/ci.yml": "bfdaf5dab98a95b22adc256cafe9b927452a3e9859ae5b77ea512a4bf3ebff7b"
+    },
+    "checks": {
+      "test-install-flow.sh": {
+        "exit_code": 0,
+        "log_sha256": "dc30b1748c3b2b519ca4c715092d914ead6a724f289ebd30b6029fdc2b4801c9"
+      },
+      "test-detect.sh": {
+        "exit_code": 0,
+        "log_sha256": "8cb6dfd3b91ccacec952c9657c2e7063d502612454d9b3fe452fd76efccbd497"
+      },
+      "test-upgrade-management.sh": {
+        "exit_code": 0,
+        "log_sha256": "517bdcc0bbe0e4851e5a11a654525ab8fa84a26ac078120fa0f9dc9dd55d77d0"
+      }
+    }
+  },
+  "remote_ci_after_correction": {
+    "commit": "34fd467944255518b79d52a2e7ea70f96cee22d6",
+    "run_url": "https://github.com/ANRCM0/TXBoard-Deploy/actions/runs/38338365530",
+    "overall": "success",
+    "jobs": [
+      {
+        "name": "verify",
+        "conclusion": "success",
+        "url": "https://github.com/ANRCM0/TXBoard-Deploy/actions/runs/38338365530/job/115103524178"
+      },
+      {
+        "name": "gateway-docker",
+        "conclusion": "success",
+        "url": "https://github.com/ANRCM0/TXBoard-Deploy/actions/runs/38338365530/job/115103524336"
+      },
+      {
+        "name": "smoke-install",
+        "conclusion": "skipped",
+        "url": "https://github.com/ANRCM0/TXBoard-Deploy/actions/runs/38338365530/job/115103525201"
+      }
+    ],
+    "log_sha256": "be05e73f789d9cc127bd6dc6ac96150caecd4c6eba51771d60790b0affb7a2a6",
+    "signed_orchestrator_tests": 58,
+    "host_mysql_render": "success",
+    "gateway_actual_install_and_rollback": "success",
+    "database_engine": "Oracle MySQL 8.4.11",
+    "real_core_crash_recovery_rerun": false
+  }
+}
