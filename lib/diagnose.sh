@@ -1,4 +1,15 @@
 #!/usr/bin/env bash
+deployment_resource_check() {
+  need_install
+  local helper="$TXBOARD_INSTALL_DIR/scripts/deployment-profile.py" profile
+  profile="$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_RESOURCE_PROFILE)"
+  [[ -n "$profile" ]] || { warn "resource profile is not configured; review resource limits before upgrading"; return 1; }
+  [[ -f "$helper" && ! -L "$helper" ]] || { warn "capacity planner missing; refresh the reviewed toolkit"; return 1; }
+  command -v python3 >/dev/null 2>&1 || { warn "capacity planner requires Python 3.10+"; return 1; }
+  python3 "$helper" --dir "$TXBOARD_INSTALL_DIR" --profile "$profile" --db-mode "$(database_mode)" \
+    --retention "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION)" --installed
+}
+
 diagnose_run() {
   docker_ok; need_install
   local failed=0
@@ -36,6 +47,19 @@ diagnose_run() {
   else
     echo "txboard: not running"
     failed=1
+  fi
+
+  echo "=== capacity budget ==="
+  deployment_resource_check || failed=1
+  echo "=== running container limits ==="
+  local cid
+  while IFS= read -r cid; do
+    [[ -z "$cid" ]] || docker inspect --format '{{.Name}} memory={{.HostConfig.Memory}} nano_cpus={{.HostConfig.NanoCpus}} pids={{.HostConfig.PidsLimit}}' "$cid" || failed=1
+  done < <(compose ps -q)
+
+  if [[ "$(env_get "$TXBOARD_INSTALL_DIR/api.env" CORE_INSTALLATION_MODE)" == native ]]; then
+    echo "=== native recovery and backup materials ==="
+    run_native diagnose || failed=1
   fi
 
   echo "=== disk ==="

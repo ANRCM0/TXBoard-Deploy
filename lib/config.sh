@@ -36,6 +36,10 @@ HTTP bind:         $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_BIND)
 HTTP port:         $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTP_PORT)
 HTTPS port:        $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_HTTPS_PORT)
 Backup retention:  $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION)
+Resource profile:  $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_RESOURCE_PROFILE)
+Core memory MiB:   $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_CORE_MEMORY_MIB)
+Core CPUs:         $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_CORE_CPUS)
+Redis memory MiB:  $(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_REDIS_MEMORY_MIB)
 EOF
 }
 

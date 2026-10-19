@@ -99,6 +99,13 @@ refresh_tools() {
     fi
   done
 
+  mkdir -p "$stage/scripts"
+  if ! download_file "$DEPLOY_RAW_BASE/scripts/deployment-profile.py" "$stage/scripts/deployment-profile.py" ||
+     ! python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$stage/scripts/deployment-profile.py"; then
+    warn "could not fetch/validate capacity planner"
+    rm -rf -- "$stage"
+    return 1
+  fi
   if [[ -f "$INSTALL_DIR/scripts/native-runtime.py" ]]; then
     mkdir -p "$stage/scripts"
     if ! download_file "$DEPLOY_RAW_BASE/scripts/native-runtime.py" "$stage/scripts/native-runtime.py" ||
@@ -109,7 +116,9 @@ refresh_tools() {
     fi
   fi
 
-  mkdir -p "$INSTALL_DIR/lib"
+  mkdir -p "$INSTALL_DIR/lib" "$INSTALL_DIR/scripts"
+  mv -f -- "$stage/scripts/deployment-profile.py" "$INSTALL_DIR/scripts/deployment-profile.py"
+  chmod 700 "$INSTALL_DIR/scripts/deployment-profile.py"
   for module in common service backup config diagnose uninstall detect xboard-import maintenance components; do
     mv -f -- "$stage/lib/$module.sh" "$INSTALL_DIR/lib/$module.sh"
   done
@@ -155,7 +164,7 @@ if grep -Fxq 'CORE_INSTALLATION_MODE=native' "$INSTALL_DIR/api.env"; then
   [[ -f "$native_runner" && ! -L "$native_runner" ]] || die "native runner missing; use the reviewed native deployment toolkit"
   native_args=(update --dir "$INSTALL_DIR" --image "$NATIVE_IMAGE")
   [[ -z "$NATIVE_CONFIGURATION" ]] || native_args+=(--configuration "$NATIVE_CONFIGURATION")
-  exec python3 "$native_runner" "${native_args[@]}"
+  exec python3 "$native_runner" "${native_args[@]}" --progress
 fi
 [[ -z "$NATIVE_IMAGE" && -z "$NATIVE_CONFIGURATION" ]] || die "native image/configuration requires an initialized native deployment"
 
@@ -223,6 +232,15 @@ exec 9>"$INSTALL_DIR/.upgrade.lock"
 flock -n 9 || die "another TXBoard upgrade is running"
 [[ ! -e "$INSTALL_DIR/.upgrade-in-progress" && ! -L "$INSTALL_DIR/.upgrade-in-progress" ]] ||
   die "unfinished durable upgrade; use upgrade status/recover before changing an image"
+
+profile="$(get_env TXBOARD_RESOURCE_PROFILE)"
+if [[ -n "$profile" ]]; then
+  helper="$INSTALL_DIR/scripts/deployment-profile.py"
+  [[ -f "$helper" && ! -L "$helper" ]] || die "capacity planner missing; refresh the reviewed toolkit"
+  python3 "$helper" --dir "$INSTALL_DIR" --installed --profile "$profile" \
+    --db-mode "$(get_env TXBOARD_DB_MODE)" --retention "$(get_env TXBOARD_BACKUP_RETENTION)" ||
+    die "capacity preflight failed before image or database changes"
+fi
 
 # The existing backup service supplies a MySQL client on the exact same network.
 # No application credentials or row data are printed.

@@ -32,6 +32,15 @@ jobs:
           bash -n scripts/test-gateway-docker.sh
           for f in node/tests/*.sh; do bash -n "$f"; done
 
+
+      - name: Check resource planning and backup source integration
+        run: python3 -B scripts/check-deployment-source.py
+
+      - name: Exercise resource budgets and read-only native backup inspection
+        run: |
+          python3 -B scripts/test-deployment-profile.py
+          python3 -B scripts/test-native-backup-inspect.py
+
       - name: Test unified component routing and Gateway lifecycle (synthetic Docker)
         run: |
           bash scripts/test-components.sh

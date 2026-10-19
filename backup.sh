@@ -56,6 +56,27 @@ prune() {
         done
 }
 
+native_source_snapshot() (
+    cd "$deployment" || return 1
+    for item in .env api.env compose.yaml native/prepare.json native/runtime.env native/node-recipients.json native/signer.seed native/provider-ca.pem native/provider-client.pem native/provider-client.key; do
+        [ -f "$item" ] && [ -s "$item" ] && [ ! -L "$item" ] || return 1
+    done
+    [ -d native ] && [ ! -L native ] || return 1
+    [ ! -L .native-deploy ] || return 1
+    # Check regular materials and the durable intent at both ends of an online
+    # dump, including an upgrade that starts and finishes during the dump.
+    find native ! -type f ! -type d -print > "$dest/.native-special" || return 1
+    [ ! -s "$dest/.native-special" ] || return 1
+    sha256sum .env api.env compose.yaml > "$dest/.native-sources" || return 1
+    find native -type f -exec sha256sum {} + >> "$dest/.native-sources" || return 1
+    if [ -e .native-deploy/intent.json ]; then
+        [ -f .native-deploy/intent.json ] && [ ! -L .native-deploy/intent.json ] || return 1
+        sha256sum .native-deploy/intent.json >> "$dest/.native-sources" || return 1
+    fi
+    sort "$dest/.native-sources" > "$dest/.native-sorted" || return 1
+    sha256sum "$dest/.native-sorted"
+)
+
 run_backup() (
     stamp=$(date -u '+%Y%m%dT%H%M%SZ')
     dest="$BACKUP_DIR/$stamp"
@@ -68,6 +89,14 @@ run_backup() (
     fi
     trap 'rm -rf "$dest"' EXIT
     trap 'exit 1' HUP INT TERM
+
+    if [ "${BACKUP_NATIVE_MODE:-0}" = 1 ]; then
+        deployment=${BACKUP_DEPLOYMENT_DIR:-/backup-deployment}
+        if [ -e "$deployment/.upgrade-in-progress" ] && [ "${BACKUP_NATIVE_FROZEN:-0}" != 1 ]; then
+            log "ERROR: native operation active; periodic backup deferred"; return 1
+        fi
+        native_before=$(native_source_snapshot) || { log "ERROR: native materials unavailable"; return 1; }
+    fi
 
     log "dumping $DB_DATABASE@$DB_HOST:$DB_PORT -> $dest/db.sql.gz"
     # --single-transaction keeps InnoDB consistent without locking the panel.
@@ -140,8 +169,31 @@ run_backup() (
         fi
     done
 
+    if [ "${BACKUP_NATIVE_MODE:-0}" = 1 ]; then
+        deployment=${BACKUP_DEPLOYMENT_DIR:-/backup-deployment}
+        [ -d "$deployment/native" ] && [ ! -L "$deployment/native" ] || { log "ERROR: native materials unavailable"; return 1; }
+        if [ -e "$deployment/.upgrade-in-progress" ] && [ "${BACKUP_NATIVE_FROZEN:-0}" != 1 ]; then
+            log "ERROR: native operation active; periodic backup deferred"; return 1
+        fi
+        set -- .env api.env compose.yaml native
+        for item in resource-plan.json .native-deploy; do
+            if [ -e "$deployment/$item" ]; then
+                [ ! -L "$deployment/$item" ] || return 1
+                if [ -d "$deployment/$item" ] && find "$deployment/$item" -type l -print | grep -q .; then return 1; fi
+                set -- "$@" "$item"
+            fi
+        done
+        tar -czf "$dest/native-deployment.tar.gz" -C "$deployment" "$@" && gzip -t "$dest/native-deployment.tar.gz" || return 1
+        if [ -e "$deployment/.upgrade-in-progress" ] && [ "${BACKUP_NATIVE_FROZEN:-0}" != 1 ]; then
+            log "ERROR: native operation started during backup; snapshot discarded"; return 1
+        fi
+        native_after=$(native_source_snapshot) || return 1
+        [ "$native_before" = "$native_after" ] || { log "ERROR: native configuration or intent changed during backup"; return 1; }
+        rm -f "$dest/.native-special" "$dest/.native-sources" "$dest/.native-sorted"
+    fi
+
     contents="db.sql.gz env"
-    for entry in storage-app.tar.gz storage-theme.tar.gz plugins.tar.gz; do
+    for entry in storage-app.tar.gz storage-theme.tar.gz plugins.tar.gz native-deployment.tar.gz; do
         [ ! -f "$dest/$entry" ] || contents="$contents $entry"
     done
     {
@@ -149,15 +201,17 @@ run_backup() (
         echo "database=$DB_DATABASE"
         echo "db_host=$DB_HOST"
         echo "contents=$contents"
+        echo "native=${BACKUP_NATIVE_MODE:-0}"
+        echo "consistency=$(if [ "${BACKUP_NATIVE_FROZEN:-0}" = 1 ]; then echo native-frozen; else echo online-snapshot; fi)"
     } > "$dest/MANIFEST"
 
     (
         cd "$dest" || exit 1
         set -- db.sql.gz env
-        for item in storage-app.tar.gz storage-theme.tar.gz plugins.tar.gz; do
+        for item in storage-app.tar.gz storage-theme.tar.gz plugins.tar.gz native-deployment.tar.gz; do
             [ ! -f "$item" ] || set -- "$@" "$item"
         done
-        sha256sum "$@" > CHECKSUMS.sha256
+        sha256sum "$@" MANIFEST > CHECKSUMS.sha256
         sha256sum -c CHECKSUMS.sha256 >/dev/null
     ) || {
         log "ERROR: backup integrity checksum failed"
