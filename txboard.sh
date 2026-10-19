@@ -26,8 +26,9 @@ else
   component=core
 fi
 case "$component" in
+  gateway) printf '[TXBoard] ERROR: Gateway is retired; browser ingress is included in Core\n' >&2; exit 1 ;;
   core) ;;
-  gateway|node)
+  node)
     [[ -f "$LIB_DIR/components.sh" ]] || { printf '[TXBoard] ERROR: components module missing; refresh the toolkit\n' >&2; exit 1; }
     if (($#)); then exec bash "$LIB_DIR/components.sh" "$component" "$@";
     else exec bash "$LIB_DIR/components.sh" "$component" help; fi ;;
@@ -131,7 +132,6 @@ Usage:
   txboard <command> [argument]
   txboard --dir /path/to/txboard <command>
   txboard core <command>                 Existing Core commands
-  txboard gateway <command> [options]    Gateway install/status/logs/start/stop/restart/upgrade/recover/remove
   txboard node <command> [options]       Delegate to the persistent txnode installer
 
 Interactive:

@@ -15,9 +15,9 @@ component_fetch() {
 
 component_main() {
   local role="${1:-}" command="${2:-help}" explicit_dir="${TXBOARD_COMPONENT_DIR:-}"
-  [[ $# -ge 2 ]] || component_error 'usage: components.sh gateway|node command [options]'
+  [[ $# -ge 2 ]] || component_error 'usage: components.sh node command [options]'
   shift 2
-  case "$role" in gateway|node) ;; *) component_error 'component must be core, gateway or node' ;; esac
+  case "$role" in gateway) component_error 'Gateway is retired; browser ingress is included in Core' ;; node) ;; *) component_error 'component must be core or node' ;; esac
   if [[ "$role" == node && "${1:-}" == --dir ]]; then
     [[ $# -ge 2 && -n "$2" ]] || component_error 'missing Node install directory'
     explicit_dir="$2"; shift 2
@@ -29,8 +29,6 @@ component_main() {
   # copy owns the existing CLI/bridge and is preferred over another download.
   if [[ "$command" != install && ! -f "$target" && "$role" == node && -f "${explicit_dir:-/etc/txnode}/deploy.sh" ]]; then
     target="${explicit_dir:-/etc/txnode}/deploy.sh"
-  elif [[ "$command" != install && ! -f "$target" && "$role" == gateway && -f "${explicit_dir:-/opt/txboard-gateway}/gateway.sh" ]]; then
-    target="${explicit_dir:-/opt/txboard-gateway}/gateway.sh"
   fi
   if [[ ! -f "$target" ]]; then
     tmp="$(mktemp /tmp/txboard-component.XXXXXXXX.sh)"
@@ -41,16 +39,10 @@ component_main() {
     chmod 700 "$tmp"
     target="$tmp"
   fi
-  if [[ "$role" == node ]]; then
-    if [[ -n "$explicit_dir" ]]; then
-      INSTALL_DIR="$explicit_dir" bash "$target" "$command" "$@" || result=$?
-    else
-      bash "$target" "$command" "$@" || result=$?
-    fi
+  if [[ -n "$explicit_dir" ]]; then
+    INSTALL_DIR="$explicit_dir" bash "$target" "$command" "$@" || result=$?
   else
-    local -a args=("$command")
-    [[ -z "$explicit_dir" ]] || args+=(--dir "$explicit_dir")
-    bash "$target" "${args[@]}" "$@" || result=$?
+    bash "$target" "$command" "$@" || result=$?
   fi
   [[ -z "$tmp" ]] || rm -f -- "$tmp"
   return "$result"

@@ -25,11 +25,8 @@ jobs:
           bash -n scripts/test-maintenance.sh
           bash -n txboard.sh
           for f in lib/*.sh; do bash -n "$f"; done
-          bash -n gateway/deploy.sh
           bash -n node/deploy.sh
           bash -n scripts/test-components.sh
-          bash -n scripts/test-gateway.sh
-          bash -n scripts/test-gateway-docker.sh
           for f in node/tests/*.sh; do bash -n "$f"; done
 
 
@@ -41,10 +38,9 @@ jobs:
           python3 -B scripts/test-deployment-profile.py
           python3 -B scripts/test-native-backup-inspect.py
 
-      - name: Test unified component routing and Gateway lifecycle (synthetic Docker)
+      - name: Test Core/Node routing and explicit retired Gateway refusal
         run: |
           bash scripts/test-components.sh
-          bash scripts/test-gateway.sh
 
       - name: Preserve Node Installer regression suites
         run: |
@@ -440,30 +436,6 @@ jobs:
           # Keep this independent availability check on the published immutable
           # historical smoke artifact until a reviewed new release is pinned.
           docker manifest inspect ghcr.io/anrcm0/txboard:dev-sha-c8492dc2e120 >/dev/null
-
-  gateway-docker:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    env:
-      # Public, fixed runtime release; never substitute latest or moving dev.
-      TXBOARD_GATEWAY_TEST_IMAGE: ghcr.io/anrcm0/txboard-gateway:dev-sha-f9b271451eb3
-      TXBOARD_GATEWAY_TEST_REVISION: f9b271451eb36438db946ae018ab55568d2f10d5
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify the fixed public Gateway artifact
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          docker pull "$TXBOARD_GATEWAY_TEST_IMAGE"
-          revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$TXBOARD_GATEWAY_TEST_IMAGE")"
-          test "$revision" = "$TXBOARD_GATEWAY_TEST_REVISION"
-          printf 'Verified Gateway OCI revision: %s\n' "$revision"
-          docker image inspect --format 'Gateway image ID: {{.Id}}' "$TXBOARD_GATEWAY_TEST_IMAGE"
-      - name: Test actual Gateway installation and failed-image rollback
-        shell: bash
-        run: bash scripts/test-gateway-docker.sh
 
   smoke-install:
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
