@@ -81,7 +81,7 @@ def plan(path, profile, database_mode, retention, installed=False):
     if capacity['disk_free_mib'] < values['disk_gib'] * 1024:
         failures.append('DISK_HEADROOM_INSUFFICIENT')
     warnings = ['CAPACITY_ESTIMATE_IS_NOT_A_LOAD_TEST', 'DATABASE_AND_BACKUP_GROWTH_REQUIRE_MONITORING',
-                'GATEWAY_PROVIDER_AND_NODE_BUDGETS_NOT_INCLUDED']
+                'PROVIDER_AND_NODE_BUDGETS_NOT_INCLUDED']
     if database_mode != 'local':
         warnings.append('EXTERNAL_DATABASE_CAPACITY_NOT_INCLUDED')
     if retention == 0:

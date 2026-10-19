@@ -62,7 +62,7 @@ while (($#)); do
   esac
 done
 set -- "${component_args[@]}"
-case "$COMPONENT" in core|gateway|node) ;; *) printf '[TXBoard Deploy] ERROR: component must be core, gateway or node\n' >&2; exit 1 ;; esac
+case "$COMPONENT" in gateway) printf '[TXBoard Deploy] ERROR: Gateway is retired; browser ingress is included in Core\n' >&2; exit 1 ;; core|node) ;; *) printf '[TXBoard Deploy] ERROR: component must be core or node\n' >&2; exit 1 ;; esac
 if [[ "$COMPONENT" != core ]]; then
   component_module="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/components.sh"
   component_tmp=''
@@ -232,7 +232,7 @@ TXBoard Docker 交互式安装向导
 
 Usage:
   install.sh [options]
-  install.sh --component core|gateway|node [component options]
+  install.sh --component core|node [component options]
 
 Options:
   --dir PATH          Install directory (default: /opt/txboard)
