@@ -96,6 +96,12 @@ PUBLIC_HOST="${TXBOARD_PUBLIC_HOST:-}"
 HTTP_PORT="${TXBOARD_HTTP_PORT:-}"
 HTTPS_PORT="${TXBOARD_HTTPS_PORT:-}"
 BACKUP_RETENTION="${TXBOARD_BACKUP_RETENTION:-7}"
+DEPLOY_PROFILE="${TXBOARD_RESOURCE_PROFILE:-auto}"
+RESOURCE_HELPER=""
+RESOURCE_HELPER_TEMP=""
+RESOURCE_PLAN=""
+NATIVE_HELPER=""
+NATIVE_HELPER_TEMP=""
 TEST_MODE="${TXBOARD_TEST_MODE:-false}"
 AUTO_INSTALL_DOCKER="${TXBOARD_AUTO_INSTALL_DOCKER:-false}"
 DB_MODE="${TXBOARD_DB_MODE:-}"
@@ -237,6 +243,7 @@ Options:
   --public-host HOST  Public host/IP for HTTP mode
   --http-port PORT    HTTP 端口
   --https-port PORT   HTTPS 端口 (auto-https only)
+  --resource-profile NAME  auto / minimal / balanced / performance; capacity checked
   --backup-retention N
                       Number of backup archives to retain (default: 7)
   --test-mode         Enable test deployment mode; permits wildcard public hosts
@@ -278,6 +285,7 @@ Environment variables:
   TXBOARD_HTTP_PORT
   TXBOARD_HTTPS_PORT
   TXBOARD_BACKUP_RETENTION
+  TXBOARD_RESOURCE_PROFILE
   TXBOARD_TEST_MODE
   TXBOARD_AUTO_INSTALL_DOCKER
   TXBOARD_DB_MODE
@@ -316,6 +324,7 @@ while [[ $# -gt 0 ]]; do
     --public-host) PUBLIC_HOST="${2:?missing value for --public-host}"; shift 2 ;;
     --http-port) HTTP_PORT="${2:?missing value for --http-port}"; shift 2 ;;
     --https-port) HTTPS_PORT="${2:?missing value for --https-port}"; shift 2 ;;
+    --resource-profile) DEPLOY_PROFILE="${2:?missing value for --resource-profile}"; shift 2 ;;
     --backup-retention) BACKUP_RETENTION="${2:?missing value for --backup-retention}"; shift 2 ;;
     --test-mode) TEST_MODE=true; shift ;;
     --enable-mcp|--disable-mcp) die "MCP has been retired; remove the MCP option" ;;
@@ -551,6 +560,57 @@ random_hex() {
   else
     head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-48
   fi
+}
+
+load_resource_helper() {
+  command -v python3 >/dev/null 2>&1 || die "capacity preflight requires Python 3.10+"
+  python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' || die "capacity preflight requires Python 3.10+"
+  RESOURCE_HELPER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/scripts/deployment-profile.py"
+  if [[ ! -f "$RESOURCE_HELPER" || -L "$RESOURCE_HELPER" ]]; then
+    RESOURCE_HELPER_TEMP="$(mktemp /tmp/txboard-profile.XXXXXXXX.py)"
+    RESOURCE_HELPER="$RESOURCE_HELPER_TEMP"
+    trap '[[ -z "$RESOURCE_HELPER_TEMP" ]] || rm -f -- "$RESOURCE_HELPER_TEMP"; [[ -z "$NATIVE_HELPER_TEMP" ]] || rm -f -- "$NATIVE_HELPER_TEMP"' EXIT
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL "$DEPLOY_RAW_BASE/scripts/deployment-profile.py" -o "$RESOURCE_HELPER" || die "cannot obtain capacity planner"
+    else
+      wget -qO "$RESOURCE_HELPER" "$DEPLOY_RAW_BASE/scripts/deployment-profile.py" || die "cannot obtain capacity planner"
+    fi
+  fi
+  python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$RESOURCE_HELPER" || die "capacity planner syntax invalid"
+}
+
+resource_field() {
+  python3 -c 'import json,sys; value=json.loads(sys.argv[1]);
+for key in sys.argv[2].split("."): value=value[key]
+print(value)' "$RESOURCE_PLAN" "$1"
+}
+
+load_native_helper() {
+  NATIVE_HELPER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/scripts/native-runtime.py"
+  if [[ ! -f "$NATIVE_HELPER" || -L "$NATIVE_HELPER" ]]; then
+    NATIVE_HELPER_TEMP="$(mktemp /tmp/txboard-native.XXXXXXXX.py)"
+    NATIVE_HELPER="$NATIVE_HELPER_TEMP"
+    trap '[[ -z "$RESOURCE_HELPER_TEMP" ]] || rm -f -- "$RESOURCE_HELPER_TEMP"; [[ -z "$NATIVE_HELPER_TEMP" ]] || rm -f -- "$NATIVE_HELPER_TEMP"' EXIT
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL "$DEPLOY_RAW_BASE/scripts/native-runtime.py" -o "$NATIVE_HELPER" || die "cannot obtain native deployment runner"
+    else
+      wget -qO "$NATIVE_HELPER" "$DEPLOY_RAW_BASE/scripts/native-runtime.py" || die "cannot obtain native deployment runner"
+    fi
+  fi
+}
+
+configure_resources() {
+  load_resource_helper
+  install_ui_section "资源预算与容量预检"
+  DEPLOY_PROFILE="$(prompt "资源 profile（auto / minimal / balanced / performance）" "$DEPLOY_PROFILE")"
+  case "$DEPLOY_PROFILE" in auto|minimal|balanced|performance) ;; *) die "invalid resource profile" ;; esac
+  if ! RESOURCE_PLAN="$(python3 "$RESOURCE_HELPER" --dir "$INSTALL_DIR" --profile "$DEPLOY_PROFILE" --db-mode "$DB_MODE" --retention "$BACKUP_RETENTION")"; then
+    printf '%s\n' "$RESOURCE_PLAN" >&2
+    die "capacity preflight failed; free capacity or choose a smaller profile"
+  fi
+  DEPLOY_PROFILE="$(resource_field profile)"
+  log "资源 profile=$DEPLOY_PROFILE，预算=$(resource_field required_memory_mib) MiB，CPU=$(resource_field capacity.cpus)，可用磁盘=$(resource_field capacity.disk_free_mib) MiB"
+  log "此预检是安装预算估算；仍需监控数据库、备份增长并进行后期负载验收。"
 }
 
 load_install_database_module() {
@@ -796,6 +856,17 @@ case "$MODE" in
 esac
 
 install_ui_section "应用配置"
+if [[ "$INSTALL_TYPE" == fresh && "$ASSUME_YES" -eq 0 && -z "$NATIVE_CONFIG_DIR" ]]; then
+  install_ui_section "运行时配置"
+  printf "  1) Native（需要私有配置目录和固定镜像摘要）
+  2) 兼容安装流程
+" > /dev/tty
+  if [[ "$(choose "运行时" "1" "2")" == 1 ]]; then
+    NATIVE_CONFIG_DIR="$(prompt "私有 Native 配置目录（安装目录之外）" "")"
+    [[ -n "$NATIVE_CONFIG_DIR" ]] || die "native configuration directory is required"
+    NATIVE_IMAGE="$(prompt "Native 镜像（repository@sha256 或本地 sha256 ID）" "")"
+  fi
+fi
 IMAGE_TAG="$(prompt "TXBoard 镜像版本（latest / dev / 固定版本）" "$IMAGE_TAG")"
 [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "invalid image tag: $IMAGE_TAG"
 IMAGE="$IMAGE_REPO:$IMAGE_TAG"
@@ -935,6 +1006,17 @@ case "$INSTALL_TYPE" in
 esac
 
 install_ui_section "数据库配置"
+select_database_mode
+BACKUP_RETENTION="$(prompt "保留备份份数（0 表示全部保留）" "$BACKUP_RETENTION")"
+valid_nonnegative_int "$BACKUP_RETENTION" || die "backup retention must be a non-negative integer"
+# Capacity must be accepted before host database provisioning can create users,
+# databases or Docker networks.
+configure_resources
+if [[ -n "$NATIVE_CONFIG_DIR" ]]; then
+  load_native_helper
+  python3 "$NATIVE_HELPER" validate-config --dir "$INSTALL_DIR" --source "$NATIVE_CONFIG_DIR" ||
+    die "native configuration rejected before database provisioning"
+fi
 configure_database
 
 # Fail closed even for external/host connection aliases. Different source and
@@ -998,9 +1080,6 @@ case "$MODE" in
     ;;
 esac
 
-BACKUP_RETENTION="$(prompt "保留备份份数（0 表示全部保留）" "$BACKUP_RETENTION")"
-valid_nonnegative_int "$BACKUP_RETENTION" || die "backup retention must be a non-negative integer"
-
 if [[ "$ASSUME_YES" -eq 0 ]]; then
   install_ui_section "TXBoard 安装信息确认"
   cat > /dev/tty <<EOF
@@ -1016,6 +1095,11 @@ Install dir:    $INSTALL_DIR
 Test mode:      $TEST_MODE
 HTTP mapping:   $HTTP_BIND:$HTTP_PORT -> container:80
 Backup retain:  $BACKUP_RETENTION
+Resource profile: $DEPLOY_PROFILE
+Required RAM:    $(resource_field required_memory_mib) MiB (including host reserve)
+Available RAM:   $(resource_field capacity.available_mib) MiB
+Free disk:       $(resource_field capacity.disk_free_mib) MiB
+Native runtime:  $(if [[ -n "$NATIVE_CONFIG_DIR" ]]; then printf "private configuration + immutable image"; else printf "legacy compatibility"; fi)
 Install type:    $INSTALL_TYPE
 XBoard dump:     $(if [[ "$XBOARD_AUTO_DUMP" == true ]]; then printf 'automatically generated'; else printf '%s' "${XBOARD_DUMP:-none}"; fi)
 XBoard source:   $(if [[ "$XBOARD_AUTO_DUMP" == true ]]; then printf '%s/%s' "$XBOARD_SOURCE_CONTAINER" "$XBOARD_SOURCE_DATABASE"; else printf 'offline backup'; fi)
@@ -1073,7 +1157,11 @@ mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 umask 077
 
-mkdir -p data/storage/app data/plugins backups
+mkdir -p data/storage/app data/plugins backups scripts
+cp -- "$RESOURCE_HELPER" scripts/deployment-profile.py
+chmod 700 scripts/deployment-profile.py
+printf "%s\n" "$RESOURCE_PLAN" > resource-plan.json
+chmod 600 resource-plan.json
 mkdir -p -m 700 backups/installer
 chmod 700 backups/installer
 INSTALL_LOG_FILE="$INSTALL_DIR/backups/installer/install.log"
@@ -1109,6 +1197,19 @@ TXBOARD_SITE_ADDRESS=$SITE_ADDRESS
 TXBOARD_TLS_DIRECTIVE=
 TXBOARD_BACKUP_INTERVAL=86400
 TXBOARD_BACKUP_RETENTION=$BACKUP_RETENTION
+TXBOARD_RESOURCE_PROFILE=$DEPLOY_PROFILE
+TXBOARD_CORE_MEMORY_MIB=$(resource_field limits.core_mib)
+TXBOARD_CORE_CPUS=$(resource_field limits.core_cpus)
+TXBOARD_DATABASE_MEMORY_MIB=$(resource_field limits.database_mib)
+TXBOARD_DATABASE_CPUS=$(resource_field limits.database_cpus)
+TXBOARD_BACKUP_MEMORY_MIB=$(resource_field limits.backup_mib)
+TXBOARD_BACKUP_CPUS=$(resource_field limits.backup_cpus)
+TXBOARD_OCTANE_WORKERS=$(resource_field limits.octane)
+TXBOARD_HORIZON_PIPELINE=$(resource_field limits.pipeline)
+TXBOARD_HORIZON_BUSINESS=$(resource_field limits.business)
+TXBOARD_HORIZON_NOTIFICATION=$(resource_field limits.notification)
+TXBOARD_WORKER_MEMORY_MIB=$(resource_field limits.worker_mib)
+TXBOARD_REDIS_MEMORY_MIB=$(resource_field limits.redis_mib)
 TXBOARD_SUBSCRIBE_PATH=s
 EOF
 
@@ -1148,21 +1249,18 @@ MAILGUN_SECRET=
 INSTALLED=false
 EOF
 
+NATIVE_BACKUP_VOLUME_BLOCK=""
+NATIVE_BACKUP_MODE=0
 NATIVE_VOLUME_BLOCK=""
 PLUGIN_VOLUME_BLOCK="      - ./data/plugins:/www/plugins"
 if [[ -n "$NATIVE_CONFIG_DIR" ]]; then
   mkdir -p "$INSTALL_DIR/scripts"
-  native_source="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/scripts/native-runtime.py"
-  if [[ -f "$native_source" && ! -L "$native_source" ]]; then
-    cp -- "$native_source" "$INSTALL_DIR/scripts/native-runtime.py"
-  elif command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$DEPLOY_RAW_BASE/scripts/native-runtime.py" -o "$INSTALL_DIR/scripts/native-runtime.py" || die "cannot retrieve native deployment runner"
-  else
-    wget -qO "$INSTALL_DIR/scripts/native-runtime.py" "$DEPLOY_RAW_BASE/scripts/native-runtime.py" || die "cannot retrieve native deployment runner"
-  fi
+  cp -- "$NATIVE_HELPER" "$INSTALL_DIR/scripts/native-runtime.py"
   chmod 700 "$INSTALL_DIR/scripts/native-runtime.py"
   python3 "$INSTALL_DIR/scripts/native-runtime.py" stage-config --dir "$INSTALL_DIR" --source "$NATIVE_CONFIG_DIR" || die "native configuration rejected"
   PLUGIN_VOLUME_BLOCK=""
+  NATIVE_BACKUP_MODE=1
+  NATIVE_BACKUP_VOLUME_BLOCK="      - ./:/backup-deployment:ro"
   NATIVE_VOLUME_BLOCK="      - ./native:/run/txboard-native:ro"
 fi
 
@@ -1225,6 +1323,35 @@ prune() {
         done
 }
 
+native_source_snapshot() (
+    cd "$deployment" || return 1
+    for item in .env api.env compose.yaml native/prepare.json native/runtime.env native/node-recipients.json native/signer.seed native/provider-ca.pem native/provider-client.pem native/provider-client.key; do
+        [ -f "$item" ] && [ -s "$item" ] && [ ! -L "$item" ] || return 1
+    done
+    [ -d native ] && [ ! -L native ] || return 1
+    [ ! -L .native-deploy ] || return 1
+    # Check regular materials and the durable intent at both ends of an online
+    # dump, including an upgrade that starts and finishes during the dump.
+    find native ! -type f ! -type d -print > "$dest/.native-special" || return 1
+    [ ! -s "$dest/.native-special" ] || return 1
+    sha256sum .env api.env compose.yaml > "$dest/.native-sources" || return 1
+    find native -type f -exec sha256sum {} + >> "$dest/.native-sources" || return 1
+    for item in data/plugins data/storage/theme; do
+        if [ -e "$item" ] || [ -L "$item" ]; then
+            [ -d "$item" ] && [ ! -L "$item" ] || return 1
+            find "$item" ! -type f ! -type d -print > "$dest/.native-special" || return 1
+            [ ! -s "$dest/.native-special" ] || return 1
+            find "$item" -type f -exec sha256sum {} + >> "$dest/.native-sources" || return 1
+        fi
+    done
+    if [ -e .native-deploy/intent.json ]; then
+        [ -f .native-deploy/intent.json ] && [ ! -L .native-deploy/intent.json ] || return 1
+        sha256sum .native-deploy/intent.json >> "$dest/.native-sources" || return 1
+    fi
+    sort "$dest/.native-sources" > "$dest/.native-sorted" || return 1
+    sha256sum "$dest/.native-sorted"
+)
+
 run_backup() (
     stamp=$(date -u '+%Y%m%dT%H%M%SZ')
     dest="$BACKUP_DIR/$stamp"
@@ -1237,6 +1364,14 @@ run_backup() (
     fi
     trap 'rm -rf "$dest"' EXIT
     trap 'exit 1' HUP INT TERM
+
+    if [ "${BACKUP_NATIVE_MODE:-0}" = 1 ]; then
+        deployment=${BACKUP_DEPLOYMENT_DIR:-/backup-deployment}
+        if [ -e "$deployment/.upgrade-in-progress" ] && [ "${BACKUP_NATIVE_FROZEN:-0}" != 1 ]; then
+            log "ERROR: native operation active; periodic backup deferred"; return 1
+        fi
+        native_before=$(native_source_snapshot) || { log "ERROR: native materials unavailable"; return 1; }
+    fi
 
     log "dumping $DB_DATABASE@$DB_HOST:$DB_PORT -> $dest/db.sql.gz"
     # --single-transaction keeps InnoDB consistent without locking the panel.
@@ -1309,8 +1444,31 @@ run_backup() (
         fi
     done
 
+    if [ "${BACKUP_NATIVE_MODE:-0}" = 1 ]; then
+        deployment=${BACKUP_DEPLOYMENT_DIR:-/backup-deployment}
+        [ -d "$deployment/native" ] && [ ! -L "$deployment/native" ] || { log "ERROR: native materials unavailable"; return 1; }
+        if [ -e "$deployment/.upgrade-in-progress" ] && [ "${BACKUP_NATIVE_FROZEN:-0}" != 1 ]; then
+            log "ERROR: native operation active; periodic backup deferred"; return 1
+        fi
+        set -- .env api.env compose.yaml native
+        for item in resource-plan.json .native-deploy data/plugins data/storage/theme; do
+            if [ -e "$deployment/$item" ]; then
+                [ ! -L "$deployment/$item" ] || return 1
+                if [ -d "$deployment/$item" ] && find "$deployment/$item" -type l -print | grep -q .; then return 1; fi
+                set -- "$@" "$item"
+            fi
+        done
+        tar -czf "$dest/native-deployment.tar.gz" -C "$deployment" "$@" && gzip -t "$dest/native-deployment.tar.gz" || return 1
+        if [ -e "$deployment/.upgrade-in-progress" ] && [ "${BACKUP_NATIVE_FROZEN:-0}" != 1 ]; then
+            log "ERROR: native operation started during backup; snapshot discarded"; return 1
+        fi
+        native_after=$(native_source_snapshot) || return 1
+        [ "$native_before" = "$native_after" ] || { log "ERROR: native configuration or intent changed during backup"; return 1; }
+        rm -f "$dest/.native-special" "$dest/.native-sources" "$dest/.native-sorted"
+    fi
+
     contents="db.sql.gz env"
-    for entry in storage-app.tar.gz storage-theme.tar.gz plugins.tar.gz; do
+    for entry in storage-app.tar.gz storage-theme.tar.gz plugins.tar.gz native-deployment.tar.gz; do
         [ ! -f "$dest/$entry" ] || contents="$contents $entry"
     done
     {
@@ -1318,15 +1476,17 @@ run_backup() (
         echo "database=$DB_DATABASE"
         echo "db_host=$DB_HOST"
         echo "contents=$contents"
+        echo "native=${BACKUP_NATIVE_MODE:-0}"
+        echo "consistency=$(if [ "${BACKUP_NATIVE_FROZEN:-0}" = 1 ]; then echo native-frozen; else echo online-snapshot; fi)"
     } > "$dest/MANIFEST"
 
     (
         cd "$dest" || exit 1
         set -- db.sql.gz env
-        for item in storage-app.tar.gz storage-theme.tar.gz plugins.tar.gz; do
+        for item in storage-app.tar.gz storage-theme.tar.gz plugins.tar.gz native-deployment.tar.gz; do
             [ ! -f "$item" ] || set -- "$@" "$item"
         done
-        sha256sum "$@" > CHECKSUMS.sha256
+        sha256sum "$@" MANIFEST > CHECKSUMS.sha256
         sha256sum -c CHECKSUMS.sha256 >/dev/null
     ) || {
         log "ERROR: backup integrity checksum failed"
@@ -1383,6 +1543,10 @@ $DB_PROXY_SERVICE_BLOCK
     image: \${TXBOARD_IMAGE:?missing TXBOARD_IMAGE}
     restart: unless-stopped
     logging: *default-logging
+    mem_limit: \${TXBOARD_CORE_MEMORY_MIB:?missing resource budget}m
+    memswap_limit: \${TXBOARD_CORE_MEMORY_MIB:?missing resource budget}m
+    cpus: "\${TXBOARD_CORE_CPUS:?missing resource budget}"
+    pids_limit: 512
     stop_grace_period: 30s
 $TXBOARD_DB_DEPENDS_BLOCK
 $DB_EXTRA_HOSTS_BLOCK
@@ -1396,6 +1560,16 @@ $NATIVE_VOLUME_BLOCK
       - caddy-data:/caddy-data
       - caddy-config:/caddy-config
     environment:
+      RESOURCE_PROFILE: \${TXBOARD_RESOURCE_PROFILE:?missing resource profile}
+      OCTANE_WORKERS: \${TXBOARD_OCTANE_WORKERS:?}
+      OCTANE_TASK_WORKERS: 1
+      HORIZON_DATA_PIPELINE_MAX: \${TXBOARD_HORIZON_PIPELINE:?}
+      HORIZON_BUSINESS_MAX: \${TXBOARD_HORIZON_BUSINESS:?}
+      HORIZON_NOTIFICATION_MAX: \${TXBOARD_HORIZON_NOTIFICATION:?}
+      HORIZON_WORKER_MEMORY_MB: \${TXBOARD_WORKER_MEMORY_MIB:?}
+      REDIS_MAXMEMORY_MIB: \${TXBOARD_REDIS_MEMORY_MIB:?}
+      HORIZON_WORKER_MAX_TIME: 3600
+      HORIZON_WORKER_MAX_JOBS: 1000
       docker: "true"
       ADMIN_ACCOUNT: \${TXBOARD_ADMIN_EMAIL:?missing TXBOARD_ADMIN_EMAIL}
       DB_CONNECTION: mysql
@@ -1424,6 +1598,10 @@ $PORTS_BLOCK
       start_period: 10s
 
   backup:
+    mem_limit: "\${TXBOARD_BACKUP_MEMORY_MIB:?missing backup memory}m"
+    memswap_limit: "\${TXBOARD_BACKUP_MEMORY_MIB:?missing backup memory}m"
+    cpus: "\${TXBOARD_BACKUP_CPUS:?missing backup cpu}"
+    pids_limit: 64
     image: mysql:8.4.11
     restart: unless-stopped
     logging: *default-logging
@@ -1437,6 +1615,8 @@ $DB_NETWORKS_BLOCK
       DB_DATABASE: \${TXBOARD_DB_DATABASE:-txboard}
       DB_USERNAME: \${TXBOARD_DB_USERNAME:-txboard}
       DB_PASSWORD: \${TXBOARD_DB_PASSWORD:?missing TXBOARD_DB_PASSWORD}
+      BACKUP_NATIVE_MODE: "$NATIVE_BACKUP_MODE"
+      BACKUP_DEPLOYMENT_DIR: /backup-deployment
       BACKUP_DIR: /backups
       BACKUP_SOURCE_DIR: /backup-source/api
       BACKUP_INTERVAL: \${TXBOARD_BACKUP_INTERVAL:-86400}
@@ -1444,6 +1624,7 @@ $DB_NETWORKS_BLOCK
     volumes:
       - ./backup.sh:/usr/local/bin/txboard-backup.sh:ro
       - ./backups:/backups
+$NATIVE_BACKUP_VOLUME_BLOCK
       - ./api.env:/backup-source/api/.env:ro
       - ./data/storage/app:/backup-source/api/storage/app:ro
 
@@ -1515,7 +1696,7 @@ if [[ -n "$NATIVE_CONFIG_DIR" ]]; then
   native_install() {
     local image_id
     image_id="$(docker image inspect "$IMAGE" --format '{{.Id}}')" || return 1
-    python3 "$INSTALL_DIR/scripts/native-runtime.py" install --dir "$INSTALL_DIR" --image "$image_id"
+    python3 "$INSTALL_DIR/scripts/native-runtime.py" install --dir "$INSTALL_DIR" --image "$image_id" --progress
   }
   install_progress_step "准备、探测并激活原生运行时" native_install ||
     die "native deployment incomplete; preserve the private inputs and run txboard native recover"

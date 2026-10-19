@@ -46,7 +46,13 @@ backup_pick() {
 backup_restore() { upgrade_safe_mutation backup_restore_locked; }
 
 backup_restore_locked() {
-  require_tty; docker_ok; need_install
+  need_install
+  if [[ "$(env_get "$TXBOARD_INSTALL_DIR/api.env" CORE_INSTALLATION_MODE)" == native ]]; then
+    warn "native deployment requires matching private configuration, APP_KEY, immutable image and installation authority; database-only restore is disabled"
+    warn "use txboard native backup-check --archive TIMESTAMP, rehearse restoration in isolation, or resume the original txboard native recover intent"
+    return 1
+  fi
+  require_tty; docker_ok
   if [[ "$(database_mode)" != "local" ]]; then
     warn "automatic restore is disabled for host/external databases; backups remain available, but restore them with database admin tooling"
     return 0
@@ -107,9 +113,10 @@ backup_menu() {
     ui_item 3 "恢复数据库" "需要再次确认"
     ui_danger_item 4 "删除备份" "不可撤销"
     ui_item 5 "设置保留数量"
+    ui_item 6 "核验 Native 备份材料"
     ui_footer
     ui_item 0 "返回主菜单"
-    choice="$(choose "请选择" "1" "5")"
+    choice="$(choose "请选择" "1" "6")"
     case "$choice" in
       1) ui_run "生成 TXBoard 完整备份" backup_create || warn "备份失败"; pause ;;
       2) backup_list; pause ;;
@@ -122,6 +129,11 @@ backup_menu() {
         value="$(prompt "保留备份数量（0 为全部保留）" "$(env_get "$TXBOARD_INSTALL_DIR/.env" TXBOARD_BACKUP_RETENTION)")"
         [[ "$value" =~ ^[0-9]+$ ]] || { warn "invalid retention"; continue; }
         backup_set_retention "$value"
+        ;;
+      6)
+        name="$(backup_pick)" || continue
+        run_native backup-check --archive "$name" || warn "备份材料核验失败"
+        pause
         ;;
       0) return 0 ;;
     esac

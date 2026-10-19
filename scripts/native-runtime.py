@@ -205,9 +205,8 @@ def prepare_storage(root):
             os.chmod(path, 0o750)
 
 
-def stage_config(root, source):
-    require(source.is_dir() and not source.is_symlink() and not (root / "native").exists(), "NATIVE_CONFIGURATION_CONFLICT")
-    require(source.resolve() != root.resolve(), "NATIVE_CONFIGURATION_CONFLICT")
+def validate_source(source):
+    require(source.is_dir() and not source.is_symlink() and source.resolve() == source, "NATIVE_CONFIGURATION_CONFLICT")
     children = list(source.iterdir())
     require(len(children) <= 75, "NATIVE_CONFIGURATION_TOO_LARGE")
     for child in children:
@@ -226,6 +225,14 @@ def stage_config(root, source):
     require(re.fullmatch(r"[A-Za-z0-9_-]{43}", regular(source / "signer.seed", 128).decode().strip()), "SIGNER_SEED_INVALID")
     recipients = document(source / "node-recipients.json")
     require(0 < len(recipients) <= 128, "NODE_RECIPIENTS_INVALID")
+    module_operations(source.parent, source)
+    return configuration, installation
+
+
+def stage_config(root, source):
+    require(not (root / "native").exists() and not (root / "native").is_symlink(), "NATIVE_CONFIGURATION_CONFLICT")
+    require(source.resolve() != root.resolve(), "NATIVE_CONFIGURATION_CONFLICT")
+    configuration, installation = validate_source(source)
     configuration.update({
         "CORE_INSTALLATION_MODE": "native", "CORE_INSTALLATION_EPOCH": "1",
         "CORE_USAGE_V2_INSTANCE_ID": installation, "CORE_USAGE_V2_RECEIPT_GENERATION": "1",
@@ -400,7 +407,7 @@ class Docker:
         directory = self.root / "backups"
         before = set(directory.iterdir())
         require("CHECKSUMS.sha256" in regular(self.root / "backup.sh").decode(), "VERIFIED_BACKUP_HELPER_REQUIRED")
-        self.compose("run", "-T", "--rm", "-e", "BACKUP_INTERVAL=0", "-e", "BACKUP_RETENTION=0", "backup")
+        self.compose("run", "-T", "--rm", "-e", "BACKUP_INTERVAL=0", "-e", "BACKUP_RETENTION=0", "-e", "BACKUP_NATIVE_FROZEN=1", "backup")
         candidates = [path for path in set(directory.iterdir()) - before if re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", path.name)]
         require(len(candidates) == 1, "UNIQUE_BACKUP_REQUIRED")
         target = candidates[0]
@@ -410,23 +417,25 @@ class Docker:
         for line in checksum.splitlines():
             match = re.fullmatch(r"([0-9a-f]{64}) [ *]([A-Za-z0-9_.-]+)", line)
             require(match is not None, "BACKUP_CHECKSUM_INVALID")
+            require(match[2] not in listed, "BACKUP_CHECKSUM_INVALID")
             listed.add(match[2])
             require(file_digest(target / match[2]) == match[1], "BACKUP_CHECKSUM_MISMATCH")
         require({"env", "db.sql.gz"} <= listed and b"APP_KEY=" in regular(target / "env"), "BACKUP_INCOMPLETE")
         # Include the exact Compose/config, private native material and legacy plugin/theme assets.
         archive = target / "native-deployment.tar.gz"
-        with tarfile.open(archive, "w:gz") as output:
-            for name in (".env", "api.env", "compose.yaml", "native", "data/plugins", "data/storage/theme"):
-                path = self.root / name
-                if path.exists():
-                    require(not path.is_symlink(), "BACKUP_SOURCE_SYMLINK")
-                    if path.is_dir():
-                        require(not any(child.is_symlink() for child in path.rglob("*")), "BACKUP_SOURCE_SYMLINK")
-                    output.add(path, arcname=name, recursive=True)
-        os.chmod(archive, 0o600)
-        with archive.open("rb") as stream:
-            os.fsync(stream.fileno())
-        checksum += file_digest(archive) + "  native-deployment.tar.gz\n"
+        if "native-deployment.tar.gz" not in listed:
+            with tarfile.open(archive, "w:gz") as output:
+                for name in (".env", "api.env", "compose.yaml", "native", "data/plugins", "data/storage/theme"):
+                    path = self.root / name
+                    if path.exists():
+                        require(not path.is_symlink(), "BACKUP_SOURCE_SYMLINK")
+                        if path.is_dir():
+                            require(not any(child.is_symlink() for child in path.rglob("*")), "BACKUP_SOURCE_SYMLINK")
+                        output.add(path, arcname=name, recursive=True)
+            os.chmod(archive, 0o600)
+            with archive.open("rb") as stream:
+                os.fsync(stream.fileno())
+            checksum += file_digest(archive) + "  native-deployment.tar.gz\n"
         atomic(target / "CHECKSUMS.sha256", checksum.encode())
         fsync_directory(target)
         record = {"archive": target.name, "checksum": digest(checksum.encode()), "operation_id": operation_id}
@@ -434,28 +443,145 @@ class Docker:
         return record
 
     def verify_backup(self, record):
-        require(isinstance(record, dict) and re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", str(record.get("archive", ""))), "BACKUP_RECORD_INVALID")
-        target = self.root / "backups" / record["archive"]
-        require(target.is_dir() and not target.is_symlink(), "BACKUP_PATH_INVALID")
-        checksum = regular(target / "CHECKSUMS.sha256")
-        require(digest(checksum) == record["checksum"], "BACKUP_RECORD_CHANGED")
-        listed = set()
-        for line in checksum.decode().splitlines():
-            match = re.fullmatch(r"([0-9a-f]{64}) [ *]([A-Za-z0-9_.-]+)", line)
-            require(match is not None and match[2] not in listed, "BACKUP_CHECKSUM_INVALID")
-            require(file_digest(target / match[2]) == match[1], "BACKUP_CHECKSUM_MISMATCH")
-            listed.add(match[2])
-        require({"env", "db.sql.gz", "native-deployment.tar.gz"} <= listed, "BACKUP_INCOMPLETE")
-        require(re.search(rb"(?m)^APP_KEY=.+$", regular(target / "env")), "BACKUP_KEY_MISSING")
+        require(isinstance(record, dict) and isinstance(record.get("checksum"), str), "BACKUP_RECORD_INVALID")
+        inspect_backup(self.root, record.get("archive"), record["checksum"])
+
+
+def inspect_backup(root, archive_name, expected_checksum=None):
+    """Verify materials without extracting files, invoking Docker or exposing secrets."""
+    require(isinstance(archive_name, str) and re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", archive_name), "BACKUP_RECORD_INVALID")
+    folder = root / "backups"
+    target = folder / archive_name
+    require(folder.is_dir() and not folder.is_symlink() and target.is_dir() and not target.is_symlink(), "BACKUP_PATH_INVALID")
+    checksum = regular(target / "CHECKSUMS.sha256")
+    require(expected_checksum is None or digest(checksum) == expected_checksum, "BACKUP_RECORD_CHANGED")
+    listed = set()
+    for line in checksum.decode().splitlines():
+        match = re.fullmatch(r"([0-9a-f]{64}) [ *]([A-Za-z0-9_.-]+)", line)
+        require(match is not None and match[2] not in listed, "BACKUP_CHECKSUM_INVALID")
+        require(file_digest(target / match[2]) == match[1], "BACKUP_CHECKSUM_MISMATCH")
+        listed.add(match[2])
+    require({"env", "db.sql.gz", "native-deployment.tar.gz"} <= listed, "BACKUP_INCOMPLETE")
+    environment = regular(target / "env")
+    require(re.search(rb"(?m)^APP_KEY=.+$", environment), "BACKUP_KEY_MISSING")
+    names, files, archived = set(), set(), {}
+    try:
+        for name in listed:
+            if name.endswith(".gz"):
+                with gzip.open(target / name, "rb") as stream:
+                    while stream.read(1048576):
+                        pass
+        with tarfile.open(target / "native-deployment.tar.gz", "r:gz") as archive:
+            for member in archive:
+                name = member.name.rstrip("/")
+                require(len(names) < 10000 and name not in names and not name.startswith("/")
+                        and all(part not in ("", ".", "..") for part in name.split("/"))
+                        and (member.isdir() or member.isfile()), "BACKUP_MEMBER_INVALID")
+                names.add(name)
+                if member.isfile():
+                    files.add(name)
+                if name.startswith("native/"):
+                    require(member.isfile() and 0 < member.size <= 1048576, "BACKUP_MEMBER_INVALID")
+                if name in ("api.env", ".env"):
+                    require(member.isfile() and 0 < member.size <= 1048576, "BACKUP_MEMBER_INVALID")
+                    archived[name] = archive.extractfile(member).read()
+        required = {".env", "api.env", "compose.yaml"} | {"native/" + name for name in REQUIRED_FILES}
+        require(required <= files and "native" in names and archived.get("api.env") == environment, "BACKUP_NATIVE_MATERIALS_INCOMPLETE")
+    except (OSError, EOFError, tarfile.TarError):
+        raise NativeError("BACKUP_ARCHIVE_INVALID") from None
+    manifest = {}
+    if "MANIFEST" in listed:
+        for line in regular(target / "MANIFEST").decode().splitlines():
+            require("=" in line, "BACKUP_MANIFEST_INVALID")
+            key, value = line.split("=", 1)
+            require(key not in manifest, "BACKUP_MANIFEST_INVALID")
+            manifest[key] = value
+    image = next((line.split(b"=", 1)[1].decode() for line in archived[".env"].splitlines()
+                  if line.startswith(b"TXBOARD_IMAGE=")), "")
+    consistency = manifest.get("consistency", "unclassified")
+    return {"schema": "txboard.native-backup-inspection/v1", "archive": archive_name,
+            "integrity_verified": True, "materials_verified": True,
+            "consistency": consistency if consistency in ("online-snapshot", "native-frozen") else "unclassified",
+            "immutable_image_recorded": IMAGE.fullmatch(image) is not None,
+            "restore_rehearsal": "required_in_isolated_environment",
+            "recovery": "use_original_native_intent_in_place; archive_restore_requires_image_and_pki_review"}
+
+
+def diagnose_native(root):
+    checks, guidance = {}, []
+    try:
+        config_fingerprint(root)
+        validate_source(root / 'native')
+        checks['private_configuration'] = 'complete'
+    except (NativeError, OSError, ValueError, UnicodeError) as error:
+        checks['private_configuration'] = str(error) if isinstance(error, NativeError) else 'unavailable'
+    deployment = env_read(root / '.env')
+    checks['immutable_image'] = bool(IMAGE.fullmatch(deployment.get('TXBOARD_IMAGE', '')))
+    private_paths = [root / '.env', root / 'api.env', root / 'native']
+    if (root / 'native').is_dir() and not (root / 'native').is_symlink():
+        private_paths.extend((root / 'native').iterdir())
+    checks['unsafe_permissions'] = [str(path.relative_to(root)) for path in private_paths
+                                    if path.is_symlink() or not path.exists() or path.stat().st_mode & 0o027]
+    checks['pki_validation'] = 'requires_core_runtime_preflight'
+    try:
+        journal = Journal(root)
+        intent = journal.load()
+        checks['intent'] = Runner.public(intent) if intent else {'stage': 'none'}
+        recovery_required = intent is not None and (intent['stage'] != 'completed' or journal.guard.exists())
+        if recovery_required:
+            guidance.append('txboard native recover: resume the original durable intent with unchanged inputs')
+    except (NativeError, OSError, ValueError) as error:
+        checks['intent'] = {'error_code': str(error) if isinstance(error, NativeError) else 'unavailable'}
+        recovery_required = True
+        guidance.append('preserve the deployment directory and original private configuration; inspect the invalid intent')
+    folder = root / 'backups'
+    require(not folder.is_symlink(), 'BACKUP_PATH_INVALID')
+    names = sorted((item.name for item in folder.iterdir() if re.fullmatch(r'[0-9]{8}T[0-9]{6}Z', item.name)), reverse=True) if folder.is_dir() else []
+    if names:
         try:
-            with gzip.open(target / "db.sql.gz", "rb") as stream:
-                while stream.read(1048576):
-                    pass
-            with tarfile.open(target / "native-deployment.tar.gz", "r:gz") as archive:
-                names = set(archive.getnames())
-                require({".env", "api.env", "compose.yaml", "native"} <= names, "BACKUP_INCOMPLETE")
-        except (OSError, EOFError, tarfile.TarError):
-            raise NativeError("BACKUP_ARCHIVE_INVALID") from None
+            checks['latest_backup'] = inspect_backup(root, names[0])
+        except (NativeError, OSError, ValueError) as error:
+            checks['latest_backup'] = {'archive': names[0], 'error_code': str(error) if isinstance(error, NativeError) else 'unavailable'}
+    else:
+        checks['latest_backup'] = {'state': 'missing'}
+    guidance.append('txboard native backup-check --archive TIMESTAMP: verify selected backup materials without restoring')
+    guidance.append('rehearse archive restoration separately with the recorded immutable image, APP_KEY and original PKI')
+    return {'schema': 'txboard.native-diagnostics/v1', 'checks': checks, 'recovery_required': recovery_required,
+            'diagnostics_ready': checks['private_configuration'] == 'complete' and checks['immutable_image']
+            and not checks['unsafe_permissions'] and not recovery_required
+            and checks['latest_backup'].get('materials_verified') is True
+            and checks['latest_backup'].get('immutable_image_recorded') is True,
+            'guidance': guidance}
+
+
+def capacity_preflight(root):
+    configuration = env_read(root / '.env')
+    profile = configuration.get('TXBOARD_RESOURCE_PROFILE')
+    if profile is None:
+        # Existing accepted deployments keep their original budgets. Diagnostics
+        # report that resource limits need a separate reviewed configuration.
+        return
+    helper = root / 'scripts' / 'deployment-profile.py'
+    regular(helper)
+    result = subprocess.run([sys.executable, str(helper), '--dir', str(root), '--installed',
+                             '--profile', profile, '--db-mode', configuration.get('TXBOARD_DB_MODE', 'local'),
+                             '--retention', configuration.get('TXBOARD_BACKUP_RETENTION', '7')],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    require(result.returncode == 0, 'CAPACITY_PREFLIGHT_FAILED')
+    try:
+        report = json.loads(result.stdout)
+        require(isinstance(report, dict) and report.get('ready') is True, 'CAPACITY_PREFLIGHT_FAILED')
+        fields = {'CORE_MEMORY_MIB': 'core_mib', 'CORE_CPUS': 'core_cpus',
+                  'DATABASE_MEMORY_MIB': 'database_mib', 'DATABASE_CPUS': 'database_cpus',
+                  'BACKUP_MEMORY_MIB': 'backup_mib', 'BACKUP_CPUS': 'backup_cpus',
+                  'OCTANE_WORKERS': 'octane', 'HORIZON_PIPELINE': 'pipeline',
+                  'HORIZON_BUSINESS': 'business', 'HORIZON_NOTIFICATION': 'notification',
+                  'WORKER_MEMORY_MIB': 'worker_mib', 'REDIS_MEMORY_MIB': 'redis_mib'}
+        require(profile == report.get('profile') and all(
+            configuration.get('TXBOARD_' + key) == str(report['limits'][field]) for key, field in fields.items()),
+            'RESOURCE_PROFILE_CONFIGURATION_CHANGED')
+    except (ValueError, UnicodeError):
+        raise NativeError('CAPACITY_PREFLIGHT_FAILED') from None
 
 
 class Runner:
@@ -684,14 +810,29 @@ class Runner:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("stage-config", "install", "update", "status", "recover"))
+    parser.add_argument("operation", choices=("validate-config", "stage-config", "install", "update", "status", "recover", "diagnose", "backup-check"))
     parser.add_argument("--dir", type=Path, required=True)
     parser.add_argument("--source", type=Path)
     parser.add_argument("--image")
+    parser.add_argument("--progress", action="store_true", help="emit public deployment stages on stderr")
+    parser.add_argument("--archive", help="backup timestamp; read-only integrity and material verification")
     parser.add_argument("--configuration", type=Path, help="private target native directory; copied into the original update intent")
     args = parser.parse_args()
     root = args.dir.absolute()
+    if args.operation == "validate-config":
+        require(args.source is not None and args.image is None and args.configuration is None and args.archive is None, "STAGE_SOURCE_REQUIRED")
+        validate_source(args.source.absolute())
+        print(json.dumps({"schema": VERSION, "configuration_validated": True, "validation": "source_structure_only"}))
+        return
     require(root.is_dir() and not root.is_symlink() and root.resolve() == root, "UNSAFE_INSTALLATION_DIRECTORY")
+    require(args.archive is None or args.operation == "backup-check", "UNEXPECTED_ARCHIVE")
+    if args.operation in ("diagnose", "backup-check"):
+        require(args.source is None and args.image is None and args.configuration is None, "UNEXPECTED_TARGET_CONFIGURATION")
+        result = diagnose_native(root) if args.operation == "diagnose" else inspect_backup(root, args.archive)
+        print(json.dumps(result, sort_keys=True))
+        if args.operation == "diagnose" and not result['diagnostics_ready']:
+            sys.exit(1)
+        return
     if args.operation == "stage-config":
         require(args.source is not None and args.image is None and args.configuration is None, "STAGE_SOURCE_REQUIRED")
         stage_config(root, args.source.absolute())
@@ -704,8 +845,16 @@ def main():
             result = Runner.public(intent) if intent is not None else {"schema": VERSION, "stage": "none"}
         else:
             with installation_lock(root):
-                result = Runner(root, Docker(root)).execute(None if args.operation == "recover" else args.operation,
-                                                         args.image, recover=args.operation == "recover", configuration=args.configuration)
+                if args.operation == "update":
+                    capacity_preflight(root)
+                def progress(stage):
+                    print(f"[TXBoard Native] [{STAGES.index(stage) + 1}/{len(STAGES)}] {stage}", file=sys.stderr, flush=True)
+
+                result = Runner(root, Docker(root), hook=progress if args.progress else None).execute(
+                    None if args.operation == "recover" else args.operation,
+                    args.image, recover=args.operation == "recover", configuration=args.configuration)
+                if args.progress:
+                    progress(result['stage'])
     print(json.dumps(result, sort_keys=True))
 
 

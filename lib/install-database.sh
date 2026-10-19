@@ -466,7 +466,7 @@ EOF
   die "no manageable host MySQL/MariaDB found. Use external mode if the database is remote or managed separately."
 }
 
-configure_database() {
+select_database_mode() {
   if [[ -z "$DB_MODE" ]]; then
     if [[ "$ASSUME_YES" -eq 1 ]]; then
       DB_MODE="local"
@@ -488,6 +488,12 @@ EOF
       esac
     fi
   fi
+
+  case "$DB_MODE" in local|host|external) ;; *) die "invalid database mode: $DB_MODE" ;; esac
+}
+
+configure_database() {
+  select_database_mode
 
   case "$DB_MODE" in
     local)
@@ -586,6 +592,10 @@ prepare_database_compose_blocks() {
   if [[ "$DB_MODE" == "local" ]]; then
     DATABASE_SERVICE_BLOCK="$(cat <<'YAML'
   database:
+    mem_limit: "${TXBOARD_DATABASE_MEMORY_MIB:-768}m"
+    memswap_limit: "${TXBOARD_DATABASE_MEMORY_MIB:-768}m"
+    cpus: "${TXBOARD_DATABASE_CPUS:-0.5}"
+    pids_limit: 256
     image: mysql:8.4.11
     restart: unless-stopped
     logging: *default-logging

@@ -75,6 +75,19 @@ run_refresh_manager() {
 }
 
 run_update() {
+  if [[ "$(env_get "$TXBOARD_INSTALL_DIR/api.env" CORE_INSTALLATION_MODE)" == native ]]; then
+    [[ -z "${1:-}" ]] || die "native updates use: txboard native update --image DIGEST [--configuration DIR]"
+    require_tty
+    local target configuration
+    target="$(prompt "Native 目标镜像（repository@sha256 或本地 sha256 ID）" "")"
+    [[ -n "$target" ]] || die "immutable native image is required"
+    configuration="$(prompt "目标私有配置目录（留空沿用当前配置）" "")"
+    local -a native_args=(update --image "$target")
+    [[ -z "$configuration" ]] || native_args+=(--configuration "$configuration")
+    run_native "${native_args[@]}"
+    return
+  fi
+
   local -a args=(--dir "$TXBOARD_INSTALL_DIR")
   [[ -n "${1:-}" ]] && args+=(--tag "$1")
   # Always fetch the current database-aware upgrader. A stale local updater
@@ -104,7 +117,9 @@ run_native() {
   local executable="$SCRIPT_DIR/scripts/native-runtime.py"
   [[ -f "$executable" && ! -L "$executable" ]] || die "native deployment runner missing from the reviewed toolkit"
   command -v python3 >/dev/null 2>&1 || die "native deployment requires Python 3.10+"
-  python3 "$executable" "$@" --dir "$TXBOARD_INSTALL_DIR"
+  local -a progress_args=()
+  case "${1:-}" in install|update|recover) progress_args+=(--progress) ;; esac
+  python3 "$executable" "$@" --dir "$TXBOARD_INSTALL_DIR" "${progress_args[@]}"
 }
 
 show_help() {
@@ -136,11 +151,12 @@ Quick commands:
   logs [service]       Follow logs: all, txboard, database/mysql, backup
   update [tag]         Update the current image, or switch to a tag
   upgrade <command>   Signed isolated shadow plan/check/apply/status/recover/restore-check
-  native <command>    Native update --image DIGEST / status / recover (original durable intent)
+  native <command>    Native update --image DIGEST / status / recover / diagnose / backup-check
   backup               Create a backup now
   backups              List available backups
   restore              Restore a managed-MySQL backup interactively (local mode only)
   config-show          Show current deployment configuration
+  resources            Check host capacity against the installed resource profile
   diagnose             Run diagnostics
   admin-reset-password [email]  Reset admin password interactively
   admin-reset-path            Rotate the admin panel security path interactively
@@ -254,6 +270,7 @@ case "$CMD" in
   restore) backup_restore ;;
   config) config_menu ;;
   config-show) config_show ;;
+  resources) deployment_resource_check ;;
   diagnose) diagnose_run ;;
   admin-reset-password|reset-admin-password) [[ $# -le 2 ]] || die "usage: txboard admin-reset-password [email]"; maintenance_reset_admin_password "$ARG" ;;
   admin-reset-path|reset-admin-path) [[ $# -eq 1 ]] || die "usage: txboard admin-reset-path"; maintenance_reset_admin_path ;;
