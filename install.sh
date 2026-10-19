@@ -1336,6 +1336,14 @@ native_source_snapshot() (
     [ ! -s "$dest/.native-special" ] || return 1
     sha256sum .env api.env compose.yaml > "$dest/.native-sources" || return 1
     find native -type f -exec sha256sum {} + >> "$dest/.native-sources" || return 1
+    for item in data/plugins data/storage/theme; do
+        if [ -e "$item" ] || [ -L "$item" ]; then
+            [ -d "$item" ] && [ ! -L "$item" ] || return 1
+            find "$item" ! -type f ! -type d -print > "$dest/.native-special" || return 1
+            [ ! -s "$dest/.native-special" ] || return 1
+            find "$item" -type f -exec sha256sum {} + >> "$dest/.native-sources" || return 1
+        fi
+    done
     if [ -e .native-deploy/intent.json ]; then
         [ -f .native-deploy/intent.json ] && [ ! -L .native-deploy/intent.json ] || return 1
         sha256sum .native-deploy/intent.json >> "$dest/.native-sources" || return 1
@@ -1443,7 +1451,7 @@ run_backup() (
             log "ERROR: native operation active; periodic backup deferred"; return 1
         fi
         set -- .env api.env compose.yaml native
-        for item in resource-plan.json .native-deploy; do
+        for item in resource-plan.json .native-deploy data/plugins data/storage/theme; do
             if [ -e "$deployment/$item" ]; then
                 [ ! -L "$deployment/$item" ] || return 1
                 if [ -d "$deployment/$item" ] && find "$deployment/$item" -type l -print | grep -q .; then return 1; fi
