@@ -14,6 +14,16 @@ spec.loader.exec_module(native)
 OLD, NEW = "sha256:" + "1" * 64, "sha256:" + "2" * 64
 
 
+class BrowserConfigurationContractTest(unittest.TestCase):
+    def test_browser_origin_and_gates_are_optional_without_changing_provider_requirements(self):
+        optional = {"CORE_BROWSER_ORIGIN", "CORE_BROWSER_ENABLED", "CORE_BROWSER_USER_ENABLED",
+                    "CORE_BROWSER_ADMIN_ENABLED", "CORE_BROWSER_COMMERCE_ENABLED"}
+        self.assertTrue(optional <= native.RUNTIME_KEYS)
+        self.assertFalse(optional & native.REQUIRED_RUNTIME_KEYS)
+        self.assertIn("CORE_CREDENTIAL_PROVIDER_ENDPOINT", native.REQUIRED_RUNTIME_KEYS)
+        self.assertIn("NATIVE_NODE_AUTHORIZATION_POLICY_VERSION", native.REQUIRED_RUNTIME_KEYS)
+
+
 class Interrupted(Exception):
     pass
 
