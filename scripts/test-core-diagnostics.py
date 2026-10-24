@@ -26,6 +26,8 @@ class CoreDiagnosticsTest(unittest.TestCase):
         self.running = True
         self.ids = b'a' * 64 + b'\n'
         self.owner = str(self.root)
+        self.build = False
+        self.local_image = True
         self.calls = []
         self.exit = 0
         self.raw = None
@@ -47,6 +49,13 @@ class CoreDiagnosticsTest(unittest.TestCase):
                      'com.docker.compose.project.working_dir': self.owner}},
                      'State': {'Status': 'running' if self.running else 'exited'}}]
             return subprocess.CompletedProcess(arguments, 0, json.dumps(body).encode(), b'')
+        if arguments[1:3] == ['compose', 'config']:
+            service = {'image': 'sha256:' + '1' * 64}
+            if self.build:
+                service['build'] = {'context': '/private/do-not-build'}
+            return subprocess.CompletedProcess(arguments, 0, json.dumps({'services': {'txboard': service}}).encode(), b'')
+        if arguments[1:3] == ['image', 'inspect']:
+            return subprocess.CompletedProcess(arguments, 0 if self.local_image else 1, b'[]', b'')
         self.assertIn('core:diagnose', arguments)
         return subprocess.CompletedProcess(arguments, self.exit, self.raw if self.raw is not None else json.dumps(self.report).encode(),
                                            b'private stderr password must never be exported')
@@ -68,19 +77,34 @@ class CoreDiagnosticsTest(unittest.TestCase):
         self.running = False
         self.invoke()
         command = self.calls[-1]
-        for option in ('--rm', '--no-deps', '--no-build'):
+        for option in ('--rm', '--no-deps'):
             self.assertIn(option, command)
         self.assertEqual('never', command[command.index('--pull') + 1])
         self.assertEqual('php', command[command.index('--entrypoint') + 1])
         self.assertIn('CACHE_DRIVER=array', command)
         self.assertIn('SETTING_CACHE_STORE=array', command)
+        self.assertNotIn('--no-build', command)
         self.assertFalse(any(value in command for value in ('up', 'start', 'restart', 'pull', 'build', 'migrate')))
 
     def test_missing_container_can_use_the_existing_local_image_without_creating_a_database(self):
         self.ids = b''
         self.invoke()
         self.assertIn('run', self.calls[-1])
-        self.assertEqual(2, len(self.calls))
+        self.assertEqual(4, len(self.calls))
+
+    def test_stopped_diagnostics_refuse_compose_build_configuration(self):
+        self.running = False
+        self.build = True
+        with self.assertRaisesRegex(diagnostics.DiagnosticError, 'CORE_DIAGNOSTICS_BUILD_CONFIGURATION_REFUSED'):
+            self.invoke()
+        self.assertFalse(any('core:diagnose' in command for command in self.calls))
+
+    def test_missing_local_image_never_triggers_a_build_or_pull(self):
+        self.running = False
+        self.local_image = False
+        with self.assertRaisesRegex(diagnostics.DiagnosticError, 'CORE_DIAGNOSTICS_LOCAL_IMAGE_REQUIRED'):
+            self.invoke()
+        self.assertFalse(any('core:diagnose' in command or 'pull' in command or 'build' in command for command in self.calls))
 
     def test_degraded_report_survives_the_expected_nonzero_core_exit(self):
         self.report['healthy'] = False

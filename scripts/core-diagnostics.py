@@ -70,8 +70,19 @@ def inspect_core(root, show_admin_path=False):
     if running:
         command = ['compose', 'exec', '-T', 'txboard', 'php', '/www/artisan']
     else:
+        process = invoke(root, ['compose', 'config', '--format', 'json'], timeout=10)
+        require(process.returncode == 0, 'DEPLOYMENT_CONFIGURATION_UNAVAILABLE')
+        configuration = decode(process.stdout)
+        services = configuration.get('services') if isinstance(configuration, dict) else None
+        service = services.get('txboard') if isinstance(services, dict) else None
+        require(isinstance(service, dict) and 'build' not in service and service.get('pull_policy') != 'build',
+                'CORE_DIAGNOSTICS_BUILD_CONFIGURATION_REFUSED')
+        image = service.get('image')
+        require(isinstance(image, str) and re.fullmatch(r'[a-z0-9][A-Za-z0-9._:/@-]{0,511}', image), 'CORE_DIAGNOSTICS_IMAGE_REQUIRED')
+        process = invoke(root, ['image', 'inspect', image], timeout=10)
+        require(process.returncode == 0, 'CORE_DIAGNOSTICS_LOCAL_IMAGE_REQUIRED')
         # Never pull/build, run entrypoint migrations, start dependencies or publish ports.
-        command = ['compose', 'run', '-T', '--rm', '--no-deps', '--no-build', '--pull', 'never',
+        command = ['compose', 'run', '-T', '--rm', '--no-deps', '--pull', 'never',
                    '-e', 'CACHE_DRIVER=array', '-e', 'SETTING_CACHE_STORE=array',
                    '-e', 'QUEUE_CONNECTION=sync', '-e', 'SESSION_DRIVER=array',
                    '--entrypoint', 'php', 'txboard', '/www/artisan']
