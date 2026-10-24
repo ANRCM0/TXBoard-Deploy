@@ -36,6 +36,9 @@ activation, so their recovery commands remain available after a later failure.
 A download failure preserves installed tools and stops installation before
 activation. An unrelated global `txboard` command is preserved; use the printed
 absolute manager path if the global name belongs to another installation.
+Relative invocations from a reviewed checkout keep that source location after
+entering the deployment directory, so helper installation does not silently
+fall back to downloading a different toolkit revision.
 
 ## Find the correct entry and inspect runtime
 

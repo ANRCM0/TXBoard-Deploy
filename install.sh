@@ -48,6 +48,9 @@ bootstrap_piped_installer() {
 
 bootstrap_piped_installer "$@"
 
+# Keep the reviewed checkout location after changing into the installation dir.
+INSTALLER_SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 # Route before Core prompts, Docker discovery or database initialization.
 # All other arguments keep their original order and are passed literally.
 COMPONENT=core
@@ -669,7 +672,7 @@ detect_host() {
 
 install_deploy_tools() {
   local module file stage toolkit_source target command_dir
-  toolkit_source="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  toolkit_source="$INSTALLER_SOURCE_DIR"
   stage="$(mktemp -d "$INSTALL_DIR/.manager-stage.XXXXXXXX")" || return 1
   mkdir -p "$stage/lib" "$stage/scripts"
 
@@ -1687,7 +1690,7 @@ verify_database_empty_for_install
 # Never bypass preflight and never run txboard:install against v2_* source data.
 load_xboard_import_module() {
   local script_dir tmp
-  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+  script_dir="$INSTALLER_SOURCE_DIR"
   if [[ -n "$script_dir" && -f "$script_dir/lib/xboard-import.sh" ]]; then
     source "$script_dir/lib/xboard-import.sh"
     return

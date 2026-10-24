@@ -39,8 +39,9 @@ PY
   INSTALL_DIR="$tmp/toolkit"
   NATIVE_CONFIG_DIR=""
   DEPLOY_RAW_BASE=mock://deploy
+  INSTALLER_SOURCE_DIR="$tmp/offline-source"
   TXBOARD_COMMAND_DIR="$tmp/commands"
-  mkdir -p "$INSTALL_DIR/lib" "$tmp/tool-bin" "$TXBOARD_COMMAND_DIR"
+  mkdir -p "$INSTALL_DIR/lib" "$tmp/tool-bin" "$TXBOARD_COMMAND_DIR" "$INSTALLER_SOURCE_DIR"
   printf 'original-manager\n' > "$INSTALL_DIR/txboard.sh"
   printf 'original-module\n' > "$INSTALL_DIR/lib/common.sh"
   printf 'unrelated-command\n' > "$TXBOARD_COMMAND_DIR/txboard"
@@ -70,6 +71,12 @@ CURL
   bash -n "$INSTALL_DIR/txboard.sh"
   test -f "$INSTALL_DIR/scripts/core-diagnostics.py"
   grep -Fxq unrelated-command "$TXBOARD_COMMAND_DIR/txboard"
+  # A relative invocation must continue to use its reviewed local checkout after chdir.
+  INSTALLER_SOURCE_DIR="$repo"
+  export TEST_TOOLKIT_FAIL=txboard.sh
+  cd "$INSTALL_DIR"
+  install_deploy_tools
+  test -f "$INSTALL_DIR/scripts/core-diagnostics.py"
 )
 
 # Exercise the progress wrapper without starting real Docker. A failing step
