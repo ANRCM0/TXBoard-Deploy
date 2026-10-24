@@ -48,6 +48,9 @@ bootstrap_piped_installer() {
 
 bootstrap_piped_installer "$@"
 
+# Keep the reviewed checkout location after changing into the installation dir.
+INSTALLER_SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 # Route before Core prompts, Docker discovery or database initialization.
 # All other arguments keep their original order and are passed literally.
 COMPONENT=core
@@ -668,11 +671,10 @@ detect_host() {
 }
 
 install_deploy_tools() {
-  local manager_tmp="$INSTALL_DIR/.txboard.sh.tmp"
-  local updater_tmp="$INSTALL_DIR/.update.sh.tmp"
-  local module tmp toolkit_source
-  toolkit_source="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-  mkdir -p "$INSTALL_DIR/lib"
+  local module file stage toolkit_source target command_dir
+  toolkit_source="$INSTALLER_SOURCE_DIR"
+  stage="$(mktemp -d "$INSTALL_DIR/.manager-stage.XXXXXXXX")" || return 1
+  mkdir -p "$stage/lib" "$stage/scripts"
 
   download_file() {
     local url="$1" dest="$2"
@@ -690,33 +692,50 @@ install_deploy_tools() {
     fi
   }
 
-  if ! download_file "$DEPLOY_RAW_BASE/txboard.sh" "$manager_tmp" ||
-     ! download_file "$DEPLOY_RAW_BASE/update.sh" "$updater_tmp"; then
-    rm -f "$manager_tmp" "$updater_tmp"
-    warn "failed to download TXBoard management tools"
-    return 0
-  fi
-
-  for module in common service backup config diagnose uninstall detect xboard-import maintenance components; do
-    tmp="$INSTALL_DIR/lib/.$module.sh.tmp"
-    if ! download_file "$DEPLOY_RAW_BASE/lib/$module.sh" "$tmp"; then
-      rm -f "$manager_tmp" "$updater_tmp" "$INSTALL_DIR/lib/."*.tmp
-      warn "failed to download TXBoard manager module: $module"
-      return 0
+  for file in txboard.sh update.sh; do
+    if ! download_file "$DEPLOY_RAW_BASE/$file" "$stage/$file" || ! bash -n "$stage/$file"; then
+      rm -rf -- "$stage"
+      warn "failed to download/validate TXBoard management tool: $file"
+      return 1
     fi
-    mv "$tmp" "$INSTALL_DIR/lib/$module.sh"
   done
 
-  mv "$manager_tmp" "$INSTALL_DIR/txboard.sh"
-  mv "$updater_tmp" "$INSTALL_DIR/update.sh"
+  for module in common service backup config diagnose uninstall detect xboard-import maintenance components; do
+    if ! download_file "$DEPLOY_RAW_BASE/lib/$module.sh" "$stage/lib/$module.sh" || ! bash -n "$stage/lib/$module.sh"; then
+      rm -rf -- "$stage"
+      warn "failed to download/validate TXBoard manager module: $module"
+      return 1
+    fi
+  done
+  if ! download_file "$DEPLOY_RAW_BASE/scripts/core-diagnostics.py" "$stage/scripts/core-diagnostics.py" ||
+     ! python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$stage/scripts/core-diagnostics.py"; then
+    rm -rf -- "$stage"
+    warn "failed to download/validate Core diagnostic helper"
+    return 1
+  fi
   if [[ -n "$NATIVE_CONFIG_DIR" ]]; then
     [[ -f "$INSTALL_DIR/scripts/native-runtime.py" && ! -L "$INSTALL_DIR/scripts/native-runtime.py" ]] ||
       die "native runner was not preserved in the installed toolkit"
   fi
+  mkdir -p "$INSTALL_DIR/lib" "$INSTALL_DIR/scripts"
+  for module in common service backup config diagnose uninstall detect xboard-import maintenance components; do
+    mv -- "$stage/lib/$module.sh" "$INSTALL_DIR/lib/$module.sh"
+  done
+  for file in txboard.sh update.sh; do mv -- "$stage/$file" "$INSTALL_DIR/$file"; done
+  mv -- "$stage/scripts/core-diagnostics.py" "$INSTALL_DIR/scripts/core-diagnostics.py"
+  chmod 700 "$INSTALL_DIR/scripts/core-diagnostics.py"
+  rm -rf -- "$stage"
   chmod 755 "$INSTALL_DIR/txboard.sh" "$INSTALL_DIR/update.sh" "$INSTALL_DIR"/lib/*.sh
 
-  if [[ "${EUID:-$(id -u)}" -eq 0 && -d /usr/local/bin ]]; then
-    ln -sfn "$INSTALL_DIR/txboard.sh" /usr/local/bin/txboard
+  command_dir="${TXBOARD_COMMAND_DIR:-/usr/local/bin}"
+  if [[ "${EUID:-$(id -u)}" -eq 0 && -d "$command_dir" ]]; then
+    target="$command_dir/txboard"
+    if [[ ! -e "$target" && ! -L "$target" ]] ||
+       { [[ -L "$target" ]] && [[ "$(readlink -- "$target")" == "$INSTALL_DIR/txboard.sh" ]]; }; then
+      ln -sfn "$INSTALL_DIR/txboard.sh" "$target"
+    else
+      warn "existing $target is unrelated; use $INSTALL_DIR/txboard.sh"
+    fi
   fi
 }
 
@@ -1645,6 +1664,10 @@ if [[ "$RENDER_ONLY" -eq 1 ]]; then
   exit 0
 fi
 
+# Recovery commands must already exist if image acquisition or activation fails.
+log "正在安装 TXBoard 管理与诊断命令……"
+install_deploy_tools || die "management toolkit unavailable; installation stopped before image activation"
+
 INSTALL_PROGRESS_TOTAL=5
 [[ "$INSTALL_TYPE" == xboard-import ]] && INSTALL_PROGRESS_TOTAL=7
 INSTALL_PROGRESS_DONE=0
@@ -1667,7 +1690,7 @@ verify_database_empty_for_install
 # Never bypass preflight and never run txboard:install against v2_* source data.
 load_xboard_import_module() {
   local script_dir tmp
-  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+  script_dir="$INSTALLER_SOURCE_DIR"
   if [[ -n "$script_dir" && -f "$script_dir/lib/xboard-import.sh" ]]; then
     source "$script_dir/lib/xboard-import.sh"
     return
@@ -1699,7 +1722,7 @@ if [[ -n "$NATIVE_CONFIG_DIR" ]]; then
     python3 "$INSTALL_DIR/scripts/native-runtime.py" install --dir "$INSTALL_DIR" --image "$image_id" --progress
   }
   install_progress_step "准备、探测并激活原生运行时" native_install ||
-    die "native deployment incomplete; preserve the private inputs and run txboard native recover"
+    die "native deployment incomplete; preserve $INSTALL_DIR and private inputs. Inspect $INSTALL_LOG_FILE; run $INSTALL_DIR/txboard.sh core-diagnose and $INSTALL_DIR/txboard.sh native status, then resume with native recover"
 else
 # Start the real application container before installation, but do not wait for
 # its health check yet. txboard:install relies on the normal container runtime.
@@ -1725,15 +1748,13 @@ fi
 install_progress_step "启动定时备份" docker compose up -d backup ||
   die "failed to start backup service"
 
-log "正在安装 TXBoard 管理命令……"
-install_deploy_tools
-
 cat <<EOF
 
 TXBoard 安装成功。
 
 安装日志：$INSTALL_LOG_FILE
-Panel:       $APP_URL/admin/
+Site:        $APP_URL
+Admin entry: sudo txboard core-diagnose --show-admin-path
 Install dir: $INSTALL_DIR
 Image:       $IMAGE
 

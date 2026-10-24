@@ -37,6 +37,7 @@ jobs:
         run: |
           python3 -B scripts/test-deployment-profile.py
           python3 -B scripts/test-native-backup-inspect.py
+          python3 -B scripts/test-core-diagnostics.py
 
       - name: Test Core/Node routing and explicit retired Gateway refusal
         run: |

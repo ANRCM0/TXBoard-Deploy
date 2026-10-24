@@ -29,6 +29,6 @@ for line in compose.splitlines():
         assert r'\${' in line, 'resource variable expanded before Compose: ' + line
 assert compose.count('$NATIVE_BACKUP_VOLUME_BLOCK') == 1, 'native backup bind must be singular'
 assert 'BACKUP_NATIVE_MODE: "$NATIVE_BACKUP_MODE"' in compose
-for script in ('deployment-profile.py', 'native-runtime.py', 'test-deployment-profile.py', 'test-native-backup-inspect.py'):
+for script in ('deployment-profile.py', 'native-runtime.py', 'core-diagnostics.py', 'test-deployment-profile.py', 'test-native-backup-inspect.py', 'test-core-diagnostics.py'):
     ast.parse((ROOT / 'scripts' / script).read_text(encoding='utf-8'), filename=script)
 print('Deployment source invariants: passed (static only)')
