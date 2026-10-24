@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
+core_diagnose() {
+  [[ $# -eq 0 || ( $# -eq 1 && "$1" == --show-admin-path ) ]] || die "usage: txboard core-diagnose [--show-admin-path]"
+  docker_ok; need_install
+  local helper="$TXBOARD_INSTALL_DIR/scripts/core-diagnostics.py" status=0
+  [[ -f "$helper" && ! -L "$helper" ]] || die "Core diagnostic helper missing; run txboard refresh-manager"
+  command -v python3 >/dev/null 2>&1 || die "Core diagnostics require Python 3.10+"
+  python3 "$helper" --dir "$TXBOARD_INSTALL_DIR" "$@" || status=$?
+  if ((status != 0)); then
+    warn "Core diagnostics are incomplete or report an unhealthy state. Preserve the report and original native inputs; do not reinstall."
+  fi
+  return "$status"
+}
+
 deployment_resource_check() {
   need_install
   local helper="$TXBOARD_INSTALL_DIR/scripts/deployment-profile.py" profile
@@ -56,6 +69,9 @@ diagnose_run() {
   while IFS= read -r cid; do
     [[ -z "$cid" ]] || docker inspect --format '{{.Name}} memory={{.HostConfig.Memory}} nano_cpus={{.HostConfig.NanoCpus}} pids={{.HostConfig.PidsLimit}}' "$cid" || failed=1
   done < <(compose ps -q)
+
+  echo "=== Core read-only runtime report ==="
+  core_diagnose || failed=1
 
   if [[ "$(env_get "$TXBOARD_INSTALL_DIR/api.env" CORE_INSTALLATION_MODE)" == native ]]; then
     echo "=== native recovery and backup materials ==="

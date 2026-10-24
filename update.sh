@@ -106,6 +106,12 @@ refresh_tools() {
     rm -rf -- "$stage"
     return 1
   fi
+  if ! download_file "$DEPLOY_RAW_BASE/scripts/core-diagnostics.py" "$stage/scripts/core-diagnostics.py" ||
+     ! python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$stage/scripts/core-diagnostics.py"; then
+    warn "could not fetch/validate Core diagnostic helper"
+    rm -rf -- "$stage"
+    return 1
+  fi
   if [[ -f "$INSTALL_DIR/scripts/native-runtime.py" ]]; then
     mkdir -p "$stage/scripts"
     if ! download_file "$DEPLOY_RAW_BASE/scripts/native-runtime.py" "$stage/scripts/native-runtime.py" ||
@@ -119,6 +125,8 @@ refresh_tools() {
   mkdir -p "$INSTALL_DIR/lib" "$INSTALL_DIR/scripts"
   mv -f -- "$stage/scripts/deployment-profile.py" "$INSTALL_DIR/scripts/deployment-profile.py"
   chmod 700 "$INSTALL_DIR/scripts/deployment-profile.py"
+  mv -f -- "$stage/scripts/core-diagnostics.py" "$INSTALL_DIR/scripts/core-diagnostics.py"
+  chmod 700 "$INSTALL_DIR/scripts/core-diagnostics.py"
   for module in common service backup config diagnose uninstall detect xboard-import maintenance components; do
     mv -f -- "$stage/lib/$module.sh" "$INSTALL_DIR/lib/$module.sh"
   done

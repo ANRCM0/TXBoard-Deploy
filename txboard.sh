@@ -158,6 +158,7 @@ Quick commands:
   config-show          Show current deployment configuration
   resources            Check host capacity against the installed resource profile
   diagnose             Run diagnostics
+  core-diagnose [--show-admin-path]  Read the redacted Core runtime report
   admin-reset-password [email]  Reset admin password interactively
   admin-reset-path            Rotate the admin panel security path interactively
   repair-command       Restore /usr/local/bin/txboard command link (root)
@@ -272,6 +273,7 @@ case "$CMD" in
   config-show) config_show ;;
   resources) deployment_resource_check ;;
   diagnose) diagnose_run ;;
+  core-diagnose) shift; core_diagnose "$@" ;;
   admin-reset-password|reset-admin-password) [[ $# -le 2 ]] || die "usage: txboard admin-reset-password [email]"; maintenance_reset_admin_password "$ARG" ;;
   admin-reset-path|reset-admin-path) [[ $# -eq 1 ]] || die "usage: txboard admin-reset-path"; maintenance_reset_admin_path ;;
   repair-command) maintenance_repair_command ;;

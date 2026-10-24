@@ -28,8 +28,49 @@ assert at('archive_orphan_install_dir\nfi') < at('if install_dir_has_content; th
 assert at('txboard_guard_install "$INSTALL_DIR" "$ARCHIVE_ORPHAN_DIR"') < at('configure_database\n')
 assert 'mv -T -- "$INSTALL_DIR" "$archive_root/deployment"' in s
 assert 'docker compose down --remove-orphans </dev/null' not in s
+assert at('\ninstall_deploy_tools || die ') < at('install_progress_step "拉取 TXBoard 与依赖镜像"')
+assert '$APP_URL/admin/' not in s
+assert 'Admin entry: sudo txboard core-diagnose --show-admin-path' in s
 print('installer ordering and deferred destructive actions: passed')
 PY
+
+# A failed toolkit download must preserve every previously installed tool.
+(
+  INSTALL_DIR="$tmp/toolkit"
+  NATIVE_CONFIG_DIR=""
+  DEPLOY_RAW_BASE=mock://deploy
+  TXBOARD_COMMAND_DIR="$tmp/commands"
+  mkdir -p "$INSTALL_DIR/lib" "$tmp/tool-bin" "$TXBOARD_COMMAND_DIR"
+  printf 'original-manager\n' > "$INSTALL_DIR/txboard.sh"
+  printf 'original-module\n' > "$INSTALL_DIR/lib/common.sh"
+  printf 'unrelated-command\n' > "$TXBOARD_COMMAND_DIR/txboard"
+  export TEST_TOOLKIT_REPO="$repo" TEST_TOOLKIT_FAIL=lib/diagnose.sh
+  cat > "$tmp/tool-bin/curl" <<'CURL'
+#!/usr/bin/env bash
+set -euo pipefail
+url="" dest=""
+while (($#)); do
+  case "$1" in -o) dest="$2"; shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac
+done
+relative="${url#mock://deploy/}"
+[[ "$relative" != "${TEST_TOOLKIT_FAIL:-}" ]] || exit 42
+cp -- "$TEST_TOOLKIT_REPO/$relative" "$dest"
+CURL
+  chmod +x "$tmp/tool-bin/curl"
+  export PATH="$tmp/tool-bin:$PATH"
+  warn() { printf '%s\n' "$*" >&2; }
+  die() { printf '%s\n' "$*" >&2; return 1; }
+  source <(awk '/^install_deploy_tools\(\) \{/{reading=1} reading{print} reading && /^\}$/ {exit}' "$repo/install.sh")
+  if install_deploy_tools; then echo 'partial toolkit was accepted' >&2; exit 1; fi
+  grep -Fxq original-manager "$INSTALL_DIR/txboard.sh"
+  grep -Fxq original-module "$INSTALL_DIR/lib/common.sh"
+  test ! -f "$INSTALL_DIR/scripts/core-diagnostics.py"
+  export TEST_TOOLKIT_FAIL=""
+  install_deploy_tools
+  bash -n "$INSTALL_DIR/txboard.sh"
+  test -f "$INSTALL_DIR/scripts/core-diagnostics.py"
+  grep -Fxq unrelated-command "$TXBOARD_COMMAND_DIR/txboard"
+)
 
 # Exercise the progress wrapper without starting real Docker. A failing step
 # must fail closed and preserve diagnostics; completion never advances on error.
