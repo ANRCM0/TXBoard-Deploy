@@ -231,6 +231,10 @@ install_progress_step() {
 }
 
 
+administrator_entry_command() {
+  printf 'sudo %q --dir %q core-diagnose --show-admin-path' "$INSTALL_DIR/txboard.sh" "$INSTALL_DIR"
+}
+
 normalize_http_bind() {
   python3 - "$1" <<'PY'
 import ipaddress
@@ -1821,13 +1825,14 @@ fi
 install_progress_step "启动定时备份" docker compose up -d backup ||
   die "failed to start backup service"
 
+ADMIN_ENTRY_COMMAND="$(administrator_entry_command)"
 cat <<EOF
 
 TXBoard 安装成功。
 
 安装日志：$INSTALL_LOG_FILE
 Site:        $APP_URL
-Admin entry: sudo txboard core-diagnose --show-admin-path
+Admin entry: $ADMIN_ENTRY_COMMAND
 Install dir: $INSTALL_DIR
 Image:       $IMAGE
 

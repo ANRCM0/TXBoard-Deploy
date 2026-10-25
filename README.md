@@ -65,7 +65,9 @@ fall back to downloading a different toolkit revision.
 ## Find the correct entry and inspect runtime
 
 The installer prints the public site origin. It does not assume `/admin/` is
-the administrator entry. On an image containing the Core diagnostic command:
+the administrator entry. Its entry-discovery command uses this installation's
+absolute manager path and explicit `--dir`, even if another global `txboard`
+command exists. On an image containing the Core diagnostic command:
 
 ```sh
 sudo txboard core-diagnose

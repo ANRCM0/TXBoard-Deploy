@@ -30,7 +30,7 @@ assert 'mv -T -- "$INSTALL_DIR" "$archive_root/deployment"' in s
 assert 'docker compose down --remove-orphans </dev/null' not in s
 assert at('\ninstall_deploy_tools || die ') < at('install_progress_step "拉取 TXBoard 与依赖镜像"')
 assert '$APP_URL/admin/' not in s
-assert 'Admin entry: sudo txboard core-diagnose --show-admin-path' in s
+assert 'Admin entry: $ADMIN_ENTRY_COMMAND' in s
 print('installer ordering and deferred destructive actions: passed')
 PY
 

@@ -32,6 +32,23 @@ fi
 grep -Fq -- '--legacy-compat cannot be combined with --native-config' "$tmp/ambiguous.log"
 test ! -s "$TEST_DOCKER_LOG"
 
+source <(awk '/^administrator_entry_command\(\) \{/{readfn=1} readfn{print} readfn && /^\}$/ {exit}' "$repo/install.sh")
+(
+  INSTALL_DIR="$tmp/instance with space"
+  mkdir -p "$INSTALL_DIR"
+  cat > "$INSTALL_DIR/txboard.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$TEST_ENTRY_ARGUMENTS"
+SH
+  chmod 700 "$INSTALL_DIR/txboard.sh"
+  sudo() { "$@"; }
+  export TEST_ENTRY_ARGUMENTS="$tmp/entry-args" TXBOARD_INSTALL_DIR="$tmp/other-instance"
+  entry_command="$(administrator_entry_command)"
+  eval "$entry_command"
+  printf '%s\n' --dir "$INSTALL_DIR" core-diagnose --show-admin-path > "$tmp/expected-entry-args"
+  cmp "$tmp/entry-args" "$tmp/expected-entry-args"
+)
+
 source <(awk '/^normalize_http_bind\(\) \{/{readfn=1} readfn{print} readfn && /^\}$/ {exit}' "$repo/install.sh")
 [[ "$(normalize_http_bind 127.0.0.1)" == 127.0.0.1 ]]
 [[ "$(normalize_http_bind ::1)" == '[::1]' ]]
