@@ -96,6 +96,7 @@ ADMIN_EMAIL="${TXBOARD_ADMIN_EMAIL:-}"
 MODE="${TXBOARD_MODE:-}"
 DOMAIN="${TXBOARD_DOMAIN:-}"
 PUBLIC_HOST="${TXBOARD_PUBLIC_HOST:-}"
+REQUESTED_HTTP_BIND="${TXBOARD_HTTP_BIND:-}"
 HTTP_PORT="${TXBOARD_HTTP_PORT:-}"
 HTTPS_PORT="${TXBOARD_HTTPS_PORT:-}"
 BACKUP_RETENTION="${TXBOARD_BACKUP_RETENTION:-7}"
@@ -129,6 +130,7 @@ RENDER_ONLY=0
 RESET_LOCAL_DB=0
 LOCAL_DB_RESET_PENDING=0
 INSTALL_TYPE="${TXBOARD_INSTALL_TYPE:-fresh}"
+LEGACY_COMPAT="${TXBOARD_LEGACY_COMPAT:-false}"
 XBOARD_DUMP="${TXBOARD_XBOARD_DUMP:-}"
 XBOARD_ENV_FILE="${TXBOARD_XBOARD_ENV_FILE:-}"
 XBOARD_AUTO_DUMP="${TXBOARD_XBOARD_AUTO_DUMP:-false}"
@@ -229,6 +231,45 @@ install_progress_step() {
 }
 
 
+normalize_http_bind() {
+  python3 - "$1" <<'PY'
+import ipaddress
+import sys
+value = sys.argv[1]
+if value.startswith('[') and value.endswith(']'):
+    value = value[1:-1]
+try:
+    if '%' in value:
+        raise ValueError()
+    address = ipaddress.ip_address(value)
+except ValueError:
+    sys.exit(1)
+print('[' + address.compressed + ']' if address.version == 6 else str(address))
+PY
+}
+
+report_image_acquisition_failure() {
+  warn "Could not acquire requested Core image: $IMAGE"
+  warn 'latest is published only by stable release tags; dev tracks main and preview tracks prereleases. No channel fallback was performed.'
+  [[ "$IMAGE" != sha256:* ]] || return 0
+  local repository="$IMAGE_REPO" channel available="" inspected=0
+  [[ "$IMAGE" != *@sha256:* ]] || repository="${IMAGE%@sha256:*}"
+  if command -v timeout >/dev/null 2>&1; then
+    for channel in latest dev preview; do
+      if timeout 10s docker manifest inspect "$repository:$channel" >/dev/null 2>&1; then
+        available="${available:+$available, }$channel"
+        inspected=1
+      fi
+    done
+  fi
+  if [[ "$inspected" -eq 1 ]]; then
+    warn "Reachable channels at $repository: $available (availability does not establish freshness or release approval)"
+  else
+    warn 'Channel availability could not be confirmed; check registry access and the explicit image reference.'
+  fi
+  warn 'For native installation, select a reviewed immutable repository@sha256 digest with --native-image.'
+}
+
 usage() {
   cat <<'EOF'
 TXBoard Docker 交互式安装向导
@@ -244,6 +285,7 @@ Options:
   --mode MODE         auto-https | external-https | http
   --domain DOMAIN     Public domain for HTTPS modes
   --public-host HOST  Public host/IP for HTTP mode
+  --http-bind ADDR    Explicit IPv4/IPv6 listener for HTTP mode; loopback hosts bind locally
   --http-port PORT    HTTP 端口
   --https-port PORT   HTTPS 端口 (auto-https only)
   --resource-profile NAME  auto / minimal / balanced / performance; capacity checked
@@ -261,6 +303,7 @@ Options:
   --install-type MODE fresh | xboard-import (default: fresh)
   --native-config DIR  Prepare/activate native runtime using private operator configuration
   --native-image REF   Native image pinned by repository@sha256 or an existing sha256 image ID
+  --legacy-compat      Explicit historical compatibility install; native browser APIs unavailable
   --xboard-dump PATH Trusted XBoard single-database mysqldump .sql.gz (not a live DB)
   --xboard-env PATH  Original XBoard .env containing APP_KEY
   --xboard-auto-dump  Export .sql.gz automatically from local XBoard MySQL container
@@ -285,6 +328,7 @@ Environment variables:
   TXBOARD_MODE
   TXBOARD_DOMAIN
   TXBOARD_PUBLIC_HOST
+  TXBOARD_HTTP_BIND
   TXBOARD_HTTP_PORT
   TXBOARD_HTTPS_PORT
   TXBOARD_BACKUP_RETENTION
@@ -304,6 +348,7 @@ Environment variables:
   TXBOARD_DB_LINK_NETWORK
   TXBOARD_DB_PROXY_PORT
   TXBOARD_INSTALL_TYPE
+  TXBOARD_LEGACY_COMPAT
   TXBOARD_XBOARD_DUMP
   TXBOARD_XBOARD_ENV_FILE
   TXBOARD_XBOARD_AUTO_DUMP
@@ -325,6 +370,7 @@ while [[ $# -gt 0 ]]; do
     --mode) MODE="${2:?missing value for --mode}"; shift 2 ;;
     --domain) DOMAIN="${2:?missing value for --domain}"; shift 2 ;;
     --public-host) PUBLIC_HOST="${2:?missing value for --public-host}"; shift 2 ;;
+    --http-bind) REQUESTED_HTTP_BIND="${2:?missing value for --http-bind}"; shift 2 ;;
     --http-port) HTTP_PORT="${2:?missing value for --http-port}"; shift 2 ;;
     --https-port) HTTPS_PORT="${2:?missing value for --https-port}"; shift 2 ;;
     --resource-profile) DEPLOY_PROFILE="${2:?missing value for --resource-profile}"; shift 2 ;;
@@ -342,6 +388,7 @@ while [[ $# -gt 0 ]]; do
     --install-type) INSTALL_TYPE="${2:?missing value for --install-type}"; shift 2 ;;
     --native-config) NATIVE_CONFIG_DIR="${2:?missing value for --native-config}"; shift 2 ;;
     --native-image) NATIVE_IMAGE="${2:?missing value for --native-image}"; shift 2 ;;
+    --legacy-compat) LEGACY_COMPAT=true; shift ;;
     --xboard-dump) XBOARD_DUMP="${2:?missing value for --xboard-dump}"; INSTALL_TYPE=xboard-import; shift 2 ;;
     --xboard-env) XBOARD_ENV_FILE="${2:?missing value for --xboard-env}"; shift 2 ;;
     --xboard-auto-dump) XBOARD_AUTO_DUMP=true; INSTALL_TYPE=xboard-import; shift ;;
@@ -358,6 +405,15 @@ while [[ $# -gt 0 ]]; do
     *) die "unknown option: $1" ;;
   esac
 done
+
+case "$LEGACY_COMPAT" in true|false) ;; *) die 'TXBOARD_LEGACY_COMPAT must be true or false' ;; esac
+[[ "$LEGACY_COMPAT" != true || -z "$NATIVE_CONFIG_DIR" ]] || die '--legacy-compat cannot be combined with --native-config'
+if [[ "$ASSUME_YES" -eq 1 && "$RENDER_ONLY" -eq 0 && "$INSTALL_TYPE" == fresh && -z "$NATIVE_CONFIG_DIR" && "$LEGACY_COMPAT" != true ]]; then
+  die 'fresh unattended installation requires --native-config and --native-image; --legacy-compat explicitly selects historical installation without native browser APIs'
+fi
+if [[ -n "$REQUESTED_HTTP_BIND" ]]; then
+  REQUESTED_HTTP_BIND="$(normalize_http_bind "$REQUESTED_HTTP_BIND")" || die '--http-bind requires an IPv4 or IPv6 address'
+fi
 
 case "$(uname -m)" in
   x86_64|amd64|aarch64|arm64) ;;
@@ -873,9 +929,10 @@ case "$MODE" in
   auto-https|external-https|http) ;;
   *) die "invalid mode: $MODE" ;;
 esac
+[[ -z "$REQUESTED_HTTP_BIND" || "$MODE" == http ]] || die '--http-bind is supported only with --mode http'
 
 install_ui_section "应用配置"
-if [[ "$INSTALL_TYPE" == fresh && "$ASSUME_YES" -eq 0 && -z "$NATIVE_CONFIG_DIR" ]]; then
+if [[ "$INSTALL_TYPE" == fresh && "$ASSUME_YES" -eq 0 && -z "$NATIVE_CONFIG_DIR" && "$LEGACY_COMPAT" != true ]]; then
   install_ui_section "运行时配置"
   printf "  1) Native（需要私有配置目录和固定镜像摘要）
   2) 兼容安装流程
@@ -884,7 +941,13 @@ if [[ "$INSTALL_TYPE" == fresh && "$ASSUME_YES" -eq 0 && -z "$NATIVE_CONFIG_DIR"
     NATIVE_CONFIG_DIR="$(prompt "私有 Native 配置目录（安装目录之外）" "")"
     [[ -n "$NATIVE_CONFIG_DIR" ]] || die "native configuration directory is required"
     NATIVE_IMAGE="$(prompt "Native 镜像（repository@sha256 或本地 sha256 ID）" "")"
+  else
+    LEGACY_COMPAT=true
   fi
+fi
+if [[ "$INSTALL_TYPE" == fresh && -z "$NATIVE_CONFIG_DIR" && "$RENDER_ONLY" -eq 0 ]]; then
+  [[ "$LEGACY_COMPAT" == true ]] || die 'fresh installation requires --native-config and --native-image'
+  warn 'Explicit historical compatibility mode: native browser administration APIs are unavailable.'
 fi
 IMAGE_TAG="$(prompt "TXBoard 镜像版本（latest / dev / 固定版本）" "$IMAGE_TAG")"
 [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "invalid image tag: $IMAGE_TAG"
@@ -1091,11 +1154,20 @@ case "$MODE" in
     fi
     HTTP_PORT="$(prompt "HTTP 端口" "${HTTP_PORT:-80}")"
     valid_port "$HTTP_PORT" || die "invalid HTTP port: $HTTP_PORT"
+    if [[ -n "$REQUESTED_HTTP_BIND" ]]; then
+      HTTP_BIND="$REQUESTED_HTTP_BIND"
+    elif [[ "${PUBLIC_HOST,,}" == localhost ]]; then
+      HTTP_BIND=127.0.0.1
+    elif [[ "$PUBLIC_HOST" == ::1 || "$PUBLIC_HOST" == '[::1]' || "$PUBLIC_HOST" =~ ^127\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      HTTP_BIND="$(normalize_http_bind "$PUBLIC_HOST")" || die 'invalid loopback host'
+    fi
+    if [[ "$PUBLIC_HOST" == *:* && "$PUBLIC_HOST" != \[*\] ]]; then PUBLIC_HOST="[$PUBLIC_HOST]"; fi
     if [[ "$HTTP_PORT" == "80" ]]; then
       APP_URL="http://$PUBLIC_HOST"
     else
       APP_URL="http://$PUBLIC_HOST:$HTTP_PORT"
     fi
+    log "HTTP listener: $HTTP_BIND:$HTTP_PORT; public origin: $APP_URL"
     ;;
 esac
 
@@ -1672,8 +1744,9 @@ INSTALL_PROGRESS_TOTAL=5
 [[ "$INSTALL_TYPE" == xboard-import ]] && INSTALL_PROGRESS_TOTAL=7
 INSTALL_PROGRESS_DONE=0
 pull_install_images() {
-  if [[ -z "$NATIVE_CONFIG_DIR" ]]; then docker compose pull; return; fi
-  if [[ "$IMAGE" != sha256:* ]]; then docker pull "$IMAGE" || return; fi
+  if [[ "$IMAGE" != sha256:* ]]; then
+    docker pull "$IMAGE" || { report_image_acquisition_failure; return 1; }
+  fi
   docker image inspect "$IMAGE" >/dev/null || return
   local service
   while IFS= read -r service; do
@@ -1759,6 +1832,7 @@ Install dir: $INSTALL_DIR
 Image:       $IMAGE
 
 $([[ -n "$NATIVE_CONFIG_DIR" ]] && printf '%s' 'Native runtime activated at epoch 2; administrator credentials come from your private preparation file.' || { [[ "$INSTALL_TYPE" == fresh ]] && printf '%s' 'Fresh install: save the administrator password printed above.' || printf '%s' 'Imported users and administrators keep their original accounts and password hashes.'; })
+$([[ "$LEGACY_COMPAT" == true ]] && printf '%s' 'Historical compatibility installation: native browser administration APIs are unavailable; this is not a native activation.' || true)
 
 Management:
   sudo txboard

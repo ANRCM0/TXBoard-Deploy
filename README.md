@@ -31,6 +31,28 @@ host resources before provisioning, then prepares, probes and activates native
 runtime. Existing databases, image updates and XBoard imports have separate
 guarded flows; a failed installation is not permission to clear a database.
 
+Fresh unattended installation requires both `--native-config` and
+`--native-image`; `--yes` does not select a historical runtime implicitly.
+`--legacy-compat` explicitly retains the historical installation flow for a
+compatible old image. Its native browser administration APIs are unavailable.
+XBoard imports retain their separate guarded flow. `--render-only` can preview
+configuration without native inputs; it neither installs nor activates Core.
+
+For a local HTTP deployment, use `--mode http --public-host 127.0.0.1
+--http-port 8080`. The published address is then `127.0.0.1:8080`.
+`--http-bind 127.0.0.1` (or `TXBOARD_HTTP_BIND`) selects an explicit listener
+independently of the public hostname. IPv6 addresses are accepted and rendered
+with Compose brackets. An explicit wildcard bind overrides loopback inference.
+The existing external HTTPS mode keeps its loopback-only listener.
+
+Native images use reviewed immutable references. For the explicit historical
+tag-based flow, `latest` means a stable release tag, `dev` tracks main and
+`preview` tracks prereleases. A failed pull reports the requested reference and
+probes these three channels with bounded registry requests. Registry/network or
+authentication failures leave availability unconfirmed. The installer never
+switches channels or image repositories automatically; an available tag is not
+evidence of freshness or release approval.
+
 Management tools are downloaded and syntax-checked before image acquisition or
 activation, so their recovery commands remain available after a later failure.
 A download failure preserves installed tools and stops installation before
