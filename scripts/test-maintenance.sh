@@ -99,6 +99,9 @@ MOCK
 chmod +x "$tmp/bin/curl"
 export TEST_REPO="$repo"
 TXBOARD_DEPLOY_RAW_BASE=mock://deploy bash "$repo/update.sh" --dir "$tmp/install" --tools-only
+test -f "$tmp/install/scripts/core-diagnostics.py"
+python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$tmp/install/scripts/core-diagnostics.py"
 bash "$tmp/install/txboard.sh" --dir "$tmp/install" help | grep -Fq 'refresh-manager'
+bash "$tmp/install/txboard.sh" --dir "$tmp/install" help | grep -Fq 'core-diagnose'
 ! grep -Eq 'compose (stop|up|down|run)| volume rm | pull ' "$MOCK_DOCKER_LOG"
 echo 'Administrator recovery and maintenance commands: passed'
